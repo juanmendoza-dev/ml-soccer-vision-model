@@ -215,6 +215,11 @@ def test_column_errors(tmp_path, table, fn, expected):
         ("objects", lambda df: df.with_columns(confidence=pl.lit(1.5)), "outside [0, 1]"),
         (
             "objects",
+            lambda df: df.with_columns(visible=pl.lit(False)),
+            "visible=False but interpolated=False",
+        ),
+        (
+            "objects",
             lambda df: df.with_columns(player_id=pl.col("player_id").replace("h9", "ghost")),
             "ids not in players",
         ),
@@ -232,6 +237,13 @@ def test_column_errors(tmp_path, table, fn, expected):
 def test_semantic_errors(tmp_path, table, fn, expected):
     errors = errors_after(tmp_path, table, fn)
     assert any(expected in e for e in errors), errors
+
+
+def test_off_camera_interpolated_passes(tmp_path):
+    errors = errors_after(
+        tmp_path, "objects", lambda df: df.with_columns(visible=False, interpolated=True)
+    )
+    assert errors == []
 
 
 def test_shootout_shot_rejected(tmp_path):

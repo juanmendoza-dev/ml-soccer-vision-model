@@ -152,6 +152,9 @@ def _check_objects(t: dict[str, pl.DataFrame]) -> list[str]:
     bad_conf = o.filter((pl.col("confidence") < 0) | (pl.col("confidence") > 1)).height
     if bad_conf:
         errors.append(f"objects.confidence: {bad_conf} rows outside [0, 1]")
+    guessed = o.filter(~pl.col("visible") & ~pl.col("interpolated")).height
+    if guessed:
+        errors.append(f"objects: {guessed} rows with visible=False but interpolated=False")
     unlinked = (
         o.filter(pl.col("player_id").is_not_null())
         .select("player_id")
