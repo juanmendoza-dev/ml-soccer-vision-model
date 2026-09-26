@@ -13,7 +13,7 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 **Foundation**
 - [x] Repo skeleton per 01; schema v0.3 validator (`gamestate/validate.py`, tests in `tests/`)
 - [ ] Metrica → game state converter via kloppy (small, for getting the converter pattern right)
-- [ ] PFF → game state converter: tracking from the raw JSONL (raw ball incl. `z`, `ESTIMATED` → `visible=False, interpolated=True`, `confidence` mapping), ball state + possession from the inline game events, jersey → `player_id` via Rosters, direction per period from `homeTeamStartLeft`, shootouts → period 5, frame dedupe (02, 06)
+- [ ] PFF → game state converter: tracking from the raw JSONL (raw ball incl. `z`, `ESTIMATED` → `visible=False, interpolated=True`, `confidence` mapping), ball state + possession from the inline game events, jersey → `player_id` via Rosters, direction per period from `homeTeamStartLeft`, shootouts → period 5, frame dedupe, `conversion_report.json` (02, 06)
 - [ ] PFF event parser → `events.parquet`: shots, goals (incl. own goals and non-shot goals, disallowed goals marked), `set_piece`, `set_play_phase`; check it reproduces the 06 counts and all 64 scores
 - [ ] SkillCorner → game state converter: tracking, possession, `visible` / `interpolated` from `is_detected`, `view_polygon`, `ball_state` from dynamic events (02)
 - [ ] IDSSE → game state converter (external test set; don't look at results until the final check)
@@ -53,6 +53,7 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 ## Phase 2 — Vision pipeline (RTX 2060)
 - [ ] Run roboflow/sports end to end on a SoccerNet sample clip
 - [ ] Homography → pitch meters → game state writer (incl. `match.parquet`, `view_polygon`)
+- [ ] Detections cache + `run.json` (03 Diagnostics)
 - [ ] Ball tracking improvements + interpolation
 - [ ] Plug in stage 8 (possession / ball state) from Phase 1
 - [ ] Jersey OCR → player_id
@@ -61,7 +62,7 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 ## Phase 3 — End to end + demo
 - [ ] Feed vision game state into trained predictor
 - [ ] Compare predictor accuracy on vision vs. dataset tracking
-- [ ] Offline overlay renderer
+- [ ] Offline overlay renderer, with debug mode (08)
 - [ ] Live mode on workstation
 - [ ] Record a local match for the public demo (see 08)
 - [ ] Fine-tune detection/keypoints on self-recorded footage
