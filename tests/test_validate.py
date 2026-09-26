@@ -122,6 +122,24 @@ def test_empty_events_allowed(tmp_path):
     assert errors_after(tmp_path, "events", lambda df: df.clear()) == []
 
 
+def test_unknown_match_metadata_allowed(tmp_path):
+    def blank(df):
+        return df.with_columns(
+            competition=pl.lit(None, pl.String),
+            season=pl.lit(None, pl.String),
+            date=pl.lit(None, pl.Date),
+        )
+
+    assert errors_after(tmp_path, "match", blank) == []
+
+
+def test_first_frame_velocity_null_allowed(tmp_path):
+    def first_null(df):
+        return df.with_columns(vx=pl.when(pl.col("frame_id") == 0).then(None).otherwise("vx"))
+
+    assert errors_after(tmp_path, "objects", first_null) == []
+
+
 def test_missing_file(tmp_path):
     d = write(tmp_path, tiny_match())
     (d / "players.parquet").unlink()
@@ -142,7 +160,9 @@ def test_cli_exit_codes(tmp_path, capsys):
         ("match", lambda df: df.with_columns(schema_version=pl.lit("0.2")), "not allowed"),
         ("match", lambda df: df.with_columns(source=pl.lit("statsbomb")), "not allowed"),
         ("objects", lambda df: df.with_columns(x=pl.lit(None, pl.Float64)), "non-null"),
-        ("objects", lambda df: df.with_columns(vx=pl.lit(float("nan"))), "non-null"),
+        ("objects", lambda df: df.with_columns(vx=pl.lit(float("nan"))), "NaN values"),
+        ("objects", lambda df: df.with_columns(z=pl.lit(float("nan"))), "NaN values"),
+        ("frames", lambda df: df.with_columns(timestamp_s=pl.lit(None, pl.Float64)), "non-null"),
         ("events", lambda df: df.with_columns(set_piece=pl.lit("penalty_kick")), "not allowed"),
         ("frames", lambda df: df.with_columns(ball_state=pl.lit("paused")), "not allowed"),
         ("players", lambda df: df.clear(), "players: no rows"),

@@ -5,8 +5,8 @@ Keep this in sync with 02. Change the spec first, then this file.
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = "0.3"
-SUPPORTED_VERSIONS = frozenset({"0.3"})
+SCHEMA_VERSION = "0.4"
+SUPPORTED_VERSIONS = frozenset({"0.4"})
 
 PITCH_LENGTH = 105.0
 PITCH_WIDTH = 68.0
@@ -47,9 +47,9 @@ TABLES: dict[str, list[Column]] = {
         Column("match_id", "str"),
         Column("schema_version", "str", values=SUPPORTED_VERSIONS),
         Column("source", "str", values=SOURCES),
-        Column("competition", "str"),
-        Column("season", "str"),
-        Column("date", "date"),
+        Column("competition", "str", nullable=True),
+        Column("season", "str", nullable=True),
+        Column("date", "date", nullable=True),
         Column("home_team", "str"),
         Column("away_team", "str"),
         Column("native_fps", "float"),
@@ -64,8 +64,8 @@ TABLES: dict[str, list[Column]] = {
         Column("x", "float"),
         Column("y", "float"),
         Column("z", "float", nullable=True),
-        Column("vx", "float"),
-        Column("vy", "float"),
+        Column("vx", "float", nullable=True),
+        Column("vy", "float", nullable=True),
         Column("visible", "bool"),
         Column("interpolated", "bool"),
         Column("confidence", "float"),

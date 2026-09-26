@@ -51,11 +51,10 @@ def _check_columns(name: str, df: pl.DataFrame, columns: list[Column]) -> list[s
         if not _kind_ok(s.dtype, col.kind):
             errors.append(f"{where}: expected {col.kind}, got {s.dtype}")
             continue
-        nulls = s.null_count()
-        if col.kind == "float":
-            nulls += s.is_nan().sum()
-        if nulls and not col.nullable:
-            errors.append(f"{where}: {nulls} null/NaN values in a non-null column")
+        if col.kind == "float" and (nans := s.is_nan().sum()):
+            errors.append(f"{where}: {nans} NaN values; write missing values as null")
+        if (nulls := s.null_count()) and not col.nullable:
+            errors.append(f"{where}: {nulls} null values in a non-null column")
         if col.values is not None:
             bad = s.drop_nulls().cast(pl.String if col.kind == "str" else s.dtype).unique()
             bad = [v for v in bad.to_list() if v not in col.values]
