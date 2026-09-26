@@ -49,7 +49,7 @@ The v2.2 spec PDF in `docs/` is corrupt (binary bytes replaced by `EF BF BD`, pa
 
 | Item | Finding |
 |---|---|
-| Frame rate | 29.97 Hz (`fps` in Metadata; frames 33.4 ms apart). `frameNum = round(videoTime_s × 29.97)`. A few hundred duplicate frames per game (same `frameNum`, dt = 0); dedupe. |
+| Frame rate | 29.97 Hz (`fps` in Metadata; frames 33.4 ms apart). `frameNum = round(videoTime_s × 29.97)`. A few hundred duplicate frames per game (same `frameNum`, dt = 0), identical copies; dedupe. |
 | Players per frame | Always 11 per side (12–13 briefly around subs), incl. off-camera players. Keys: `jerseyNum, x, y, visibility, confidence`. No speed. |
 | Visibility | `visibility` = `VISIBLE` or `ESTIMATED`; `confidence` = HIGH / MEDIUM / LOW. ~31–36% of player rows are VISIBLE overall. On in-play frames that show anything, median 10–18 of 22 players visible. |
 | ESTIMATED quality | Poor. At 76 shots, the shooter's tracked position is 0.0 m (median) from the event's position when VISIBLE, but 12 m from the ball (median, p90 24 m) when ESTIMATED. The shooter was ESTIMATED in 32% of shot frames. |
@@ -57,11 +57,23 @@ The v2.2 spec PDF in `docs/` is corrupt (binary bytes replaced by `EF BF BD`, pa
 | Raw vs smoothed | Each frame has raw (`homePlayers`, `balls`) and smoothed (`homePlayersSmoothed`, `ballsSmoothed`) copies. Smoothed ball has x/y null on ~8–14% more frames than raw. |
 | Camera footprint | None. No field like SkillCorner's `image_corners_projection`. |
 | Ball | 3D: `x, y, z` (z always present when the ball is), plus `visibility`. No ball detected = empty `balls` list. |
-| Coordinates | Meters, origin at the center spot, pitch 105 × 68. Directions are **not** normalized: teams swap ends each period. Home attacks +x in period 1 when `homeTeamStartLeft = true` (home GK at x ≈ −41 in P1, +42 in P2). kloppy defines +y as bottom-to-top (not checked against the spec). |
+| Coordinates | Meters, origin at the center spot, pitch 105 × 68. Directions are **not** normalized: teams swap ends each period. Home attacks +x in period 1 when `homeTeamStartLeft = true` (home GK at x ≈ −41 in P1, +42 in P2). kloppy defines +y as bottom-to-top; confirmed from left/right-sided players on all 51 games (see converter results). |
 | Event sync | Tracking frames carry `game_event_id` / `possession_event_id` and an inline `game_event` (with `start_frame`, `end_frame`, `home_ball`) on the frames it spans. Event `eventTime` (s) × 1000 = frame `videoTimeMs`. Checked on 76 shots: tracking ball is 0.18 m from the event's ball (median, p90 1.4 m). |
 | Ball state / possession | No per-frame flag. Derivable from the inline `game_event`: `OUT`/`END` → dead, `OTB`/kickoffs → alive; possession team from `home_ball`. This is what kloppy does (10502: 65% alive). Fouls without an `OUT` event don't set dead. |
 | Player IDs | Tracking uses jersey number only. (team, `shirtNumber`) → `player.id` via Rosters is unique in every game checked, and all roster IDs are in `players.csv`. Event rows carry `playerId` directly. |
 | Event snapshots | Every event row also has its own 22-player + ball snapshot (`homePlayers` with `playerId`, `visibility`, `speed`). Useful for shot-time xG features. |
+
+### PFF converter results (all 51 tracked games, 2026-09-26)
+`converters/pff.py` + `converters/pff_events.py`; every game passes the validator with nothing unresolved.
+- **Cost:** ~17 s and 2.4 GB peak per game on the M1; 173k–198k frames and 3.9M–4.5M object rows per game (objects.parquet ~44 MB).
+- **Duplicates:** 33,336 duplicate `frameNum`s over 51 games, every one an identical copy of the previous frame. No `frameNum` gaps after dedupe, `periodElapsedTime` never goes backwards, no null positions, never more than one ball.
+- **Direction:** 8 games have `homeTeamStartLeft = false` and are rotated 180°. The home keeper is on the expected side in periods 1 and 2 in all 51. **+y confirmed:** in every team-period, left-sided players (LB/LWB/LW/LM/LCB) have a larger mean y than right-sided ones when the team attacks +x (margin 1.7–31 m), so kloppy's claim holds.
+- **Not yet seen in real tracking:** extra time and shootouts. None of the 51 went to extra time; all five extra-time games are among the 13 missing files.
+- **Shot vs tracked ball:** 1,176 of 1,179 shots have a tracked ball; median 0.0 m, p90 0.44 m, per-game median ≤ 0.67 m. 80% are exactly 0 m, so the event's ball position is mostly copied from tracking. This check catches frame or direction mistakes, not independent disagreement. The 0.18 m on 76 shots above was a different sample.
+- **Ball far off the pitch:** 845 ball rows in 25 games are more than 15 m off the pitch (ESTIMATED balls in the stands). They're dropped and logged, because the validator treats them as pixel errors.
+- **Speed:** raw positions jitter. Player speed p99 is 6.9–12.4 m/s (median 8.3); 5k–42k rows per game are over 12 m/s, from VISIBLE as well as ESTIMATED rows. They're reported and kept as-is; smoothing is left to feature code.
+- **Visibility:** 29–54% of frames (median 41%) have every player ESTIMATED; ball alive on 48–72% of frames.
+- **Unchecked:** `ball_carrier_id` is always null, because PFF tracking has no carrier. `view_polygon` is null.
 
 ### Loading PFF with kloppy (3.19.0, latest release)
 - `kloppy.pff.load_tracking(meta_data, roster_meta_data, raw_data)` loads the June 2025 files without errors (~34 s per game, 176,818 frames for 10502). It fills `ball_state` and `ball_owning_team` as described above.
