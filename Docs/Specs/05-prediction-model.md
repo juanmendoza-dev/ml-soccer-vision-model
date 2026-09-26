@@ -20,7 +20,8 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 - Report performance separately for lead times (see 07); a model that only fires 0.2 s before the shot is not useful.
 
 ## Models (build in order)
-1. **Baseline:** gradient boosting (LightGBM) on hand features — ball distance/angle to goal, defenders in shooting cone, carrier speed, pitch control near the box.
+0. **Floor:** logistic regression on ball distance + angle to goal. Any model that can't beat this isn't learning anything.
+1. **Baseline:** gradient boosting (LightGBM) on hand features — ball distance/angle to goal, defenders in shooting cone, carrier speed, pitch control near the box. This is the bar the GNNs must clear.
 2. **Frame GNN:** one graph per frame. Nodes = players + ball (+ goals); node features = position, velocity, team, dynamic + profile features (04); edges = all pairs or k-nearest, edge features = distance, relative velocity. Built with `unravelsports` SoccerGraphConverter.
 3. **Temporal GNN:** last 2–3 s of frames (at 10 Hz) through a GNN backbone, then a GRU/T-GCN over time. Follows the SoccerAI approach.
 
@@ -55,7 +56,8 @@ xG at the carrier's current position is an approximation. The shot usually happe
 - Weighted loss or focal loss; evaluate with PR-AUC, not accuracy.
 
 ## Acceptance criteria
-- Temporal GNN beats baseline on PR-AUC in grouped cross-validation (pooled out-of-fold, and on most folds), confirmed on the IDSSE external test set (see 07).
+- LightGBM baseline beats the distance + angle floor.
+- Temporal GNN beats the LightGBM baseline on PR-AUC in grouped cross-validation (pooled out-of-fold, and on most folds), confirmed on the IDSSE external test set (see 07).
 - Calibration error acceptable after (optional) temperature scaling.
 
 ## Open questions

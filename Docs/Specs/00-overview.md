@@ -17,7 +17,7 @@ Goals are too rare (~2–3 per match) to predict directly. Instead:
 **Out (for now):** set-piece-specific models, betting/odds use, multi-camera setups.
 
 ## Success criteria
-1. Shot predictor beats a simple baseline (distance + angle to goal) on held-out matches.
+1. Shot predictor beats a distance + angle floor and a LightGBM hand-feature baseline in grouped cross-validation by match (see 05, 07).
 2. Predictions are calibrated (a 30% prediction is right ~30% of the time).
 3. Median lead time of at least 2 seconds before a shot at a useful threshold.
 4. End-to-end demo: a video clip with a live probability bar overlaid.

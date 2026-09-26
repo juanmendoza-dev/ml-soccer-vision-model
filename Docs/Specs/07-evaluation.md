@@ -33,7 +33,7 @@
 | False alarms per match | At the same τ; keeps lead time honest |
 
 ## Required comparisons
-1. Baseline vs. frame GNN vs. temporal GNN.
+1. Distance + angle floor vs. LightGBM baseline vs. frame GNN vs. temporal GNN.
 2. Player profiles: none vs. position only vs. full (see 04).
 3. H = 3 s vs. H = 5 s.
 4. Dataset tracking vs. vision-pipeline tracking on the same matches, if available (measures how much vision errors hurt).
