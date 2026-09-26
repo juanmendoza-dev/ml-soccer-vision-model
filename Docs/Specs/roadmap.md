@@ -14,8 +14,8 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 **Foundation**
 - [x] Repo skeleton per 01; schema v0.4 validator (`gamestate/validate.py`, tests in `tests/`)
 - [x] Metrica → game state converter, games 1–2 (`converters/metrica.py`; tracking via kloppy, events CSV parsed directly). Game 3 not converted
-- [ ] PFF → game state converter: tracking from the raw JSONL (raw ball incl. `z`, `ESTIMATED` → `visible=False, interpolated=True`, `confidence` mapping), ball state + possession from the inline game events, jersey → `player_id` via Rosters, direction per period from `homeTeamStartLeft`, shootouts → period 5, frame dedupe, `conversion_report.json` (02, 06)
-- [ ] PFF event parser → `events.parquet`: shots, goals (incl. own goals and non-shot goals, disallowed goals marked), `set_piece`, `set_play_phase`; check it reproduces the 06 counts and all 64 scores
+- [x] PFF → game state converter (`converters/pff.py`, all 51 tracked games): tracking from the raw JSONL (raw ball incl. `z`, `ESTIMATED` → `visible=False, interpolated=True`, `confidence` mapping), ball state + possession from the inline game events, jersey → `player_id` via Rosters, direction per period from `homeTeamStartLeft`, shootouts → period 5, frame dedupe, `conversion_report.json` (02, 06)
+- [x] PFF event parser → `events.parquet` (`converters/pff_events.py`, all 64 games): shots, goals (incl. own goals and non-shot goals, disallowed goals marked), `set_piece`, `set_play_phase`; reproduces the 06 counts and all 64 scores (tests). Shootout → period 5 is only unit-tested: all 5 shootout games are among the 13 without tracking
 - [ ] SkillCorner → game state converter: tracking, possession, `visible` / `interpolated` from `is_detected`, `view_polygon`, `ball_state` from dynamic events (02)
 - [ ] IDSSE → game state converter (external test set; don't look at results until the final check)
 - [ ] 10 Hz resampling + label generation: `shot_within_H`, open play only (set plays excluded, 05)
