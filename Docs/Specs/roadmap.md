@@ -23,4 +23,6 @@
 - [ ] Compare predictor accuracy on vision vs. dataset tracking
 - [ ] Offline overlay renderer
 - [ ] Live mode on workstation
+- [ ] Record a local match for the public demo (see 08)
+- [ ] Fine-tune detection/keypoints on self-recorded footage
 - [ ] Demo clip + write-up
