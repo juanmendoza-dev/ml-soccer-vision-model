@@ -8,7 +8,7 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 | Dataset | Matches | Tracking | Shot events | Players | License / access | Loader |
 |---|---|---|---|---|---|---|
 | SkillCorner open data (A-League 2024/25) | 20 | 10 Hz, broadcast-derived, off-camera players extrapolated | Yes: `dynamic_events.csv`, `player_possession` rows with `end_type = shot` and `frame_start`/`frame_end`. **526 shots** counted, 409 outside set plays; 61 followed by `game_interruption_after = goal_for` | Named, with IDs and jersey numbers | MIT, on GitHub (tracking via git-lfs, ~90 MB/match; all 20 confirmed downloadable) | kloppy `skillcorner` (verify it reads dynamic events) |
-| PFF FC World Cup 2022 | 64 | 29.97 Hz, broadcast-derived and manually refined, 3D ball | Yes: synchronized event data | Rosters with names | Free, by request form. **Access granted 2026-09-25**; terms of use still to confirm | kloppy `pff` (verify it reads the per-game event files) |
+| PFF FC World Cup 2022 | 64 (tracking on disk for 51) | 29.97 Hz, broadcast-derived, all 22 players every frame with a per-player `visibility` flag (VISIBLE / ESTIMATED), 3D ball | Yes: per-game event JSON, `possessionEventType = SH`. **1,518 shots** counted (shootouts excluded), 1,450 not from a penalty/free kick/corner; 172 goals | Rosters with names and IDs; tracking uses jersey numbers | Free, by request form. **Access granted 2026-09-25**; terms of use still to confirm | kloppy `pff.load_tracking` only (drops visibility, see below); no event loader |
 | IDSSE (Bassek et al. 2025, Bundesliga 1 + 2, 2022/23) | 7 | 25 Hz, TRACAB optical, full pitch | Yes: official DFL events | Named | CC-BY 4.0, attribute DFL + cite paper | kloppy `sportec.load_open_tracking_data` |
 | Metrica Sports sample data | 3 | 25 Hz, full pitch | Yes: synchronized events | Anonymized | No formal license; acknowledge source | kloppy `metrica` |
 
@@ -17,7 +17,26 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 |---|---|---|
 | SkillCorner only | 20 | 526 counted (409 open play) |
 | + IDSSE + Metrica | 30 | ~800 (estimated at ~25/match) |
-| + PFF | 94 | ~2,400 (estimated) |
+| PFF, games with tracking | 51 | 1,179 counted (1,125 open play strict, ~890 set-play-phase proxy) |
+| PFF, all games | 64 | 1,518 counted (1,450 open play strict, ~1,153 set-play-phase proxy) |
+
+#### PFF counts (counted 2026-09-25)
+| | All 64 games | 51 with tracking |
+|---|---|---|
+| Shots (`SH`, shootout kicks excluded) | 1,518 | 1,179 |
+| Open play, strict (`setpieceType = O`) | 1,450 | 1,125 |
+| Open play, set-play-phase proxy (also drops shots ≤ 10 s after a same-team corner/free kick) | 1,153 | 890 |
+| Goals | 172 | 129 |
+| of which open-play shots | 149 | 113 |
+| Shots per match, min / median / max | 9 / 23 / 41 | 9 / 22 / 41 |
+
+How they were identified (event files, one row per possession event):
+- **Shot:** `possessionEvents.possessionEventType = "SH"`.
+- **Set piece:** `gameEvents.setpieceType` of the game event the shot belongs to: `O` open, `P` penalty, `F` free kick, `C` corner, `T` throw-in, `G` goal kick, `K` kickoff, `D` drop ball. Shots by type: 1,450 `O`, 44 `F`, 24 `P` (in-match), 0 `C`. A header from a corner cross is its own game event coded `O`, so "strict" keeps it. SkillCorner's 409 drops the whole set-play phase; the proxy row is the closer comparison (unverified: 10 s window is arbitrary, throw-ins not excluded).
+- **Shootout:** a `P` shot in period 4 with no kickoff after it. 41 kicks, 26 scored; matches the five real shootouts.
+- **Goal:** `shotOutcomeType = "G"` on an `SH` row whose next restart is a kickoff (or period end). 168 shot goals (149 open play, 2 free kick, 17 penalties) + 4 goals not coded as shots (1 `CR`, Bruno Fernandes vs Uruguay; 3 `RE`, the 2 own goals plus Costa Rica's 2nd vs Germany) = **172**, matching the official total. Rebuilt scores match the real results for all 64 games.
+- `shotOutcomeType = "G"` followed by a free-kick restart = **disallowed goal** (22, e.g. 3 in Argentina–Saudi Arabia). Don't label these as goals.
+- Sabiri's goal (Belgium–Morocco) is coded twice, as `CR` + `SH`; count the `SH` only.
 
 ### Decisions
 - **Primary development set: SkillCorner.** It has the most usable open shots available now. It is broadcast-derived like our vision output, so the domain gap is smaller. It has named players, so identity is solved, but a stats source for A-League players is still open: StatsBomb open data doesn't cover them. SkillCorner's season aggregates (physical, off-ball runs, passing) cover all 406 players for the full season; 04 uses them under a same-season exception with guardrails.
