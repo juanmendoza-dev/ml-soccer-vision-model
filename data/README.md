@@ -19,3 +19,13 @@ raw/pff/
 Drive zips large folders in parts (`...-1-001.zip`, `...-1-002.zip`, ...). Download every part.
 
 Also save PFF's "Change Log" Google Doc when downloading; it lists format changes between versions.
+
+## raw/metrica/ — Metrica Sports sample data
+Converter development only (06). No formal license; acknowledge Metrica Sports if anything is published.
+
+```
+git clone --depth 1 https://github.com/metrica-sports/sample-data.git raw/metrica/repo
+rm -rf raw/metrica/repo/.git
+```
+
+Games 1–2 (CSV) are converted with `python -m converters.metrica`. Game 3 (EPTS + JSON) isn't converted yet.
