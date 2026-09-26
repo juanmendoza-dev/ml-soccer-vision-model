@@ -5,7 +5,7 @@ Turn broadcast video into game state (02) for each frame.
 
 ## Inputs / Outputs
 - **In:** video file (mp4), optional team rosters.
-- **Out:** `match.parquet`, `objects.parquet`, `frames.parquet`, `players.parquet` in schema v0.3.
+- **Out:** `match.parquet`, `objects.parquet`, `frames.parquet`, `players.parquet` in schema v0.4.
 
 ## Stages
 1. **Detection** — YOLOv8 fine-tuned on players, goalkeepers, referees, ball. Start from Roboflow's pretrained soccer weights.
@@ -14,7 +14,7 @@ Turn broadcast video into game state (02) for each frame.
 4. **Pitch homography** — pitch keypoint model → per-frame homography → pixel to meters. Smooth over time to reduce jitter.
 5. **Ball tracking** — dedicated detector at higher input resolution; interpolate short gaps (< 1 s) and mark `interpolated=True`.
 6. **Jersey OCR** — read numbers over multiple frames, vote per track, link to roster → `player_id`. Borrow approach from sn-gamestate.
-7. **Velocities** — finite differences on smoothed positions.
+7. **Velocities** — backward differences on trailing-smoothed positions (causal, frames `<= t` only; see 02 `vx, vy`). A centered window would leak future frames into the features.
 8. **Game state inference** — fills `possession_team`, `ball_carrier_id`, `ball_state` and `view_polygon` (02). Works on pitch coordinates only, not pixels, so the same code runs on dataset tracking for testing.
    - **Ball carrier:** the player nearest the ball, within ~1.5 m, with ball height < ~1 m where known, for at least ~3 consecutive frames at 10 Hz. Otherwise null (loose ball, pass in flight).
    - **Possession team:** the carrier's team. It persists through passes and loose balls until a player from the other team becomes carrier. Null at the start of a period until someone first controls the ball.

@@ -6,6 +6,7 @@ The contract between every component. Vision output and dataset converters must 
 - Pitch normalized to **105 m × 68 m**.
 - Origin **(0, 0) at the center spot**. x ∈ [-52.5, 52.5], y ∈ [-34, 34].
 - +x points toward the goal the **home team attacks in period 1**. Direction flips are recorded, not applied (see `frames` table).
+- +y is 90° counter-clockwise from +x: the left touchline when facing the +x goal. Seen as a TV picture with +x to the right, +y is up.
 - Units: meters, seconds, meters/second.
 
 ## Storage
@@ -17,8 +18,8 @@ Parquet files under `data/gamestate/<match_id>/`: `match.parquet`, `objects.parq
 | match_id | str | |
 | schema_version | str | e.g. `0.3`; the validator rejects versions it doesn't know |
 | source | enum | skillcorner, pff, idsse, metrica, vision |
-| competition, season | str | Season as `YYYY/YY` or `YYYY`; used for the previous-season rule in 04 |
-| date | date | Kickoff date |
+| competition, season | str/null | Season as `YYYY/YY` or `YYYY`; used for the previous-season rule in 04. null for anonymized sources (Metrica) and unknown vision footage |
+| date | date/null | Kickoff date; null when unknown |
 | home_team, away_team | str | |
 | native_fps | float | Frame rate as stored; prediction resamples to 10 Hz |
 
@@ -33,7 +34,7 @@ Parquet files under `data/gamestate/<match_id>/`: `match.parquet`, `objects.parq
 | player_id | str/null | Links to `players.parquet` once identified |
 | x, y | float | Meters |
 | z | float/null | Ball height in meters where the source has it (PFF). Always null for non-ball objects |
-| vx, vy | float | m/s, smoothed |
+| vx, vy | float/null | m/s, smoothed. **Causal:** computed from frames `<= t` of the same track only (backward differences, trailing smoothing), never across a period boundary or a gap in the track. null on a track's first frame after a start or gap |
 | visible | bool | False if outside camera view. `visible=False` implies `interpolated=True` (the position is a guess) |
 | interpolated | bool | True if filled in, not detected |
 | confidence | float | 0–1. 1.0 for dataset tracking without a confidence field. PFF maps HIGH / MEDIUM / LOW → 1.0 / 0.67 / 0.33 (ordinal, not a probability) |
@@ -73,7 +74,7 @@ The predictor needs `ball_state`, `possession_team` and `ball_carrier_id` at inf
 
 | Producer | ball_state | possession_team / ball_carrier_id |
 |---|---|---|
-| IDSSE, Metrica, PFF | Provider ball status via kloppy, where present | Provider fields via kloppy |
+| IDSSE, Metrica, PFF | Provider ball status via kloppy, where present (Metrica CSV games 1–2 have none: null) | Provider fields via kloppy, where present (Metrica CSV: null) |
 | SkillCorner | Derived: dead between a possession ending in a game interruption (`game_interruption_after`) and the next restart; dead where `period` is null | Frame `possession.group` / `possession.player_id` |
 | Vision | Inferred (03, stage 8) | Inferred (03, stage 8) |
 
@@ -87,7 +88,7 @@ The predictor needs `ball_state`, `possession_team` and `ball_carrier_id` at inf
 |---|---|---|
 | PFF | `gameEvents.setpieceType`: O → open_play, C → corner, F → free_kick, P → penalty, T → throw_in, G → goal_kick, K → kickoff, D → drop_ball | Proxy: true if ≤ 10 s after a same-team corner or free kick in the same period (06; window unverified) |
 | SkillCorner | From the possession's start type where available, else null | `team_in_possession_phase_type = set_play` |
-| IDSSE, Metrica | Provider event qualifiers via kloppy, where present | null unless the provider marks it |
+| IDSSE, Metrica | Provider event qualifiers via kloppy, where present. Metrica CSV: the `SET PIECE` row at the shot's frame (FREE KICK, CORNER KICK, PENALTY, ...), else open_play | null unless the provider marks it |
 | Vision | null | null |
 
 - Open-play labels (05) use `set_piece = open_play` and `set_play_phase` not true.
@@ -100,6 +101,7 @@ The predictor needs `ball_state`, `possession_team` and `ball_carrier_id` at inf
 - Missing players (off camera) stay missing rows or `visible=False`; never guessed positions without `interpolated=True`. PFF `visibility = ESTIMATED` and SkillCorner `is_detected = False` rows are written as `visible=False, interpolated=True`.
 - Any schema change is made here first, with a version bump.
 
-**Schema version:** 0.3
+**Schema version:** 0.4
+- 0.4: `competition`, `season`, `date` nullable; +y direction defined; `vx`/`vy` causal and nullable
 - 0.3: added `match.schema_version`, `objects.z`, `events.set_piece`, `events.set_play_phase`, period 5 for shootouts, `disallowed` outcome, PFF confidence mapping, `visible=False` ⇒ `interpolated=True`
 - 0.2: added `match.parquet`, `ball_state`, `view_polygon`; defined who fills possession fields

@@ -11,7 +11,7 @@
 Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order.
 
 **Foundation**
-- [x] Repo skeleton per 01; schema v0.3 validator (`gamestate/validate.py`, tests in `tests/`)
+- [x] Repo skeleton per 01; schema v0.4 validator (`gamestate/validate.py`, tests in `tests/`)
 - [ ] Metrica → game state converter via kloppy (small, for getting the converter pattern right)
 - [ ] PFF → game state converter: tracking from the raw JSONL (raw ball incl. `z`, `ESTIMATED` → `visible=False, interpolated=True`, `confidence` mapping), ball state + possession from the inline game events, jersey → `player_id` via Rosters, direction per period from `homeTeamStartLeft`, shootouts → period 5, frame dedupe, `conversion_report.json` (02, 06)
 - [ ] PFF event parser → `events.parquet`: shots, goals (incl. own goals and non-shot goals, disallowed goals marked), `set_piece`, `set_play_phase`; check it reproduces the 06 counts and all 64 scores
