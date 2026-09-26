@@ -19,7 +19,7 @@ Tracking datasets (PFF, SkillCorner, IDSSE, Metrica) enter the pipeline directly
 ├── Docs/
 │   └── Specs/            # these specs
 ├── pyproject.toml        # core deps; extras: converters, prediction, vision, dev
-├── data/                 # gitignored; raw/, processed/, gamestate/, splits/
+├── data/                 # gitignored; raw/, processed/, gamestate/, splits/, vision_cache/
 ├── gamestate/            # schema 02 as code + validator; the only thing vision/ and prediction/ share
 ├── vision/               # video → game state
 ├── converters/           # PFF/SkillCorner/IDSSE/Metrica → game state
