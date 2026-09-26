@@ -10,20 +10,26 @@ import polars as pl
 
 from gamestate.validate import validate_match
 
-# Trailing smoothing window for velocities, in seconds.
+# Velocities difference over this many seconds back (fewer at a track start).
 VELOCITY_WINDOW_S = 0.2
 
 
 def causal_velocities(objects: pl.DataFrame, frames: pl.DataFrame) -> pl.DataFrame:
     """Add vx, vy (m/s) from frames <= t of the same track only (02).
 
-    A track segment breaks on a missing frame or a new period; the first frame
-    of each segment gets null. Positions are smoothed with a trailing mean,
-    then differenced backwards, so nothing after t leaks in.
+    v_t = (p_t - p_{t-k}) / (ts_t - ts_{t-k}), with k = min(window, frames since
+    the segment started). That's the same as differencing a trailing mean over
+    full windows, without the half-speed warm-up a filling window gives. A
+    segment breaks on a missing frame or a new period; its first frame is null.
     """
     fps = 1 / frames["timestamp_s"].diff().filter(frames["timestamp_s"].diff() > 0).median()
     window = max(1, round(VELOCITY_WINDOW_S * fps))
     track = ["object_id", "segment"]
+
+    def lagged(col: str) -> pl.Expr:
+        full = pl.col("idx") >= window
+        return pl.when(full).then(pl.col(col).shift(window)).otherwise(pl.col(col).first())
+
     return (
         objects.drop("vx", "vy", strict=False)
         .join(frames.select("frame_id", "period", "timestamp_s"), on="frame_id")
@@ -34,16 +40,21 @@ def causal_velocities(objects: pl.DataFrame, frames: pl.DataFrame) -> pl.DataFra
             .cum_sum()
             .over("object_id")
         )
+        .with_columns(idx=pl.int_range(pl.len()).over(track))
         .with_columns(
-            xs=pl.col("x").rolling_mean(window, min_samples=1).over(track),
-            ys=pl.col("y").rolling_mean(window, min_samples=1).over(track),
-            dt=pl.col("timestamp_s").diff().over(track),
+            x0=lagged("x").over(track),
+            y0=lagged("y").over(track),
+            t0=lagged("timestamp_s").over(track),
         )
         .with_columns(
-            vx=(pl.col("xs").diff().over(track) / pl.col("dt")),
-            vy=(pl.col("ys").diff().over(track) / pl.col("dt")),
+            vx=pl.when(pl.col("idx") > 0).then(
+                (pl.col("x") - pl.col("x0")) / (pl.col("timestamp_s") - pl.col("t0"))
+            ),
+            vy=pl.when(pl.col("idx") > 0).then(
+                (pl.col("y") - pl.col("y0")) / (pl.col("timestamp_s") - pl.col("t0"))
+            ),
         )
-        .drop("segment", "xs", "ys", "dt", "period", "timestamp_s")
+        .drop("segment", "idx", "x0", "y0", "t0", "period", "timestamp_s")
     )
 
 

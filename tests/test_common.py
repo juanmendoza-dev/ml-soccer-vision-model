@@ -34,7 +34,8 @@ def test_constant_speed_recovered():
     objects, frames = track(list(range(20)), [0.5 * f for f in range(20)])  # 5 m/s
     vx = vx_by_frame(objects, frames)
     assert vx[0] is None
-    assert vx[19] == pytest.approx(5.0)
+    for f in range(1, 20):  # including the warm-up frames before a full window
+        assert vx[f] == pytest.approx(5.0), f
 
 
 def test_future_positions_dont_change_past_velocities():
@@ -52,7 +53,8 @@ def test_gap_starts_a_new_segment():
     objects, frames = track(ids, [float(i) for i in ids])
     vx = vx_by_frame(objects, frames)
     assert vx[7] is None
-    assert vx[8] is not None
+    assert vx[8] == pytest.approx(10.0)
+    assert vx[3] == pytest.approx(10.0)
 
 
 def test_period_boundary_starts_a_new_segment():
@@ -60,7 +62,7 @@ def test_period_boundary_starts_a_new_segment():
     objects, frames = track(ids, [float(i) for i in ids], periods={f: 2 for f in range(5, 10)})
     vx = vx_by_frame(objects, frames)
     assert vx[5] is None
-    assert vx[6] is not None
+    assert vx[6] == pytest.approx(10.0)
 
 
 def test_tracks_dont_mix():
