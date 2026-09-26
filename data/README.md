@@ -10,7 +10,7 @@ raw/pff/
 ├── Event Data/       {game_id}.json, one per game (64). Top-level files only; skip the dated subfolders (old versions)
 ├── Metadata/         {game_id}.json (64)
 ├── Rosters/          {game_id}.json (64)
-├── Tracking Data/    {game_id}.jsonl.bz2 (64). Start with 10502, 10503, 10504; get the rest once the converter works
+├── Tracking Data/    {game_id}.jsonl.bz2 (64). 51 on disk; the 13 missing are listed in Docs/Specs/06. Develop the converter on 10502, 10504, 10505
 ├── docs/             PFF FC Tracking Data Specification v2.2.pdf (came inside the tracking download)
 ├── players.csv
 └── competitions.csv

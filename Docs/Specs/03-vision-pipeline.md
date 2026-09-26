@@ -31,7 +31,7 @@ Turn broadcast video into game state (02) for each frame.
 - Output passes the schema validator in `tests/`.
 - On SoccerNet-GSR validation clips: positions within ~2 m for most visible players (measure with sn-trackeval GS-HOTA as a secondary metric).
 - Team assignment correct on > 95% of player-frames on sample clips.
-- Stage 8, run on SkillCorner and IDSSE tracking and compared to provider values: possession team matches on ≥ 90% of frames where the provider has a value; frames the provider marks dead are labeled dead or null ≥ 90% of the time. Starting targets; revisit after the first run.
+- Stage 8, run on PFF, SkillCorner and IDSSE tracking and compared to provider values: possession team matches on ≥ 90% of frames where the provider has a value; frames the provider marks dead are labeled dead or null ≥ 90% of the time. Starting targets; revisit after the first run.
 
 ## Open questions
 - Is Roboflow's pretrained ball detector good enough, or is ball fine-tuning needed?

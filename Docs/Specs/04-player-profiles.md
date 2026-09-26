@@ -12,7 +12,7 @@ No single open source covers every player in our data (researched 2026-09-25):
 | Training data | Profile source | Status |
 |---|---|---|
 | SkillCorner (A-League 2024/25) | SkillCorner season aggregates (`data/aggregates/*.csv` in their repo): 406 players, all 13 teams, full season | **Same-season exception**, see below |
-| PFF (World Cup 2022) | StatsBomb open data from earlier seasons (Euro 2020, La Liga 2020/21, Ligue 1 2021/22) | Partial coverage; measure it once PFF access arrives. Never the World Cup 2022 itself |
+| PFF (World Cup 2022) | StatsBomb open data from earlier seasons (Euro 2020, La Liga 2020/21, Ligue 1 2021/22) | Partial coverage; measure it when building PFF profiles (PFF is now the primary set, 06). Never the World Cup 2022 itself |
 | IDSSE (Bundesliga 2022/23) | None open: StatsBomb has Bundesliga 2023/24 only, which is later | Position-average profiles only |
 | Metrica | None: anonymized | Position-average profiles only |
 
@@ -53,4 +53,4 @@ From game state:
 
 ## Open questions
 - How many PFF World Cup players have StatsBomb data from earlier seasons? If it's low, PFF runs use position-average profiles too.
-- Is a profile ablation on SkillCorner alone (~400 shots) enough to show a real effect, or does it have to wait for PFF?
+- Is the ablation on PFF (~1,150 open-play shots once all 64 games are in) enough to show a real effect, given that its profile coverage may be partial?

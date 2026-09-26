@@ -13,9 +13,9 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 **Foundation**
 - [x] Repo skeleton per 01; schema v0.3 validator (`gamestate/validate.py`, tests in `tests/`)
 - [ ] Metrica → game state converter via kloppy (small, for getting the converter pattern right)
-- [ ] PFF → game state converter: tracking from the raw JSONL (raw ball incl. `z`, `visibility` → `visible`, `confidence` mapping), ball state + possession from the inline game events, jersey → `player_id` via Rosters, direction per period from `homeTeamStartLeft`, shootouts → period 5, frame dedupe (02, 06)
+- [ ] PFF → game state converter: tracking from the raw JSONL (raw ball incl. `z`, `ESTIMATED` → `visible=False, interpolated=True`, `confidence` mapping), ball state + possession from the inline game events, jersey → `player_id` via Rosters, direction per period from `homeTeamStartLeft`, shootouts → period 5, frame dedupe (02, 06)
 - [ ] PFF event parser → `events.parquet`: shots, goals (incl. own goals and non-shot goals, disallowed goals marked), `set_piece`, `set_play_phase`; check it reproduces the 06 counts and all 64 scores
-- [ ] SkillCorner → game state converter: tracking, possession, `visible` from `is_detected`, `view_polygon`, `ball_state` from dynamic events (02)
+- [ ] SkillCorner → game state converter: tracking, possession, `visible` / `interpolated` from `is_detected`, `view_polygon`, `ball_state` from dynamic events (02)
 - [ ] IDSSE → game state converter (external test set; don't look at results until the final check)
 - [ ] 10 Hz resampling + label generation: `shot_within_H`, open play only (set plays excluded, 05)
 - [ ] Grouped folds over PFF + SkillCorner → `data/splits/folds.json` (07); provisional until all 64 PFF games are in
