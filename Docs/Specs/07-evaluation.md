@@ -34,7 +34,7 @@
 
 ## Required comparisons
 1. Baseline vs. frame GNN vs. temporal GNN.
-2. With vs. without player profiles.
+2. Player profiles: none vs. position only vs. full (see 04).
 3. H = 3 s vs. H = 5 s.
 4. Dataset tracking vs. vision-pipeline tracking on the same matches, if available (measures how much vision errors hurt).
 5. Provider vs. inferred possession/ball state (03 stage 8) on dataset tracking: same model, same folds. Measures how much the inference rules alone cost before vision errors are added.

@@ -47,7 +47,8 @@ From game state:
 `profiles.parquet` keyed by `player_id` + season, with a `profile_source` column (skillcorner_agg, statsbomb, position_avg); dynamic features computed on the fly in the graph builder (05).
 
 ## Acceptance criteria
-- Ablation: model with profiles vs. without, on the same folds (see 07). Profiles are kept only if they help.
+- Ablation with three arms on the same folds (see 07): **no profiles** vs. **position only** (position group one-hot) vs. **full profiles**. Full profiles are kept only if they beat position only. Otherwise the player-specific stats add nothing and position is enough.
+- Results from SkillCorner profiles are **provisional** because of the same-season exception. "Profiles help" becomes a final claim only once it holds on data with clean earlier-season profiles (PFF + prior StatsBomb seasons).
 - The `count_match` leakage check above passes.
 
 ## Open questions
