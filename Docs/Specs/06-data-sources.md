@@ -36,7 +36,7 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 ## Other sources
 | Dataset | Type | Use in project |
 |---|---|---|
-| StatsBomb open data (incl. 360) | Events + freeze frames at shots, no continuous tracking | xG training (has defender and GK positions at the shot), player profiles |
+| StatsBomb open data (incl. 360) | Events + freeze frames at shots, no continuous tracking. 360 for 300 men's matches (9 competitions, incl. World Cup 2022 = same matches as PFF) | xG training (has defender and GK positions at the shot), player profiles |
 | Wyscout open events (Pappalardo et al. 2019) | Events only | Large shot sample for a location-only xG (via defcon CSV) |
 | SoccerNet (GSR, tracking, action spotting) | Broadcast video + labels | Vision development and evaluation; video access requires signing their NDA |
 | Roboflow Universe soccer datasets | Labeled images | Player, ball, pitch keypoint detection fine-tuning |
