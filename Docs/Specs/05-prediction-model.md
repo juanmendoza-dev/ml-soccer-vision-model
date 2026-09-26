@@ -25,6 +25,15 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 2. **Frame GNN:** one graph per frame. Nodes = players + ball (+ goals); node features = position, velocity, team, dynamic + profile features (04); edges = all pairs or k-nearest, edge features = distance, relative velocity. Built with `unravelsports` SoccerGraphConverter.
 3. **Temporal GNN:** last 2–3 s of frames (at 10 Hz) through a GNN backbone, then a GRU/T-GCN over time. Follows the SoccerAI approach.
 
+## Off-camera players
+Vision only sees players inside the broadcast frame. Most training tracking (IDSSE, Metrica, SkillCorner extrapolated) has all 22. Training only on full data would teach the model to rely on players it won't see at inference.
+- Every node gets a `visible` feature (02 `objects.visible`).
+- **Training view:** by default, train on what a broadcast would show:
+  - SkillCorner: drop players with `is_detected = False` (maps to `visible = False`). Its `view_polygon` is the real camera footprint.
+  - Full-pitch sources (IDSSE, Metrica): drop players outside a camera footprint borrowed from a SkillCorner frame with a similar ball position.
+- The ball carrier and ball are always kept if the source has them, since the broadcast camera follows the ball.
+- Compare **full** vs. **broadcast view** on the same folds (see 07). If broadcast view costs a lot, vision output will too.
+
 ## xG model
 ### Feature rule
 Every xG feature must be (a) computable at frame t from game state (02), before any shot happens, and (b) present in the training source. Anything only known once the shot is taken is out.

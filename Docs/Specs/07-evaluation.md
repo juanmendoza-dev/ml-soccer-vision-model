@@ -48,7 +48,8 @@ The probability rises and falls, so "first crossing τ" is ambiguous. Use alarms
 2. Player profiles: none vs. position only vs. full (see 04).
 3. H = 3 s vs. H = 5 s.
 4. Dataset tracking vs. vision-pipeline tracking on the same matches, if available (measures how much vision errors hurt).
-5. Provider vs. inferred possession/ball state (03 stage 8) on dataset tracking: same model, same folds. Measures how much the inference rules alone cost before vision errors are added.
+5. Full tracking vs. broadcast view (off-camera players dropped, see 05) on the same folds.
+6. Provider vs. inferred possession/ball state (03 stage 8) on dataset tracking: same model, same folds. Measures how much the inference rules alone cost before vision errors are added.
 
 ## Outputs
 - `evaluation/report.md` generated per run: pooled out-of-fold metrics table, per-fold table, calibration plot, lead-time histogram. IDSSE results in a separate section.
