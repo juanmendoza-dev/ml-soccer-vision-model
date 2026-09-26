@@ -5,7 +5,7 @@ Turn broadcast video into game state (02) for each frame.
 
 ## Inputs / Outputs
 - **In:** video file (mp4), optional team rosters.
-- **Out:** `match.parquet`, `objects.parquet`, `frames.parquet`, `players.parquet` in schema v0.2.
+- **Out:** `match.parquet`, `objects.parquet`, `frames.parquet`, `players.parquet` in schema v0.3.
 
 ## Stages
 1. **Detection** — YOLOv8 fine-tuned on players, goalkeepers, referees, ball. Start from Roboflow's pretrained soccer weights.
