@@ -195,6 +195,23 @@ def read_tracking(
     return pl.concat(frames), pl.concat(objects)
 
 
+def move_shootout(frames: pl.DataFrame, start_s: float | None, report: ConversionReport):
+    """Period-4 frames from the shootout start (video time) -> period 5, dead ball,
+    no possession, timestamp from the shootout start (02)."""
+    if start_s is None:
+        return frames
+    shootout = (pl.col("period") == 4) & (pl.col("video_time_s") >= start_s)
+    report.change("frames", frames.filter(shootout).height, "shootout frames moved to period 5")
+    return frames.with_columns(
+        period=pl.when(shootout).then(SHOOTOUT_PERIOD).otherwise("period"),
+        timestamp_s=pl.when(shootout)
+        .then(pl.col("video_time_s") - start_s)
+        .otherwise("timestamp_s"),
+        ball_state=pl.when(shootout).then(pl.lit("dead")).otherwise("ball_state"),
+        possession_team=pl.when(shootout).then(None).otherwise("possession_team"),
+    )
+
+
 def keeper_x(objects: pl.DataFrame, frames: pl.DataFrame, object_id: str) -> dict[int, float]:
     gk = (
         objects.filter(pl.col("object_id") == object_id)
@@ -289,18 +306,7 @@ def convert_game(game_id: str, raw_dir: Path = RAW_DIR, out_dir: Path = OUT_DIR)
         report.drop("objects", n, f"{kind} more than {POSITION_MARGIN_M:g} m off the pitch")
     objects = objects.filter(~far)
 
-    start = report.checks["shootout"]["start_s"]
-    if start is not None:
-        shootout = (pl.col("period") == 4) & (pl.col("video_time_s") >= start)
-        report.change("frames", frames.filter(shootout).height, "shootout frames moved to period 5")
-        frames = frames.with_columns(
-            period=pl.when(shootout).then(SHOOTOUT_PERIOD).otherwise("period"),
-            timestamp_s=pl.when(shootout)
-            .then(pl.col("video_time_s") - start)
-            .otherwise("timestamp_s"),
-            ball_state=pl.when(shootout).then(pl.lit("dead")).otherwise("ball_state"),
-            possession_team=pl.when(shootout).then(None).otherwise("possession_team"),
-        )
+    frames = move_shootout(frames, report.checks["shootout"]["start_s"], report)
 
     home_gk = roster.filter(
         (pl.col("team") == "home") & pl.col("started") & (pl.col("position") == "GK")
