@@ -195,7 +195,7 @@ def build_events(ev: pl.DataFrame, match_id: str, flip: bool, report: Conversion
         own_goals += own_goal
         rows.append(
             {
-                "frame_id": g["end_frame"],
+                "frame_id": g["start_frame"],
                 "event_type": "goal",
                 "team": scorer,
                 "player_id": None if own_goal else player_ref(g["team"], g["from"]),
