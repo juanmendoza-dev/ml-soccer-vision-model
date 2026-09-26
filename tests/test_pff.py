@@ -53,7 +53,12 @@ def tracking(tmp_path):
         frame(10, event=None),  # duplicate frameNum
         frame(11, balls=[]),
         frame(12, event={"game_event_type": "OUT", "home_ball": None}),
-        frame(13, event={"game_event_type": "OTB", "home_ball": False}, away_jersey="77"),
+        frame(
+            13,
+            event={"game_event_type": "OTB", "home_ball": False, "shirt_number": "9"},
+            away_jersey="77",
+        ),
+        frame(14, event={"game_event_type": "OTB", "home_ball": True, "shirt_number": "1"}),
     ]
     path = tmp_path / "t.jsonl.bz2"
     with bz2.open(path, "wt") as f:
@@ -65,14 +70,18 @@ def tracking(tmp_path):
 
 def test_duplicate_frames_dropped_and_logged(tracking):
     frames, _, report = tracking
-    assert frames["frame_id"].to_list() == [10, 11, 12, 13]
+    assert frames["frame_id"].to_list() == [10, 11, 12, 13, 14]
     assert any(d["count"] == 1 and "duplicate" in d["reason"] for d in report.dropped)
 
 
 def test_ball_state_and_possession_follow_game_events(tracking):
-    frames, _, _ = tracking
-    assert frames["ball_state"].to_list() == ["alive", "alive", "dead", "alive"]
-    assert frames["possession_team"].to_list() == ["home", "home", "home", "away"]
+    frames, _, report = tracking
+    assert frames["ball_state"].to_list() == ["alive", "alive", "dead", "alive", "alive"]
+    assert frames["possession_team"].to_list() == ["home", "home", "home", "away", "home"]
+    # Carrier only on OTB frames. Frame 13 codes away 9, who isn't in that frame's
+    # tracking (away 77 is), so it's null and logged.
+    assert frames["ball_carrier_id"].to_list() == [None, None, None, None, "home_1"]
+    assert any("OTB player" in c["reason"] for c in report.changed)
 
 
 def test_visibility_confidence_and_z(tracking):
@@ -87,7 +96,7 @@ def test_visibility_confidence_and_z(tracking):
     assert striker["visible"] is False
     assert striker["confidence"] == PFF_CONFIDENCE["LOW"]
     ball = objects.filter(pl.col("object_type") == "ball")
-    assert ball["z"].to_list() == [1.5, 1.5, 1.5]  # frame 11 had no ball
+    assert ball["z"].to_list() == [1.5, 1.5, 1.5, 1.5]  # frame 11 had no ball
     assert ball["confidence"].unique().to_list() == [1.0]
 
 
@@ -107,6 +116,7 @@ def test_shootout_frames_move_to_period_5():
             "video_time_s": [7000.0, 8000.0, 8001.0, 8002.0],
             "ball_state": ["alive"] * 4,
             "possession_team": ["home"] * 4,
+            "ball_carrier_id": ["home_1"] * 4,
         }
     )
     report = ConversionReport(match_id="t", source="pff")
@@ -115,6 +125,7 @@ def test_shootout_frames_move_to_period_5():
     assert out["timestamp_s"].to_list() == [900.0, 900.0, 0.0, 1.0]
     assert out["ball_state"].to_list() == ["alive", "alive", "dead", "dead"]
     assert out["possession_team"].to_list() == ["home", "home", None, None]
+    assert out["ball_carrier_id"].to_list() == ["home_1", "home_1", None, None]
     assert report.changed[0]["count"] == 2
     assert move_shootout(frames, None, report).equals(frames)
 
@@ -222,7 +233,11 @@ def test_duplicates_logged_and_nulls_where_02_says(converted, game):
     dup = [d for d in r["dropped"] if "duplicate frameNum" in d["reason"]]
     assert dup and dup[0]["count"] > 0
     frames = load(out, game, "frames")
-    assert frames["ball_carrier_id"].null_count() == frames.height
+    checks = r["checks"]
+    # Carrier = the player of the OTB game event on its frames (provider data).
+    assert 0.2 < checks["frames_with_carrier"] < 0.5
+    assert checks["carrier_team_not_possession"] == 0
+    assert checks["visible_carrier_to_ball_m"]["median"] < 1.5
     assert frames["view_polygon"].null_count() == frames.height
     assert 0.5 < r["checks"]["frames_ball_alive"] < 0.8
     assert load(out, game, "match")["native_fps"][0] == 29.97
