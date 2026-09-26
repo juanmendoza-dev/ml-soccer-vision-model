@@ -13,5 +13,18 @@ A video that makes the model's output obvious to someone who knows nothing about
 - **Offline:** render from saved game state + predictions (any machine).
 - **Live:** run on RTX 2060 workstation; detection every 2nd–3rd frame, smaller YOLO model.
 
+## Footage
+| Use | Footage | Can it be published? |
+|---|---|---|
+| Development and testing | SoccerNet clips (GSR, tracking) | No. Their NDA restricts redistribution; internal only |
+| Private demos (showing people directly) | Pro broadcast highlights, downloaded for personal use | No. Copyrighted; never uploaded |
+| Public demo / write-up | Footage recorded yourself: a local or amateur match, filmed from a high sideline spot, with players' consent | Yes |
+| Possible later | PFF-linked broadcast | Only if PFF's terms allow it (unknown until access, see 06) |
+
+- Self-recorded footage looks different from broadcast (camera height, zoom, kit colors, pitch markings). Expect to fine-tune detection and pitch keypoints on a few hundred labeled frames from it (03).
+- Self-recorded matches have no provider tracking, so the public demo shows the overlay only. The accuracy numbers in the write-up come from 07, not from this footage.
+- Keep a record of which footage each rendered clip used, so nothing restricted gets published by accident.
+
 ## Acceptance criteria
 - 30–60 s clip including at least one goal, where the meter visibly rises before the shot.
+- The public version of that clip uses self-recorded footage.
