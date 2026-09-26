@@ -1,23 +1,25 @@
 # 07 — Evaluation
 
 ## Splits
-~409 open-play shots over 20 SkillCorner matches (see 06) is too few for a fixed 70/15/15 split: the test set would be ~3 matches and ~60 shots. Use grouped cross-validation instead.
+A fixed 70/15/15 split wastes matches: even PFF's 51 tracked games would give a ~8-match test set. Use grouped cross-validation instead.
 
-### Development: grouped k-fold on SkillCorner
-- **5 folds grouped by match** (4 matches per fold). A match's frames are never split across folds.
-- Fold assignment is fixed once, saved to `data/splits/skillcorner_folds.json`, and reused by every model so comparisons are paired.
-- Balance folds roughly by shot count (e.g. `StratifiedGroupKFold` on match-level shot totals), fixed seed.
-- Each outer fold: train on 16 matches, evaluate on 4.
-- **Anything tuned is tuned inside the training matches only:** hyperparameters, early stopping, temperature scaling, and threshold τ. Use an inner grouped split (e.g. 3 of the 16 matches as inner validation). Never tune on the evaluation fold.
+### Development: grouped 5-fold on PFF + SkillCorner
+- Pool: **PFF (primary)** and **SkillCorner (second pool)**, see 06.
+- **5 folds grouped by match**, assigned separately within each source (~1/5 of PFF matches and 4 of 20 SkillCorner matches per fold) so every fold has both. A match's frames are never split across folds.
+- Fold assignment is fixed once, saved to `data/splits/folds.json` (`match_id`, `source`, `fold`), and reused by every model so comparisons are paired.
+- Balance folds roughly by shot count within each source (e.g. `StratifiedGroupKFold` on match-level shot totals), fixed seed.
+- **Freeze folds only once all 64 PFF games are on disk.** Until then `folds.json` is provisional and results from it aren't reported as final. Adding matches later must not move existing ones.
+- Each outer fold: train on the other 4 folds (both sources), evaluate on the held-out fold.
+- **Anything tuned is tuned inside the training matches only:** hyperparameters, early stopping, temperature scaling, and threshold τ. Use an inner grouped split (~15% of training matches from each source as inner validation). Never tune on the evaluation fold.
+- PFF-only training runs (e.g. when a feature only exists in PFF) use the same folds, restricted to PFF matches.
 - Report:
-  - **Pooled out-of-fold:** concatenate all 5 folds' predictions, then compute every metric once over all 20 matches. This is the headline number.
+  - **Pooled out-of-fold:** concatenate all 5 folds' predictions, then compute every metric once. **PFF pooled OOF is the headline number**; SkillCorner pooled OOF is reported next to it, never merged into one figure (different leagues, tracking and frame rates).
   - **Per-fold spread:** mean ± std across folds, to show how much the result depends on which matches were held out.
 - Model comparisons are **paired by fold**: model A beats model B only if it wins on most folds, not just on the pooled number.
 
 ### Final check: external test set
-- **IDSSE (7 Bundesliga matches)** is the untouched test set. Different league, optical tracking. Evaluate once per final model, trained on all 20 SkillCorner matches with settings chosen during CV.
+- **IDSSE (7 Bundesliga matches)** is the untouched test set. Different league, optical tracking. Evaluate once per final model, trained on all PFF + SkillCorner matches with settings chosen during CV.
 - No tuning, threshold picking or model selection on IDSSE. If a result there changes a decision, note it in the report.
-- If PFF access comes through: add it to the grouped-CV pool (group by match), and keep IDSSE as the external test.
 
 ### Rules
 - Splits are by match, never by frame or by possession.
@@ -48,9 +50,9 @@ The probability rises and falls, so "first crossing τ" is ambiguous. Use alarms
 2. Player profiles: none vs. position only vs. full (see 04).
 3. H = 3 s vs. H = 5 s.
 4. Dataset tracking vs. vision-pipeline tracking on the same matches, if available (measures how much vision errors hurt).
-5. Full tracking vs. broadcast view (off-camera players dropped, see 05) on the same folds.
+5. Full tracking vs. broadcast view (off-camera players dropped, see 05) on the same folds. **SkillCorner folds only** (plus IDSSE at the final check): PFF's off-camera positions are ESTIMATED and ~12 m off at shots (06), so its full view isn't a meaningful arm.
 6. Provider vs. inferred possession/ball state (03 stage 8) on dataset tracking: same model, same folds. Measures how much the inference rules alone cost before vision errors are added.
 
 ## Outputs
-- `evaluation/report.md` generated per run: pooled out-of-fold metrics table, per-fold table, calibration plot, lead-time histogram. IDSSE results in a separate section.
+- `evaluation/report.md` generated per run: pooled out-of-fold metrics table (PFF and SkillCorner rows), per-fold table, calibration plot, lead-time histogram. IDSSE results in a separate section.
 - Every run logs config + git commit.
