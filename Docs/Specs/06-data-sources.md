@@ -20,7 +20,7 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 | + PFF | 94 | ~2,400 (estimated) |
 
 ### Decisions
-- **Primary development set: SkillCorner.** It has the most usable open shots available now. It is broadcast-derived like our vision output, so the domain gap is smaller. It has named players, so identity is solved, but a stats source for A-League players is still open: StatsBomb open data doesn't cover them. SkillCorner's season-level aggregated physical data may cover part of 04 (e.g. top speed). Worth checking.
+- **Primary development set: SkillCorner.** It has the most usable open shots available now. It is broadcast-derived like our vision output, so the domain gap is smaller. It has named players, so identity is solved, but a stats source for A-League players is still open: StatsBomb open data doesn't cover them. SkillCorner's season aggregates (physical, off-ball runs, passing) cover all 406 players for the full season; 04 uses them under a same-season exception with guardrails.
 - **Request PFF access now.** It is the only way to get into the thousands of shots. Without it, treat the temporal GNN as a stretch goal and the LightGBM baseline as the main deliverable.
 - **IDSSE is a clean held-out check.** Optical full-pitch tracking from a different league tests whether the model generalizes beyond one competition and one tracking method.
 - **Metrica is for converter development only.** It has only 3 anonymized matches, which is too few to matter for training.
