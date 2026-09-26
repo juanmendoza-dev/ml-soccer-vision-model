@@ -1,0 +1,40 @@
+[project]
+name = "goal-predictor"
+version = "0.1.0"
+description = "Predict goals a few seconds ahead from broadcast soccer video"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "numpy>=1.26",
+    "polars>=1.0",
+    "pyarrow>=15",
+]
+
+[project.optional-dependencies]
+converters = ["kloppy>=3.19"]
+prediction = [
+    "scikit-learn>=1.4",
+    "lightgbm>=4.3",
+    "torch>=2.3",
+    "torch-geometric>=2.5",
+    "unravelsports",
+]
+vision = [
+    "ultralytics>=8.2",
+    "supervision>=0.21",
+    "opencv-python>=4.9",
+]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["gamestate*", "vision*", "converters*", "profiles*", "prediction*", "evaluation*", "demo*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
