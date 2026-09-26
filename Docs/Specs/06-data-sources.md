@@ -61,6 +61,7 @@ The v2.2 spec PDF in `docs/` is corrupt (binary bytes replaced by `EF BF BD`, pa
 - `kloppy.pff.load_tracking(meta_data, roster_meta_data, raw_data)` loads the June 2025 files without errors (~34 s per game, 176,818 frames for 10502). It fills `ball_state` and `ball_owning_team` as described above.
 - It reads **smoothed** positions only and **drops `visibility` and `confidence`**. A converter that only uses kloppy loses the broadcast-view signal, so read `visibility` and the raw ball from the JSONL directly.
 - No PFF event loader in any release. An open PR (PySport/kloppy#467, last updated 2025-05-25) predates the June 2025 format. Parse the event JSON ourselves; it's plain JSON.
+- Drop events whose period isn't 1–4 before assigning shootouts to period 5. Only one exists: the first row of 3833, a `G` placeholder at time 0 with no team or player, before the real kickoff at 140 s. Counted in the converter report.
 
 ### Decisions
 - **Primary development set: PFF (decided 2026-09-26).** With tracking for 51 games it has ~890 open-play shots on the comparable (set-play-phase) definition vs. SkillCorner's 409, about 2.2×; ~1,150 once all 64 are downloaded. That makes the temporal GNN a real target, not a stretch goal. It is broadcast-derived with a per-player visibility flag, so the broadcast-view training in 05 works directly. Costs: no camera footprint, ESTIMATED positions are poor (below), no kloppy event loader, and the World Cup is one short tournament of national teams.
@@ -96,6 +97,15 @@ The v2.2 spec PDF in `docs/` is corrupt (binary bytes replaced by `EF BF BD`, pa
 - Raw downloads in `data/raw/<source>/`, never modified.
 - Converted game state in `data/gamestate/`.
 - `data/` is gitignored; a `data/README.md` records download steps.
+
+### Converter report
+Every converter writes `data/gamestate/<match_id>/conversion_report.json` next to the Parquet files (not part of the schema; the validator ignores it):
+- source file names and hashes, converter git commit
+- rows in vs. rows out per table
+- everything dropped or changed, with a count and a reason (e.g. duplicate frames, events outside periods 1–4, shootout frames moved to period 5, disallowed goals)
+- anything unresolved (e.g. jersey numbers with no roster match)
+
+Anything dropped without a line in the report is a bug.
 
 ## Open questions
 - PFF terms of use: allowed for a public demo/write-up? Answer when access is granted.
