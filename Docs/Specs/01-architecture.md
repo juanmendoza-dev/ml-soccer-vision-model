@@ -10,7 +10,7 @@ Video
                     └─> [Demo] overlay renderer (see 08)
 ```
 
-Tracking datasets (Metrica, SkillCorner) enter the pipeline directly as game state, skipping vision. This lets the prediction side be built first.
+Tracking datasets (PFF, SkillCorner, IDSSE, Metrica) enter the pipeline directly as game state, skipping vision. This lets the prediction side be built first.
 
 ## Repo layout
 ```
@@ -18,9 +18,11 @@ Tracking datasets (Metrica, SkillCorner) enter the pipeline directly as game sta
 ├── CLAUDE.md
 ├── Docs/
 │   └── Specs/            # these specs
-├── data/                 # gitignored; raw/, processed/, gamestate/
+├── pyproject.toml        # core deps; extras: converters, prediction, vision, dev
+├── data/                 # gitignored; raw/, processed/, gamestate/, splits/
+├── gamestate/            # schema 02 as code + validator; the only thing vision/ and prediction/ share
 ├── vision/               # video → game state
-├── converters/           # Metrica/SkillCorner → game state
+├── converters/           # PFF/SkillCorner/IDSSE/Metrica → game state
 ├── profiles/             # player profile features
 ├── prediction/           # graph building, models, training
 ├── evaluation/
@@ -40,7 +42,7 @@ Tracking datasets (Metrica, SkillCorner) enter the pipeline directly as game sta
 | Oversized jobs | Google Colab | Fallback |
 
 ## Tech stack
-- Python 3.11, PyTorch, PyTorch Geometric
+- Python 3.11 (venv via `uv`), PyTorch, PyTorch Geometric
 - Ultralytics YOLO, supervision (Roboflow), ByteTrack
 - kloppy (tracking data loading), unravelsports (graph conversion)
 - Polars or pandas, Parquet
