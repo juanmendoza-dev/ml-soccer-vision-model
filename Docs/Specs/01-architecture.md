@@ -14,9 +14,10 @@ Tracking datasets (Metrica, SkillCorner) enter the pipeline directly as game sta
 
 ## Repo layout
 ```
-goal-predictor/
+<project root>/
 ├── CLAUDE.md
-├── specs/
+├── Docs/
+│   └── Specs/            # these specs
 ├── data/                 # gitignored; raw/, processed/, gamestate/
 ├── vision/               # video → game state
 ├── converters/           # Metrica/SkillCorner → game state
