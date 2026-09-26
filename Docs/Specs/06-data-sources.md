@@ -111,7 +111,8 @@ Anything dropped without a line in the report is a bug.
 - PFF terms of use: allowed for a public demo/write-up? Answer when access is granted.
 - ~~PFF primary vs. SkillCorner primary?~~ PFF primary, SkillCorner second pool (Decisions).
 - ~~Does PFF tracking include off-camera players, and how are they marked?~~ Yes, all 22 every frame; off-camera ones have `visibility = ESTIMATED` (see PFF tracking format).
-- Exact shot counts for IDSSE and Metrica (count once converters exist).
+- Exact shot counts for IDSSE (count once the converter exists).
+- ~~Metrica shot counts?~~ Games 1–2: 24 + 24 shots (24 + 21 open play), goals 3–1 and 3–2. Game 1's away goal is an own goal coded as `BALL OUT, WOODWORK-GOAL`, not a shot; the converter takes the scoring team from who kicks off next.
 
 ## Sources
 - SkillCorner: https://github.com/SkillCorner/opendata (dynamic events spec PDF linked from README)
