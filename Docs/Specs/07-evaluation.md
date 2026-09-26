@@ -29,8 +29,19 @@
 | PR-AUC | Main metric; positives are rare |
 | ROC-AUC | Comparable to papers |
 | Brier score + calibration curve | Probabilities must mean what they say |
-| Lead time | For each shot, seconds between probability first crossing threshold τ and the shot; report median and distribution |
-| False alarms per match | At the same τ; keeps lead time honest |
+| Lead time | Seconds from the start of the alarm active at the shot to the shot (see below); report median and distribution |
+| Missed shots | Share of shots with no alarm active at the shot |
+| False alarms per match | Alarms with no shot (see below); keeps lead time honest |
+
+### Alarms and lead time
+The probability rises and falls, so "first crossing τ" is ambiguous. Use alarms with hysteresis:
+- **Alarm starts** when P(shot) rises above τ.
+- **Alarm ends** when P(shot) drops below 0.8·τ, possession changes, or `ball_state` becomes dead. Dips between 0.8·τ and τ don't end it.
+- **True alarm:** the possessing team shoots while it's active, or within 1 s after it ends (grace for the last-frame drop). Otherwise it's a **false alarm**.
+- **Lead time** = shot time − start of the alarm active at the shot. A shot with no active alarm is a **miss**, not a lead time of 0.
+- One alarm can cover several shots (rebounds); each shot gets its own lead time from the same start.
+- τ is chosen on training matches only (see Splits). Also report the trade-off across τ values: median lead time and miss rate vs. false alarms per match.
+- 00's success criterion (median lead time ≥ 2 s) is measured at the τ chosen on training matches.
 
 ## Required comparisons
 1. Distance + angle floor vs. LightGBM baseline vs. frame GNN vs. temporal GNN.
