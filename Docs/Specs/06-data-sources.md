@@ -8,7 +8,7 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 | Dataset | Matches | Tracking | Shot events | Players | License / access | Loader |
 |---|---|---|---|---|---|---|
 | SkillCorner open data (A-League 2024/25) | 20 | 10 Hz, broadcast-derived, off-camera players extrapolated | Yes: `dynamic_events.csv`, `player_possession` rows with `end_type = shot` and `frame_start`/`frame_end`. **526 shots** counted, 409 outside set plays; 61 followed by `game_interruption_after = goal_for` | Named, with IDs and jersey numbers | MIT, on GitHub (tracking via git-lfs, ~90 MB/match; all 20 confirmed downloadable) | kloppy `skillcorner` (verify it reads dynamic events) |
-| PFF FC World Cup 2022 | 64 | 29.97 Hz, broadcast-derived and manually refined, 3D ball | Yes: synchronized event data | Rosters with names | Free, by request form; terms unknown until access is granted | kloppy `pff` |
+| PFF FC World Cup 2022 | 64 | 29.97 Hz, broadcast-derived and manually refined, 3D ball | Yes: synchronized event data | Rosters with names | Free, by request form. **Access granted 2026-09-25**; terms of use still to confirm | kloppy `pff` (verify it reads the per-game event files) |
 | IDSSE (Bassek et al. 2025, Bundesliga 1 + 2, 2022/23) | 7 | 25 Hz, TRACAB optical, full pitch | Yes: official DFL events | Named | CC-BY 4.0, attribute DFL + cite paper | kloppy `sportec.load_open_tracking_data` |
 | Metrica Sports sample data | 3 | 25 Hz, full pitch | Yes: synchronized events | Anonymized | No formal license; acknowledge source | kloppy `metrica` |
 
@@ -32,6 +32,13 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 - Frame rates differ (10 / 25 / 29.97 Hz). Converters store the native rate; prediction resamples to 10 Hz (see 02).
 - Don't build PFF player profiles from the 2022 World Cup's own event data. That's the same tournament, which breaks the previous-season rule in 04.
 - Set-play shots are identifiable via `team_in_possession_phase_type = set_play`. 05 trains on open play, so usable positives are ~409, not 526.
+
+### PFF release layout (as shared on Google Drive)
+- `Event Data/{game_id}.json`, `Metadata/{game_id}.json`, `Rosters/{game_id}.json`: one file per game, small.
+- `Tracking Data/{game_id}.jsonl.bz2`: 64 files, the bulk of the download.
+- `players.csv`, `competitions.csv`.
+- `PFF FC Change Log` (Google Doc): format changes. Latest noted: June 2025, which added `teamAttackingDirection`. Older dated subfolders in `Event Data` are earlier versions; use the top-level files.
+- Store under `data/raw/pff/` keeping PFF's folder names. Don't put the Drive links in the repo; `data/README.md` points to the request form instead.
 
 ## Other sources
 | Dataset | Type | Use in project |
