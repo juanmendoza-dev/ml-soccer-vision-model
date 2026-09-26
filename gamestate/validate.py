@@ -110,7 +110,9 @@ def _check_frames(f: pl.DataFrame) -> list[str]:
         pl.col("ball_carrier_id").is_not_null() & pl.col("possession_team").is_null()
     ).height
     if carrier_no_team:
-        errors.append(f"frames: {carrier_no_team} frames with a ball carrier but no possession_team")
+        errors.append(
+            f"frames: {carrier_no_team} frames with a ball carrier but no possession_team"
+        )
     return errors
 
 
@@ -132,7 +134,10 @@ def _check_objects(t: dict[str, pl.DataFrame]) -> list[str]:
     if unknown:
         errors.append(f"objects: {unknown} rows with a frame_id not in frames")
     multi_ball = (
-        o.filter(pl.col("object_type") == "ball").group_by("frame_id").len().filter(pl.col("len") > 1)
+        o.filter(pl.col("object_type") == "ball")
+        .group_by("frame_id")
+        .len()
+        .filter(pl.col("len") > 1)
     ).height
     if multi_ball:
         errors.append(f"objects: {multi_ball} frames with more than one ball")

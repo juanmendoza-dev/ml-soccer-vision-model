@@ -199,11 +199,18 @@ def test_column_errors(tmp_path, table, fn, expected):
         (
             "objects",
             lambda df: pl.concat(
-                [df, df.filter(pl.col("object_type") == "ball").with_columns(object_id=pl.lit("b2"))]
+                [
+                    df,
+                    df.filter(pl.col("object_type") == "ball").with_columns(object_id=pl.lit("b2")),
+                ]
             ),
             "more than one ball",
         ),
-        ("objects", lambda df: df.with_columns(team=pl.lit("home")), "ball/referee rows with a team"),
+        (
+            "objects",
+            lambda df: df.with_columns(team=pl.lit("home")),
+            "ball/referee rows with a team",
+        ),
         ("objects", lambda df: df.with_columns(z=pl.lit(0.0)), "non-ball rows with z"),
         ("objects", lambda df: df.with_columns(confidence=pl.lit(1.5)), "outside [0, 1]"),
         (
