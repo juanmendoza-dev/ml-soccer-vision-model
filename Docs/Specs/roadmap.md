@@ -5,14 +5,15 @@
 - [ ] Read PFF terms of use (blocks the public demo only, not development)
 - [ ] Download the 13 missing PFF tracking files (second Drive part, list in 06)
 - [ ] Re-download the PFF tracking spec PDF in binary (current copy is corrupt)
-- [ ] Download SkillCorner, IDSSE, Metrica into `data/raw/` and add steps to `data/README.md`
+- [x] Download Metrica into `data/raw/` and add steps to `data/README.md`
+- [ ] Same for SkillCorner, IDSSE
 
 ## Phase 1 — Predictor on tracking data (M1)
 Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order.
 
 **Foundation**
 - [x] Repo skeleton per 01; schema v0.4 validator (`gamestate/validate.py`, tests in `tests/`)
-- [ ] Metrica → game state converter via kloppy (small, for getting the converter pattern right)
+- [x] Metrica → game state converter, games 1–2 (`converters/metrica.py`; tracking via kloppy, events CSV parsed directly). Game 3 not converted
 - [ ] PFF → game state converter: tracking from the raw JSONL (raw ball incl. `z`, `ESTIMATED` → `visible=False, interpolated=True`, `confidence` mapping), ball state + possession from the inline game events, jersey → `player_id` via Rosters, direction per period from `homeTeamStartLeft`, shootouts → period 5, frame dedupe, `conversion_report.json` (02, 06)
 - [ ] PFF event parser → `events.parquet`: shots, goals (incl. own goals and non-shot goals, disallowed goals marked), `set_piece`, `set_play_phase`; check it reproduces the 06 counts and all 64 scores
 - [ ] SkillCorner → game state converter: tracking, possession, `visible` / `interpolated` from `is_detected`, `view_polygon`, `ball_state` from dynamic events (02)
