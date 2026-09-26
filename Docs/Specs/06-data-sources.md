@@ -63,12 +63,11 @@ The v2.2 spec PDF in `docs/` is corrupt (binary bytes replaced by `EF BF BD`, pa
 - No PFF event loader in any release. An open PR (PySport/kloppy#467, last updated 2025-05-25) predates the June 2025 format. Parse the event JSON ourselves; it's plain JSON.
 
 ### Decisions
-- **Primary development set: SkillCorner.** It has the most usable open shots available now. It is broadcast-derived like our vision output, so the domain gap is smaller. It has named players, so identity is solved, but a stats source for A-League players is still open: StatsBomb open data doesn't cover them. SkillCorner's season aggregates (physical, off-ball runs, passing) cover all 406 players for the full season; 04 uses them under a same-season exception with guardrails.
-- **Request PFF access now.** It is the only way to get into the thousands of shots. Without it, treat the temporal GNN as a stretch goal and the LightGBM baseline as the main deliverable.
+- **Primary development set: PFF (decided 2026-09-26).** With tracking for 51 games it has ~890 open-play shots on the comparable (set-play-phase) definition vs. SkillCorner's 409, about 2.2×; ~1,150 once all 64 are downloaded. That makes the temporal GNN a real target, not a stretch goal. It is broadcast-derived with a per-player visibility flag, so the broadcast-view training in 05 works directly. Costs: no camera footprint, ESTIMATED positions are poor (below), no kloppy event loader, and the World Cup is one short tournament of national teams.
+- **Second grouped-CV pool: SkillCorner.** Different league, has a real `view_polygon`, and its extrapolated off-camera positions make it the place to run the full vs. broadcast-view comparison (07 #5); PFF's full view is mostly ESTIMATED guesses. Named players, and 04 uses its season aggregates under a same-season exception.
 - **IDSSE is a clean held-out check.** Optical full-pitch tracking from a different league tests whether the model generalizes beyond one competition and one tracking method.
 - **Metrica is for converter development only.** It has only 3 anonymized matches, which is too few to matter for training.
-- ~500 shots over 20 matches means a fixed test split would be ~3 matches. Use match-grouped cross-validation instead (see 07).
-- **Proposed (not confirmed): make PFF the primary development set, SkillCorner second.** With tracking for 51 games PFF has ~890 open-play shots on the comparable (set-play-phase) definition vs. SkillCorner's 409, about 2.2×; ~1,150 once all 64 are downloaded. It is broadcast-derived with a real per-player visibility flag, so the broadcast-view training in 05 works directly. Costs: no camera footprint, ESTIMATED positions are much worse than SkillCorner's extrapolation looks (worth checking), no kloppy event loader, and World Cup games are one short tournament of national teams. SkillCorner stays useful as a second grouped-CV pool (different league, has `view_polygon`); IDSSE stays the external test.
+- Even with PFF, a fixed test split would waste matches. Use match-grouped cross-validation instead (see 07).
 
 ### Caveats
 - SkillCorner dynamic events include SkillCorner's own model outputs (`xshot_*`, `xthreat`, `lead_to_shot`, ...). **Never use these as features.** They come from another model and some look into the future. `xshot_player_possession_*` can serve as an external benchmark to compare against.
@@ -100,8 +99,8 @@ The v2.2 spec PDF in `docs/` is corrupt (binary bytes replaced by `EF BF BD`, pa
 
 ## Open questions
 - PFF terms of use: allowed for a public demo/write-up? Answer when access is granted.
+- ~~PFF primary vs. SkillCorner primary?~~ PFF primary, SkillCorner second pool (Decisions).
 - ~~Does PFF tracking include off-camera players, and how are they marked?~~ Yes, all 22 every frame; off-camera ones have `visibility = ESTIMATED` (see PFF tracking format).
-- PFF primary vs. SkillCorner primary: see the Proposed note under Decisions.
 - Exact shot counts for IDSSE and Metrica (count once converters exist).
 
 ## Sources
