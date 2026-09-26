@@ -34,7 +34,7 @@ Parquet files under `data/gamestate/<match_id>/`: `match.parquet`, `objects.parq
 | x, y | float | Meters |
 | z | float/null | Ball height in meters where the source has it (PFF). Always null for non-ball objects |
 | vx, vy | float | m/s, smoothed |
-| visible | bool | False if outside camera view |
+| visible | bool | False if outside camera view. `visible=False` implies `interpolated=True` (the position is a guess) |
 | interpolated | bool | True if filled in, not detected |
 | confidence | float | 0–1. 1.0 for dataset tracking without a confidence field. PFF maps HIGH / MEDIUM / LOW → 1.0 / 0.67 / 0.33 (ordinal, not a probability) |
 
@@ -97,9 +97,9 @@ The predictor needs `ball_state`, `possession_team` and `ball_carrier_id` at inf
 
 ## Rules
 - Frame rate: store native rate; prediction resamples to **10 Hz**.
-- Missing players (off camera) stay missing rows or `visible=False`; never guessed positions without `interpolated=True`.
+- Missing players (off camera) stay missing rows or `visible=False`; never guessed positions without `interpolated=True`. PFF `visibility = ESTIMATED` and SkillCorner `is_detected = False` rows are written as `visible=False, interpolated=True`.
 - Any schema change is made here first, with a version bump.
 
 **Schema version:** 0.3
-- 0.3: added `match.schema_version`, `objects.z`, `events.set_piece`, `events.set_play_phase`, period 5 for shootouts, `disallowed` outcome, PFF confidence mapping
+- 0.3: added `match.schema_version`, `objects.z`, `events.set_piece`, `events.set_play_phase`, period 5 for shootouts, `disallowed` outcome, PFF confidence mapping, `visible=False` ⇒ `interpolated=True`
 - 0.2: added `match.parquet`, `ball_state`, `view_polygon`; defined who fills possession fields
