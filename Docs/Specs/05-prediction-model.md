@@ -8,6 +8,11 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 - Default **H = 5 s**; also evaluate H = 3 s.
 - Only frames in open play with a team in possession. Exclude dead-ball frames.
 - Attacking team = `possession_team`; flip coordinates so it always attacks +x.
+- Training uses provider `ball_state` and `possession_team` (02).
+
+## Inference
+- Predict only on frames where `ball_state` is not dead and `possession_team` is set; otherwise output null (the overlay holds or greys out the meter).
+- `ball_state = null` counts as not dead, so vision gaps don't blank the meter. Report how often this happens.
 
 ## Leakage rules
 - Inputs use frames `<= t` only.
