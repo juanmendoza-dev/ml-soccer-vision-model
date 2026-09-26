@@ -7,7 +7,7 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 
 | Dataset | Matches | Tracking | Shot events | Players | License / access | Loader |
 |---|---|---|---|---|---|---|
-| SkillCorner open data (A-League 2024/25) | 20 | 10 Hz, broadcast-derived, off-camera players extrapolated | Yes: `dynamic_events.csv`, `player_possession` rows with `end_type = shot` and `frame_start`/`frame_end`. **526 shots** counted | Named, with IDs and jersey numbers | MIT, on GitHub (tracking via git-lfs) | kloppy `skillcorner` (verify it reads dynamic events) |
+| SkillCorner open data (A-League 2024/25) | 20 | 10 Hz, broadcast-derived, off-camera players extrapolated | Yes: `dynamic_events.csv`, `player_possession` rows with `end_type = shot` and `frame_start`/`frame_end`. **526 shots** counted, 409 outside set plays; 61 followed by `game_interruption_after = goal_for` | Named, with IDs and jersey numbers | MIT, on GitHub (tracking via git-lfs, ~90 MB/match; all 20 confirmed downloadable) | kloppy `skillcorner` (verify it reads dynamic events) |
 | PFF FC World Cup 2022 | 64 | 29.97 Hz, broadcast-derived and manually refined, 3D ball | Yes: synchronized event data | Rosters with names | Free, by request form; terms unknown until access is granted | kloppy `pff` |
 | IDSSE (Bassek et al. 2025, Bundesliga 1 + 2, 2022/23) | 7 | 25 Hz, TRACAB optical, full pitch | Yes: official DFL events | Named | CC-BY 4.0, attribute DFL + cite paper | kloppy `sportec.load_open_tracking_data` |
 | Metrica Sports sample data | 3 | 25 Hz, full pitch | Yes: synchronized events | Anonymized | No formal license; acknowledge source | kloppy `metrica` |
@@ -15,12 +15,12 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 ### Shot volume
 | Scenario | Matches | Shots |
 |---|---|---|
-| SkillCorner only | 20 | 526 (counted) |
+| SkillCorner only | 20 | 526 counted (409 open play) |
 | + IDSSE + Metrica | 30 | ~800 (estimated at ~25/match) |
 | + PFF | 94 | ~2,400 (estimated) |
 
 ### Decisions
-- **Primary development set: SkillCorner.** It has the most usable open shots available now. It is broadcast-derived like our vision output, so the domain gap is smaller. It also has real player IDs, which unblocks player profiles (04).
+- **Primary development set: SkillCorner.** It has the most usable open shots available now. It is broadcast-derived like our vision output, so the domain gap is smaller. It has named players, so identity is solved, but a stats source for A-League players is still open: StatsBomb open data doesn't cover them. SkillCorner's season-level aggregated physical data may cover part of 04 (e.g. top speed). Worth checking.
 - **Request PFF access now.** It is the only way to get into the thousands of shots. Without it, treat the temporal GNN as a stretch goal and the LightGBM baseline as the main deliverable.
 - **IDSSE is a clean held-out check.** Optical full-pitch tracking from a different league tests whether the model generalizes beyond one competition and one tracking method.
 - **Metrica is for converter development only.** It has only 3 anonymized matches, which is too few to matter for training.
@@ -29,7 +29,9 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 ### Caveats
 - SkillCorner dynamic events include SkillCorner's own model outputs (`xshot_*`, `xthreat`, `lead_to_shot`, ...). **Never use these as features.** They come from another model and some look into the future. `xshot_player_possession_*` can serve as an external benchmark to compare against.
 - SkillCorner and PFF positions for off-camera players are extrapolated or estimated. Track which rows are like this if the source marks them.
-- Frame rates differ (10 / 25 / 29.97 Hz). Every converter resamples to 10 Hz (see 02).
+- Frame rates differ (10 / 25 / 29.97 Hz). Converters store the native rate; prediction resamples to 10 Hz (see 02).
+- Don't build PFF player profiles from the 2022 World Cup's own event data. That's the same tournament, which breaks the previous-season rule in 04.
+- Set-play shots are identifiable via `team_in_possession_phase_type = set_play`. 05 trains on open play, so usable positives are ~409, not 526.
 
 ## Other sources
 | Dataset | Type | Use in project |
