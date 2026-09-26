@@ -157,6 +157,7 @@ def parse_events(
 
     out, no_location, player_location = [], [], 0
     shootout_kicks = shootout_goals = disallowed_other = duplicate_goals = 0
+    shootout_start = None
     for i, r in enumerate(rows):
         g, pe = r["gameEvents"], r["possessionEvents"]
         kind, result = pe["possessionEventType"], pe["shotOutcomeType"]
@@ -164,6 +165,10 @@ def parse_events(
         if not is_shot and result != "G":
             continue
         if is_shot and g["setpieceType"] == "P" and g["period"] == 4 and not kickoff_after[i]:
+            if shootout_start is None:
+                # From the period-4 END before the first kick, else the kick itself.
+                ends = [x["startTime"] for x in rows[:i] if restart_of(x) == "END"]
+                shootout_start = ends[-1] if ends and g["period"] == 4 else r["startTime"]
             shootout_kicks += 1
             shootout_goals += result == "G"
             continue
@@ -239,7 +244,11 @@ def parse_events(
         for r in rows
     )
     report.drop("events", len(rows) - kept, "not a shot or goal")
-    report.checks["shootout"] = {"kicks": shootout_kicks, "goals": shootout_goals}
+    report.checks["shootout"] = {
+        "kicks": shootout_kicks,
+        "goals": shootout_goals,
+        "start_s": shootout_start,  # video time; tracking frames from here are period 5
+    }
     report.checks["disallowed_non_shot_goals"] = disallowed_other
     return (
         pl.DataFrame(out, schema={k: v for k, v in EVENT_SCHEMA.items() if k != "match_id"})
