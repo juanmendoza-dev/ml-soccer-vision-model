@@ -28,7 +28,7 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 - Weighted loss or focal loss; evaluate with PR-AUC, not accuracy.
 
 ## Acceptance criteria
-- Temporal GNN beats baseline on PR-AUC on the test matches.
+- Temporal GNN beats baseline on PR-AUC in grouped cross-validation (pooled out-of-fold, and on most folds), confirmed on the IDSSE external test set (see 07).
 - Calibration error acceptable after (optional) temperature scaling.
 
 ## Open questions
