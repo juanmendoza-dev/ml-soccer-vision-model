@@ -25,9 +25,31 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 3. **Temporal GNN:** last 2–3 s of frames (at 10 Hz) through a GNN backbone, then a GRU/T-GCN over time. Follows the SoccerAI approach.
 
 ## xG model
-- Trained on Wyscout open shot data (preprocessed CSV from `defcon`) and/or StatsBomb 360 shots.
-- Features: distance, angle, body part, defenders between ball and goal, goalkeeper position.
-- P(goal) = P(shot) × xG(current ball carrier's position and context).
+### Feature rule
+Every xG feature must be (a) computable at frame t from game state (02), before any shot happens, and (b) present in the training source. Anything only known once the shot is taken is out.
+
+| Feature | Known at t? | StatsBomb 360 | Wyscout | Use |
+|---|---|---|---|---|
+| Distance, angle to goal | Yes | Yes | Yes | Yes |
+| Defenders in the shooting cone | Yes | Yes (freeze frame) | No | Yes |
+| Goalkeeper position / distance off line | Yes | Yes (freeze frame) | No | Yes |
+| Nearest defender distance (pressure) | Yes | Yes (freeze frame) | No | Yes |
+| Body part (foot / head) | **No** | Yes | Yes | **No** |
+| Shot technique (volley, lob, ...) | **No** | Yes | Partly | **No** |
+| Play pattern (open play / set piece) | Yes | Yes | Yes | Filter only: train on open play, matching 05's labels |
+
+### Training data
+- **Primary: StatsBomb 360 open data.** 300 men's matches have 360 freeze frames (~7,500 shots, estimated at ~25/match; checked 2026-09-25). Freeze frames only include players visible on the broadcast, like our vision output.
+- **Wyscout (defcon CSV):** location-only xG (distance + angle). A baseline and sanity check, not the production model.
+- Convert StatsBomb coordinates (120 × 80 yards, origin top-left) to 02's meters.
+- **Leakage:** if PFF World Cup 2022 matches are in any evaluation fold, drop StatsBomb's World Cup 2022 (the same 64 matches) from xG training.
+- **Check calibration on our own data:** apply the xG model to SkillCorner shots at the shot frame and compare to the 61 goals (06). Report it; don't retrain on it.
+
+### Combining with P(shot)
+xG at the carrier's current position is an approximation. The shot usually happens later, from somewhere closer to goal. Build in order:
+1. **v1: carrier position.** P(goal) = P(shot) × xG(ball carrier at t). Tends to underestimate P(goal) early in an attack, since the carrier is still far from goal. Measure how much by comparing to xG at the actual shot frame.
+2. **v2: shooter-weighted.** If the node-level "who will shoot" head exists, P(goal) = Σ_i P(player i shoots) × xG(player i at t). Still uses positions at t, but covers runners who aren't on the ball.
+- A direct P(goal within H) model is out: ~61 goals in 20 matches is far too few to train it.
 
 ## Class imbalance
 - Weighted loss or focal loss; evaluate with PR-AUC, not accuracy.
