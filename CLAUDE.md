@@ -1,9 +1,9 @@
 # Project: Soccer Goal Predictor
 
-Read `specs/` before writing code. Start with `specs/00-overview.md`, then `specs/02-game-state-schema.md`.
+Read `Docs/Specs/` before writing code. Start with `Docs/Specs/00-overview.md`, then `Docs/Specs/02-game-state-schema.md`.
 
 ## Rules
-- All components read/write the game state format in `specs/02-game-state-schema.md`. Do not invent new formats; propose schema changes in that spec first.
+- All components read/write the game state format in `Docs/Specs/02-game-state-schema.md`. Do not invent new formats; propose schema changes in that spec first.
 - **No leakage:** a prediction at frame `t` may only use data from frames `<= t`. Train/val/test splits are by match, never by frame.
 - Coordinates are pitch meters, never pixels, once they leave the vision pipeline.
 - Keep vision (`vision/`) and prediction (`prediction/`) as separate packages that only share the schema.
