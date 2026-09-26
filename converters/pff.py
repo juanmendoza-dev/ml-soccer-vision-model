@@ -53,7 +53,6 @@ FRAME_SCHEMA = {
     "video_time_s": pl.Float64,
     "ball_state": pl.String,
     "possession_team": pl.String,
-    "ball_carrier_id": pl.String,
 }
 
 
@@ -83,9 +82,6 @@ def read_tracking(
     Uses the raw homePlayers/awayPlayers/balls, not the smoothed copies. Ball
     state and possession follow the inline game_event the way kloppy does it:
     OUT/END -> dead, OTB/kickoffs -> alive, home_ball -> team, carried forward.
-    An OTB game event sits on every frame of the touch it codes; its player is
-    the ball carrier on those frames (median 0.9 m from the ball on 10502 when
-    both are VISIBLE). Frames outside an OTB span have no carrier.
     """
     lookup = {
         (r["team"], str(r["jersey_number"])): (r["player_id"], r["position"] == "GK")
@@ -99,7 +95,7 @@ def read_tracking(
     f_cols = {k: [] for k in FRAME_SCHEMA}
     o_cols = {k: [] for k in OBJECT_SCHEMA}
     ball_state, possession = "dead", None
-    lines = duplicates = no_period = no_ball = no_xy = dup_jersey = carrier_missing = 0
+    lines = duplicates = no_period = no_ball = no_xy = dup_jersey = 0
     last_frame = None
 
     def flush():
@@ -126,12 +122,8 @@ def read_tracking(
             lines += 1
             d = json.loads(line)
             event = d.get("game_event")
-            carrier = None
             if event:
                 kind = event.get("game_event_type")
-                if kind == "OTB" and event.get("home_ball") is not None:
-                    side = "home" if event["home_ball"] else "away"
-                    carrier = (side, str(event.get("shirt_number")))
                 if kind in ("OUT", "END"):
                     ball_state = "dead"
                 elif kind in KICKOFFS or kind == "OTB":
@@ -153,16 +145,6 @@ def read_tracking(
             f_cols["video_time_s"].append(d["videoTimeMs"] / 1000)
             f_cols["ball_state"].append(ball_state)
             f_cols["possession_team"].append(possession)
-            on_pitch = {
-                ("home" if key == "homePlayers" else "away", str(p["jerseyNum"]))
-                for key in ("homePlayers", "awayPlayers")
-                for p in d[key] or []
-                if p["x"] is not None
-            }
-            if carrier is not None and carrier not in on_pitch:
-                carrier_missing += 1
-                carrier = None
-            f_cols["ball_carrier_id"].append(f"{carrier[0]}_{carrier[1]}" if carrier else None)
 
             for side, key in (("home", "homePlayers"), ("away", "awayPlayers")):
                 seen = set()
@@ -208,9 +190,6 @@ def read_tracking(
     report.drop("objects", no_ball, "frames with an empty balls list (no ball tracked)")
     report.drop("objects", no_xy, "player with a null x/y")
     report.drop("objects", dup_jersey, "same jersey twice on one team in a frame")
-    report.change(
-        "frames", carrier_missing, "OTB player not in the frame's tracking: ball_carrier_id null"
-    )
     if unmatched:
         report.unresolve("jersey", sorted(f"{s}_{j}" for s, j in unmatched))
     return pl.concat(frames), pl.concat(objects)
@@ -230,7 +209,6 @@ def move_shootout(frames: pl.DataFrame, start_s: float | None, report: Conversio
         .otherwise("timestamp_s"),
         ball_state=pl.when(shootout).then(pl.lit("dead")).otherwise("ball_state"),
         possession_team=pl.when(shootout).then(None).otherwise("possession_team"),
-        ball_carrier_id=pl.when(shootout).then(None).otherwise("ball_carrier_id"),
     )
 
 
@@ -352,6 +330,9 @@ def convert_game(game_id: str, raw_dir: Path = RAW_DIR, out_dir: Path = OUT_DIR)
         home_attacks_positive_x=pl.col("period").replace_strict(
             attacks_pos | {SHOOTOUT_PERIOD: attacks_pos.get(4, True)}, return_dtype=pl.Boolean
         ),
+        # The OTB game_event player isn't the carrier: its span runs on through the
+        # pass and any uncoded touches (up to ~7 s, 50 m from the ball; 06). 02: null.
+        ball_carrier_id=pl.lit(None, pl.String),
         view_polygon=pl.lit(None, pl.List(pl.Float64)),  # no camera footprint in PFF
     )
 
@@ -422,34 +403,7 @@ def sanity_checks(objects: pl.DataFrame, frames: pl.DataFrame, events: pl.DataFr
         "s"
     ].drop_nulls()
     all_estimated = people.group_by("frame_id").agg(pl.col("visible").any())["visible"]
-    carriers = (
-        frames.filter(pl.col("ball_carrier_id").is_not_null())
-        .select("frame_id", "possession_team", object_id="ball_carrier_id")
-        .join(
-            objects.select("frame_id", "object_id", "team", "x", "y", "visible"),
-            on=["frame_id", "object_id"],
-        )
-        .join(ball.rename({"bx": "ball_x", "by": "ball_y"}), on="frame_id", how="left")
-    )
-    near = (
-        carriers.filter(pl.col("visible"))
-        .select(
-            ((pl.col("x") - pl.col("ball_x")) ** 2 + (pl.col("y") - pl.col("ball_y")) ** 2)
-            .sqrt()
-            .alias("d")
-        )["d"]
-        .drop_nulls()
-    )
     return {
-        "frames_with_carrier": round(carriers.height / frames.height, 3),
-        "carrier_team_not_possession": carriers.filter(
-            pl.col("team") != pl.col("possession_team")
-        ).height,
-        "visible_carrier_to_ball_m": {
-            "n": near.len(),
-            "median": round(near.median(), 2) if near.len() else None,
-            "p90": round(near.quantile(0.9), 2) if near.len() else None,
-        },
         "shots": shots.height,
         "shots_without_ball": shots.height - d.len(),
         "shot_to_ball_m": {
