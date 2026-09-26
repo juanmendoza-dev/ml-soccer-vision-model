@@ -26,13 +26,14 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 3. **Temporal GNN:** last 2–3 s of frames (at 10 Hz) through a GNN backbone, then a GRU/T-GCN over time. Follows the SoccerAI approach.
 
 ## Off-camera players
-Vision only sees players inside the broadcast frame. Most training tracking (IDSSE, Metrica, SkillCorner extrapolated) has all 22. Training only on full data would teach the model to rely on players it won't see at inference.
+Vision only sees players inside the broadcast frame. All training tracking has all 22 (PFF estimated, SkillCorner extrapolated, IDSSE and Metrica optical). Training only on full data would teach the model to rely on players it won't see at inference.
 - Every node gets a `visible` feature (02 `objects.visible`).
 - **Training view:** by default, train on what a broadcast would show:
+  - PFF (primary): drop players with `visibility = ESTIMATED` (maps to `visible = False`). No camera footprint, so the visible players are the view. Frames where every player is ESTIMATED (cutaways, 06) are dropped from training and scored as null.
   - SkillCorner: drop players with `is_detected = False` (maps to `visible = False`). Its `view_polygon` is the real camera footprint.
   - Full-pitch sources (IDSSE, Metrica): drop players outside a camera footprint borrowed from a SkillCorner frame with a similar ball position.
 - The ball carrier and ball are always kept if the source has them, since the broadcast camera follows the ball.
-- Compare **full** vs. **broadcast view** on the same folds (see 07). If broadcast view costs a lot, vision output will too.
+- Compare **full** vs. **broadcast view** on the SkillCorner folds (see 07 #5; PFF's ESTIMATED positions are too poor for a full-view arm). If broadcast view costs a lot, vision output will too.
 
 ## xG model
 ### Feature rule
@@ -52,14 +53,14 @@ Every xG feature must be (a) computable at frame t from game state (02), before 
 - **Primary: StatsBomb 360 open data.** 300 men's matches have 360 freeze frames (~7,500 shots, estimated at ~25/match; checked 2026-09-25). Freeze frames only include players visible on the broadcast, like our vision output.
 - **Wyscout (defcon CSV):** location-only xG (distance + angle). A baseline and sanity check, not the production model.
 - Convert StatsBomb coordinates (120 × 80 yards, origin top-left) to 02's meters.
-- **Leakage:** if PFF World Cup 2022 matches are in any evaluation fold, drop StatsBomb's World Cup 2022 (the same 64 matches) from xG training.
-- **Check calibration on our own data:** apply the xG model to SkillCorner shots at the shot frame and compare to the 61 goals (06). Report it; don't retrain on it.
+- **Leakage:** PFF World Cup 2022 is in every CV fold, so StatsBomb's World Cup 2022 (the same 64 matches) is always dropped from xG training.
+- **Check calibration on our own data:** apply the xG model at the shot frame to PFF shots (129 goals in the 51 tracked games, 06) and SkillCorner shots (61 goals), and compare. Report it; don't retrain on it.
 
 ### Combining with P(shot)
 xG at the carrier's current position is an approximation. The shot usually happens later, from somewhere closer to goal. Build in order:
 1. **v1: carrier position.** P(goal) = P(shot) × xG(ball carrier at t). Tends to underestimate P(goal) early in an attack, since the carrier is still far from goal. Measure how much by comparing to xG at the actual shot frame.
 2. **v2: shooter-weighted.** If the node-level "who will shoot" head exists, P(goal) = Σ_i P(player i shoots) × xG(player i at t). Still uses positions at t, but covers runners who aren't on the ball.
-- A direct P(goal within H) model is out: ~61 goals in 20 matches is far too few to train it.
+- A direct P(goal within H) model is out: even PFF + SkillCorner give ~200 goals with tracking, far too few to train it.
 
 ## Class imbalance
 - Weighted loss or focal loss; evaluate with PR-AUC, not accuracy.
