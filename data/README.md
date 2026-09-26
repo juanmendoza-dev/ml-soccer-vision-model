@@ -11,8 +11,11 @@ raw/pff/
 ├── Metadata/         {game_id}.json (64)
 ├── Rosters/          {game_id}.json (64)
 ├── Tracking Data/    {game_id}.jsonl.bz2 (64). Start with 10502, 10503, 10504; get the rest once the converter works
+├── docs/             PFF FC Tracking Data Specification v2.2.pdf (came inside the tracking download)
 ├── players.csv
 └── competitions.csv
 ```
+
+Drive zips large folders in parts (`...-1-001.zip`, `...-1-002.zip`, ...). Download every part.
 
 Also save PFF's "Change Log" Google Doc when downloading; it lists format changes between versions.
