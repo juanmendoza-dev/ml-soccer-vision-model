@@ -11,6 +11,7 @@ A video that makes the model's output obvious to someone who knows nothing about
 
 ## Modes
 - **Offline:** render from saved game state + predictions (any machine).
+- **Debug:** same renderer, for a frame range (`--frames 1200-1500`): boxes, track IDs, teams and minimap from the detections cache (03 Diagnostics). For finding where and when vision went wrong; never published.
 - **Live:** run on RTX 2060 workstation; detection every 2nd–3rd frame, smaller YOLO model.
 
 ## Footage
