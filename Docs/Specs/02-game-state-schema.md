@@ -87,12 +87,13 @@ The predictor needs `ball_state`, `possession_team` and `ball_carrier_id` at inf
 
 | Producer | set_piece | events.set_play_phase | frames.set_play_phase |
 |---|---|---|---|
-| PFF | `gameEvents.setpieceType`: O → open_play, C → corner, F → free_kick, P → penalty, T → throw_in, G → goal_kick, K → kickoff, D → drop_ball | Proxy: true if ≤ 10 s after a same-team corner or free kick in the same period (06; window unverified) | Same proxy and the same restart list: true if a corner or free kick by `possession_team` started ≤ 10 s earlier in the same period (video time, like the events). false when `possession_team` is null |
+| PFF | `gameEvents.setpieceType`: O → open_play, C → corner, F → free_kick, P → penalty, T → throw_in, G → goal_kick, K → kickoff, D → drop_ball | Proxy: true if ≤ 10 s after a same-team corner or final-third free kick in the same period (06; window unverified) | Same proxy and the same restart list: true if a corner or final-third free kick by `possession_team` started ≤ 10 s earlier in the same period (video time, like the events). false when `possession_team` is null |
 | SkillCorner | From the possession's start type where available, else null | `team_in_possession_phase_type = set_play` | `team_in_possession_phase_type = set_play` on the frame |
 | IDSSE, Metrica | Provider event qualifiers via kloppy, where present. Metrica CSV: the `SET PIECE` row at the shot's frame (FREE KICK, CORNER KICK, PENALTY, ...), else open_play | null unless the provider marks it | null unless the provider marks it |
 | Vision | null | null | null |
 
 - Open-play labels (05) use `set_piece = open_play` and `set_play_phase` not true.
+- **Set-play restarts** are corners and free kicks taken in the final third: at least 17.5 m (a third of the pitch) past halfway in the taking team's attacking direction. A free kick with no known location counts. Free kicks further back restart ordinary build-up (06: own-half free kicks masked 95k frames and turned only 11 shots into set plays), so they don't start a phase.
 - `outcome = goal` only for goals that stand. A goal that is ruled out (e.g. PFF `shotOutcomeType = G` followed by a free-kick restart) gets `outcome = disallowed` and no `goal` event.
 - Own goals and goals not coded as shots still get a `goal` event, with the scoring team in `team`.
 - Penalty shootouts are period 5 (PFF puts them in period 4; the converter moves them using the shootout rule in 06). All period-5 frames have `ball_state = dead`, and shootout kicks are not `shot` events.
