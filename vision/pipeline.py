@@ -95,6 +95,8 @@ class VisionPipeline:
         self._last_h_t: float | None = None
         self._tracks: dict[int, Track] = {}
         self._track_motion: dict[int, np.ndarray] = {}  # px per frame, x1 y1 x2 y2
+        # last detected box and its step, kept apart from filled boxes so fills don't compound
+        self._track_seen: dict[int, tuple[int, np.ndarray]] = {}
         self._team_votes: dict[int, list[int]] = {}
         self._ball: tuple[float, np.ndarray, np.ndarray, Box, float] | None = (
             None  # t xy v box conf
@@ -159,7 +161,8 @@ class VisionPipeline:
                 self._last_h_t = t
         self._match_seconds += dt
 
-        detect_now = self._steps % cfg.detect_every == 0
+        step = self._steps
+        detect_now = step % cfg.detect_every == 0
         self._steps += 1
         ball_det = None
         if detect_now:
@@ -169,10 +172,10 @@ class VisionPipeline:
             # low-confidence people too: the tracker only uses them to extend existing tracks
             people = [d for d in dets if d.cls != BALL and d.confidence >= cfg.track_min_conf]
             tracks = self.stages.tracker.update(people)
-            self._update_tracks(tracks)
+            self._update_tracks(tracks, step)
             self._update_teams(image, tracks)
         else:
-            self._fill_tracks()
+            self._fill_tracks(step)
 
         H = self.smoother.current()
         h_ok = (
@@ -217,23 +220,24 @@ class VisionPipeline:
 
     # --- tracking --------------------------------------------------------
 
-    def _update_tracks(self, tracks: list[Track]) -> None:
+    def _update_tracks(self, tracks: list[Track], step: int) -> None:
         new = {}
         for tr in tracks:
-            old = self._tracks.get(tr.track_id)
-            if old is not None:
-                self._track_motion[tr.track_id] = (
-                    np.subtract(tr.box, old.box) / self.config.detect_every
-                )
+            box = np.array(tr.box, dtype=float)
+            seen = self._track_seen.get(tr.track_id)
+            if seen is not None:  # detection to detection, however many frames apart
+                self._track_motion[tr.track_id] = (box - seen[1]) / (step - seen[0])
+            self._track_seen[tr.track_id] = (step, box)
             new[tr.track_id] = tr
         self._tracks = new
 
-    def _fill_tracks(self) -> None:
-        """Frames between detections: move each track by its last motion (03 frame skip)."""
+    def _fill_tracks(self, step: int) -> None:
+        """Frames between detections: last detected box moved on by its motion (03 frame skip)."""
         filled = {}
         for tid, tr in self._tracks.items():
+            seen_step, seen_box = self._track_seen[tid]
             motion = self._track_motion.get(tid, np.zeros(4))
-            box = tuple(float(v) for v in np.add(tr.box, motion))
+            box = tuple(float(v) for v in seen_box + motion * (step - seen_step))
             # keeps the last detection's confidence; the detections cache nulls it (03)
             filled[tid] = Track(tid, box, tr.cls, tr.confidence, tracked_only=True)
         self._tracks = filled

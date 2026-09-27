@@ -298,3 +298,32 @@ def test_low_confidence_people_reach_the_tracker_but_not_the_ball():
         vf = pipe.step(frame_id, frame_id / FPS, render(frame_id))
     assert tracker.seen[-1] == [0.15]
     assert vf.ball is None
+
+
+class RunningDetector:
+    """One player running right at 4 px per frame."""
+
+    def __init__(self):
+        self.frame_id = 0
+
+    def detect(self, image):
+        x = 300 + 4 * self.frame_id
+        return [Detection((x, 300, x + 20, 350), PLAYER, 0.9)]
+
+
+@pytest.mark.parametrize("detect_every", [1, 2, 3])
+def test_filled_boxes_follow_a_moving_player(detect_every):
+    detector = RunningDetector()
+    pipe = VisionPipeline(
+        VisionConfig(detect_every=detect_every),
+        Stages(detector, FakeTracker(), FakeKeypoints(), ShirtColorTeams()),
+    )
+    filled = 0
+    for frame_id in range(40):
+        detector.frame_id = frame_id
+        vf = pipe.step(frame_id, frame_id / FPS, render(frame_id))
+        if vf.view == MATCH and vf.objects and frame_id > 10 + detect_every:
+            (player,) = vf.objects
+            assert player.box_px[0] == pytest.approx(300 + 4 * frame_id)
+            filled += player.tracked_only
+    assert (filled > 0) == (detect_every > 1)
