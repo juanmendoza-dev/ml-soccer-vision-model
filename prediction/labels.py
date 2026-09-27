@@ -50,8 +50,9 @@ def count_in_window(ev_us: np.ndarray, t_us: np.ndarray, h_us: int) -> np.ndarra
 def add_labels(grid: pl.DataFrame, lev: pl.DataFrame) -> pl.DataFrame:
     """label_mask_*, label_shot_*, label_goal_* per horizon; labels are null where masked.
 
-    `grid` needs grid_us, period, possession_team and eligible. Only events by the
-    team in possession at t count.
+    `grid` needs grid_us, period, possession_team, eligible and set_play_phase. Only
+    events by the team in possession at t count. A frame is masked if it's in a set-play
+    phase itself (02, null = not) or a set-play shot/goal falls in its window.
     """
     n = grid.height
     counts = {(k, h): np.zeros(n, dtype=np.int64) for k in KINDS for h in HORIZONS}
@@ -66,10 +67,10 @@ def add_labels(grid: pl.DataFrame, lev: pl.DataFrame) -> pl.DataFrame:
             ev = np.sort(g.filter(pl.col("kind") == k)["ev_us"].to_numpy())
             for h, secs in HORIZONS.items():
                 counts[(k, h)][rows] = count_in_window(ev, t_us[rows], secs * US)
-    eligible = grid["eligible"].to_numpy()
+    open_play = grid["eligible"].to_numpy() & ~grid["set_play_phase"].fill_null(False).to_numpy()
     raw = []
     for h in HORIZONS:
-        raw.append(pl.Series(f"label_mask_{h}", eligible & (counts[("set_play", h)] == 0)))
+        raw.append(pl.Series(f"label_mask_{h}", open_play & (counts[("set_play", h)] == 0)))
         raw += [pl.Series(f"label_{k}_{h}", counts[(k, h)] > 0) for k in ("shot", "goal")]
     return grid.with_columns(raw).with_columns(
         pl.when(pl.col(f"label_mask_{h}")).then(pl.col(f"label_{k}_{h}")).alias(f"label_{k}_{h}")

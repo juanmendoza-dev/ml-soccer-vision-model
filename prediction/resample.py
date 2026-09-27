@@ -111,10 +111,13 @@ def add_frame_flags(grid: pl.DataFrame, objects: pl.DataFrame) -> pl.DataFrame:
 def finish_frames(grid: pl.DataFrame, match_id: str) -> pl.DataFrame:
     order = ["period", "t_s", "frame_id", "timestamp_s", *FRAME_COLUMNS]
     order += ["flipped", "eligible", "all_estimated"]
+    order += ["label_set_play_phase"]
     order += [f"label_{k}_{h}" for h in HORIZONS for k in ("mask", "shot", "goal")]
-    return grid.with_columns(match_id=pl.lit(match_id), t_s=pl.col("grid_us") / US).select(
-        "match_id", *order
-    )
+    return grid.with_columns(
+        match_id=pl.lit(match_id),
+        t_s=pl.col("grid_us") / US,
+        label_set_play_phase=pl.col("set_play_phase"),  # label-side only (02)
+    ).select("match_id", *order)
 
 
 def resample_objects(objects: pl.DataFrame, frames10: pl.DataFrame) -> pl.DataFrame:

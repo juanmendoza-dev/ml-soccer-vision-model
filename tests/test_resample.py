@@ -26,6 +26,7 @@ def game(periods=((1, 0.0, 30.0),), fps=10.0, possession="home", ball_state="ali
         possession_team=pl.lit(possession, dtype=pl.String),
         ball_carrier_id=pl.lit(None, dtype=pl.String),
         view_polygon=pl.lit(None, dtype=pl.List(pl.Float64)),
+        set_play_phase=pl.lit(False),
     )
     objs = []
     for oid, otype, team in [
@@ -247,6 +248,30 @@ def test_set_play_shots_are_masked_not_labelled(set_piece, phase):
     assert at(f10, 4.9)["label_shot_h5"] is False
     assert f10["label_shot_h5"].sum() == 0
     assert (~f10["label_mask_h3"]).sum() == 30
+
+
+def test_set_play_phase_masks_without_a_shot():
+    frames, objects = game()
+    phase = pl.col("timestamp_s").is_between(10.0, 20.0)
+    frames = frames.with_columns(set_play_phase=phase)
+    ev = events(frames, (12.0, "shot", "home", "saved", "open_play", False))
+    f10, _, _ = resample_match(frames, objects, ev, "syn")
+    inside = f10.filter(pl.col("t_s").is_between(10.0, 20.0))
+    assert inside["label_set_play_phase"].all()
+    assert not inside["label_mask_h5"].any() and not inside["label_mask_h3"].any()
+    assert inside["label_shot_h5"].null_count() == inside.height
+    # an open-play shot inside a phase leaves its earlier lead-up labelled
+    assert at(f10, 9.9)["label_shot_h5"] is True
+    assert at(f10, 6.9)["label_shot_h5"] is False
+    assert at(f10, 20.1)["label_mask_h5"] is True
+
+
+def test_null_set_play_phase_doesnt_mask():
+    frames, objects = game()
+    frames = frames.with_columns(set_play_phase=pl.lit(None, pl.Boolean))
+    f10, _, _ = resample_match(frames, objects, events(frames), "syn")
+    assert f10["label_mask_h5"].all()
+    assert f10["label_set_play_phase"].null_count() == f10.height
 
 
 def test_set_play_by_the_other_team_doesnt_mask():
