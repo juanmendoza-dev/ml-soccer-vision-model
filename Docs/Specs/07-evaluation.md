@@ -9,6 +9,12 @@ A fixed 70/15/15 split wastes matches: even PFF's 51 tracked games would give a 
 - Fold assignment is fixed once, saved to `data/splits/folds.json` (`match_id`, `source`, `fold`), and reused by every model so comparisons are paired.
 - Balance folds roughly by shot count within each source (e.g. `StratifiedGroupKFold` on match-level shot totals), fixed seed.
 - **Freeze folds only once all 64 PFF games are on disk.** Until then `folds.json` is provisional and results from it aren't reported as final. Adding matches later must not move existing ones.
+- **Built by `python -m evaluation.folds`.** It only assigns matches that aren't in the file yet, so a match never moves:
+  - **Per source:** matches are sorted by open-play shot count, the count 05's labels use (ties shuffled with the fixed seed). They're cut into blocks of 5, and each block is shuffled across the 5 folds. Fold sizes differ by at most one match, and shot totals come out close.
+  - **New matches from a source already in the file** each go to that source's fold with the fewest matches, then the fewest shots.
+- **Format and storage:** `folds.json` has `n_folds`, `seed`, `frozen` (source → date its assignment was fixed) and `matches` (`match_id`, `source`, `fold`, `open_play_shots`). It's committed to git (an exception to `data/` being ignored), so every machine uses the same folds.
+- **Status:** PFF was frozen on 2026-09-26 with all 64 games. SkillCorner gets appended once its converter exists, without moving any PFF match.
+- **Inner split:** `evaluation.folds.inner_split(fold)` returns the inner validation matches for an outer fold: about 15% of the training matches from each source, chosen with the same shot stratification. It's deterministic, so every model tunes on the same matches.
 - Each outer fold: train on the other 4 folds (both sources), evaluate on the held-out fold.
 - **Anything tuned is tuned inside the training matches only:** hyperparameters, early stopping, temperature scaling, and threshold τ. Use an inner grouped split (~15% of training matches from each source as inner validation). Never tune on the evaluation fold.
 - PFF-only training runs (e.g. when a feature only exists in PFF) use the same folds, restricted to PFF matches.
