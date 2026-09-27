@@ -1,0 +1,393 @@
+{
+  "n_folds": 5,
+  "seed": 20260926,
+  "frozen": {
+    "pff": "2026-09-26"
+  },
+  "matches": [
+    {
+      "match_id": "10502",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 25
+    },
+    {
+      "match_id": "10503",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 17
+    },
+    {
+      "match_id": "10504",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 20
+    },
+    {
+      "match_id": "10505",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 15
+    },
+    {
+      "match_id": "10506",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 17
+    },
+    {
+      "match_id": "10507",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 24
+    },
+    {
+      "match_id": "10508",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 15
+    },
+    {
+      "match_id": "10509",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 18
+    },
+    {
+      "match_id": "10510",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 20
+    },
+    {
+      "match_id": "10511",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 8
+    },
+    {
+      "match_id": "10512",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 15
+    },
+    {
+      "match_id": "10513",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 16
+    },
+    {
+      "match_id": "10514",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 16
+    },
+    {
+      "match_id": "10515",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 24
+    },
+    {
+      "match_id": "10516",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 14
+    },
+    {
+      "match_id": "10517",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 16
+    },
+    {
+      "match_id": "3812",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 24
+    },
+    {
+      "match_id": "3813",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 15
+    },
+    {
+      "match_id": "3814",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 11
+    },
+    {
+      "match_id": "3815",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 7
+    },
+    {
+      "match_id": "3816",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 16
+    },
+    {
+      "match_id": "3817",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 13
+    },
+    {
+      "match_id": "3818",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 15
+    },
+    {
+      "match_id": "3819",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 20
+    },
+    {
+      "match_id": "3820",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 10
+    },
+    {
+      "match_id": "3821",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 33
+    },
+    {
+      "match_id": "3822",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 16
+    },
+    {
+      "match_id": "3823",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 26
+    },
+    {
+      "match_id": "3824",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 13
+    },
+    {
+      "match_id": "3825",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 14
+    },
+    {
+      "match_id": "3826",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 17
+    },
+    {
+      "match_id": "3827",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 21
+    },
+    {
+      "match_id": "3828",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 28
+    },
+    {
+      "match_id": "3829",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 16
+    },
+    {
+      "match_id": "3830",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 13
+    },
+    {
+      "match_id": "3831",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 15
+    },
+    {
+      "match_id": "3832",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 18
+    },
+    {
+      "match_id": "3833",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 18
+    },
+    {
+      "match_id": "3834",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 22
+    },
+    {
+      "match_id": "3835",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 4
+    },
+    {
+      "match_id": "3836",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 12
+    },
+    {
+      "match_id": "3837",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 15
+    },
+    {
+      "match_id": "3838",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 21
+    },
+    {
+      "match_id": "3839",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 16
+    },
+    {
+      "match_id": "3840",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 24
+    },
+    {
+      "match_id": "3841",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 22
+    },
+    {
+      "match_id": "3842",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 12
+    },
+    {
+      "match_id": "3843",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 22
+    },
+    {
+      "match_id": "3844",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 12
+    },
+    {
+      "match_id": "3845",
+      "source": "pff",
+      "fold": 1,
+      "open_play_shots": 18
+    },
+    {
+      "match_id": "3846",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 17
+    },
+    {
+      "match_id": "3847",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 15
+    },
+    {
+      "match_id": "3848",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 18
+    },
+    {
+      "match_id": "3849",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 10
+    },
+    {
+      "match_id": "3850",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 23
+    },
+    {
+      "match_id": "3851",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 24
+    },
+    {
+      "match_id": "3852",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 21
+    },
+    {
+      "match_id": "3853",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 7
+    },
+    {
+      "match_id": "3854",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 17
+    },
+    {
+      "match_id": "3855",
+      "source": "pff",
+      "fold": 3,
+      "open_play_shots": 39
+    },
+    {
+      "match_id": "3856",
+      "source": "pff",
+      "fold": 4,
+      "open_play_shots": 20
+    },
+    {
+      "match_id": "3857",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 18
+    },
+    {
+      "match_id": "3858",
+      "source": "pff",
+      "fold": 2,
+      "open_play_shots": 19
+    },
+    {
+      "match_id": "3859",
+      "source": "pff",
+      "fold": 0,
+      "open_play_shots": 20
+    }
+  ]
+}

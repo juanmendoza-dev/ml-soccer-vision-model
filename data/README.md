@@ -1,6 +1,6 @@
 # data
 
-Everything here except this file is gitignored. Raw downloads go in `raw/<source>/` and are never modified.
+Everything here except this file and `splits/` is gitignored. `splits/folds.json` is the fixed CV assignment (07); it is committed so every machine uses the same folds, and `python -m evaluation.folds` only ever appends to it. Raw downloads go in `raw/<source>/` and are never modified.
 
 ## raw/pff/ — PFF FC World Cup 2022
 Request access via the form at https://www.blog.fc.pff.com/blog/pff-fc-release-2022-world-cup-data (free). PFF shares a Google Drive with the files below. Keep their folder names.
