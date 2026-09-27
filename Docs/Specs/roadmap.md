@@ -54,20 +54,52 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] Final models on IDSSE, once
 
 ## Phase 2 — Vision pipeline (RTX 2060)
+In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-09-27.md`; F-numbers refer to it).
+
+**Done**
 - [x] Streaming `VisionPipeline` (03): stage 0 gate, detection + ByteTrack with frame skip, kit-color teams after warmup, homography from roboflow's 32 keypoints in 02 coords, ball extrapolation. Tested with fake stages on a synthetic match (output passes the 02 validator)
 - [x] `vision.run` (video → game state + detections cache) and `demo.debug` renderer (08 debug mode)
-- [ ] **First workstation run:** `vision.run` + `demo.debug` on a demo clip with roboflow's weights. Real stages are untested until then
+- [x] Detections cache + `view.parquet` + `run.json` (03 Diagnostics)
+
+**1. First real run (2060)**
+- [ ] **First workstation run:** `vision.run` + validator + `demo.debug` on a short demo clip with roboflow's weights. Real stages are untested until then
 - [ ] Check keypoint orientation on that clip (center spot, penalty spots land right; 03 Pitch template)
 - [ ] Pick `home_cluster` from the debug video; later a warmup prompt in live mode
-- [ ] Run roboflow/sports end to end on a SoccerNet sample clip
+
+**2. Bugs that give wrong output (M1)**
+- [ ] F2: view gate stays `match` on green close-ups (unsampled keypoint frames count as passing)
+- [ ] Tracker: lost-track buffer is double-scaled (1 s → 20 updates), and the 0.3 conf filter removes ByteTrack's low-conf second pass
+- [ ] F3: filled boxes between detections move too slow (motion measured from the last filled box)
+- [ ] F4: home/away can flip after a team refit (match new clusters to old ones)
+- [ ] F1: velocity window picked from the whole run's timestamps; use known fps so it's strictly causal
+
+**3. Crashes and guardrails (M1)**
+- [ ] F5: one-frame run crashes in velocities; empty detections cache has no columns (debug renderer crashes)
+- [ ] F9: reject bad config (`detect_every=0`, bad fps/period)
+- [ ] Run the validator at the end of `close()`; an empty run is a failure, not a schema change
+- [ ] F7: clip `box_frac` to 0–1
+
+**4. Quality (after real-clip results)**
+- [ ] Homography acceptance: inlier count, error threshold, no matrix averaging across camera motion
+- [ ] Ball: reset motion after long gaps and cuts, temporal candidate association, null when homography is invalid (F8)
+- [ ] Per-stage timings + effective model settings in `run.json` (03)
+- [ ] Run roboflow/sports end to end on a SoccerNet sample clip as a reference
 - [ ] Tune the stage 0 thresholds on broadcast clips with ads and studio cuts (`view.parquet`, 03)
+
+**5. Small cleanups**
+- [ ] 03: header still says v0.4 and omits `events.parquet`; points 31/32 aren't on the halfway line
+- [ ] `--period-start-s` flag so `timestamp_s` is the period clock, one period per run (F6)
+- [ ] `demo.debug` renders only the processed frame range
+
+**6. Later**
 - [ ] Move off `sv.ByteTrack` before supervision 0.31 (pinned below it)
-- [ ] Homography → pitch meters → game state writer (incl. `match.parquet`, `view_polygon`)
-- [x] Detections cache + `view.parquet` + `run.json` (03 Diagnostics)
-- [ ] Ball tracking improvements + interpolation
+- [ ] Bounded-memory writer before full-match runs
+- [ ] Replay detection
 - [ ] Plug in stage 8 (possession / ball state) from Phase 1
 - [ ] Jersey OCR → player_id
 - [ ] Evaluate on SoccerNet-GSR clips
+
+Skipped for now: schema 0.7 for empty runs, shootout (period 5) handling in vision.
 
 ## Phase 3 — End to end + demo
 - [ ] Feed vision game state into trained predictor
