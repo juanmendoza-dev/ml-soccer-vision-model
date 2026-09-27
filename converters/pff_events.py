@@ -101,6 +101,26 @@ def location(row: dict, player_id, flip: bool) -> tuple[float, float, bool] | No
     return s * point["x"], s * point["y"], from_player
 
 
+def set_play_restarts(rows: list[dict]) -> list[tuple[int, bool, float]]:
+    """(period, home team, startTime) of every corner and free kick: the restarts that
+    start a set-play phase (02). Shared by the events proxy and frames.set_play_phase."""
+    return [
+        (r["gameEvents"]["period"], r["gameEvents"]["homeTeam"], r["startTime"])
+        for r in rows
+        if r["gameEvents"]["period"] in PERIODS and r["gameEvents"]["setpieceType"] in ("C", "F")
+    ]
+
+
+def load_set_play_restarts(game_id: str, raw_dir: Path = RAW_DIR) -> pl.DataFrame:
+    """set_play_restarts as a table: period, team (home/away), start_s (video time)."""
+    raw = json.loads((raw_dir / "Event Data" / f"{game_id}.json").read_text())
+    return pl.DataFrame(
+        [(p, "home" if home else "away", t) for p, home, t in set_play_restarts(raw)],
+        schema={"period": pl.Int64, "team": pl.String, "start_s": pl.Float64},
+        orient="row",
+    )
+
+
 def parse_events(
     game_id: str, raw_dir: Path = RAW_DIR, report: ConversionReport | None = None
 ) -> pl.DataFrame:
@@ -140,11 +160,7 @@ def parse_events(
 
     # Same-team corners and free kicks, for the set-play-phase proxy. Times are the
     # game event's startTime; that reproduces 06 (eventTime lets 5 more shots through).
-    set_plays = [
-        (r["gameEvents"]["period"], r["gameEvents"]["homeTeam"], r["startTime"])
-        for r in rows
-        if r["gameEvents"]["setpieceType"] in ("C", "F")
-    ]
+    set_plays = set_play_restarts(rows)
 
     def in_set_play(row: dict) -> bool:
         g = row["gameEvents"]
