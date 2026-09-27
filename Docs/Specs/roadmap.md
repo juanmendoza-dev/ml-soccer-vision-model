@@ -55,6 +55,7 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 
 ## Phase 2 — Vision pipeline (RTX 2060)
 - [ ] Run roboflow/sports end to end on a SoccerNet sample clip
+- [ ] Stage 0 view gate (grass share + keypoints, hysteresis) and `view.parquet`; tune on broadcast clips with ads and studio cuts (03)
 - [ ] Homography → pitch meters → game state writer (incl. `match.parquet`, `view_polygon`)
 - [ ] Detections cache + `run.json` (03 Diagnostics)
 - [ ] Ball tracking improvements + interpolation

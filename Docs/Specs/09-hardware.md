@@ -38,6 +38,7 @@ These are unmeasured estimates for a 2060 with FP16 TensorRT exports. Plain PyTo
 
 | Stage (03) | Live approach | Rough cost |
 |---|---|---|
+| 0. View gate | Every frame, CPU; skips everything below on ads/studio/close-ups | ~1 ms |
 | 1. Player detection | YOLOv8s at 640–960, every 2nd–3rd frame | ~5–10 ms |
 | 5. Ball detection | Small model at higher resolution, or tiled crops near the last ball position | ~10–25 ms; the most expensive stage |
 | 4. Pitch keypoints | Every ~5th frame, trailing-window smoothing | ~10–20 ms when it runs |
