@@ -99,6 +99,18 @@ def assign(
     return sorted(out, key=lambda m: (m["source"], m["match_id"]))
 
 
+def refresh_shots(existing: list[dict], current: pl.DataFrame) -> tuple[list[dict], int]:
+    """Update open_play_shots of matches already in the file after a label definition
+    change. Folds never move; returns the rows and how many counts changed."""
+    shots = dict(current.select("match_id", "open_play_shots").iter_rows())
+    out, changed = [], 0
+    for m in existing:
+        new = shots.get(m["match_id"], m["open_play_shots"])
+        changed += new != m["open_play_shots"]
+        out.append(m | {"open_play_shots": new})
+    return out, changed
+
+
 def load(path: Path = FOLDS_PATH) -> dict:
     if path.exists():
         return json.loads(path.read_text())
@@ -135,12 +147,19 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--gamestate", type=Path, default=GAMESTATE_DIR)
     ap.add_argument("--out", type=Path, default=FOLDS_PATH)
+    ap.add_argument(
+        "--refresh-shots",
+        action="store_true",
+        help="update stored shot counts after a label change; folds don't move",
+    )
     args = ap.parse_args(argv)
     folds = load(args.out)
     before = {m["match_id"] for m in folds["matches"]}
-    folds["matches"] = assign(
-        folds["matches"], cv_matches(args.gamestate), folds["seed"], folds["n_folds"]
-    )
+    current = cv_matches(args.gamestate)
+    if args.refresh_shots:
+        folds["matches"], changed = refresh_shots(folds["matches"], current)
+        print(f"{changed} shot counts refreshed")
+    folds["matches"] = assign(folds["matches"], current, folds["seed"], folds["n_folds"])
     added = [m for m in folds["matches"] if m["match_id"] not in before]
     today = dt.datetime.now().astimezone().date().isoformat()
     for source in {m["source"] for m in added}:

@@ -5,7 +5,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from evaluation.folds import FOLDS_PATH, assign, inner_split, main
+from evaluation.folds import FOLDS_PATH, assign, inner_split, main, refresh_shots
 
 GAMESTATE = Path("data/gamestate")
 
@@ -66,6 +66,15 @@ def test_existing_matches_never_move():
     assert set(sc.values()) == {4}  # its own stratification, 4 per fold
     pff_sizes = Counter(r["fold"] for r in after if r["source"] == "pff")
     assert max(pff_sizes.values()) - min(pff_sizes.values()) <= 1
+
+
+def test_refresh_shots_keeps_folds():
+    rows = assign([], table("pff", 64), seed=1)
+    current = table("pff", 64).with_columns(open_play_shots=pl.col("open_play_shots") + 1)
+    refreshed, changed = refresh_shots(rows, current)
+    assert changed == 64
+    assert [r["fold"] for r in refreshed] == [r["fold"] for r in rows]
+    assert [r["open_play_shots"] for r in refreshed] == [r["open_play_shots"] + 1 for r in rows]
 
 
 def test_inner_split_per_source_and_outside_the_fold():
