@@ -4,6 +4,7 @@ import pytest
 from converters.common import ConversionReport
 from converters.pff_events import (
     RAW_DIR,
+    classify_restarts,
     frame_of,
     game_ids,
     load_metadata,
@@ -119,6 +120,49 @@ needs_data = pytest.mark.skipif(
 )
 
 
+def restart_row(kind, home, period, x, player_x=None):
+    ball = [] if x is None else [{"x": x, "y": 0.0}]
+    players = [] if player_x is None else [{"playerId": 7, "x": player_x, "y": 0.0}]
+    return {
+        "gameEvents": {"period": period, "homeTeam": home, "setpieceType": kind, "playerId": 7},
+        "startTime": 100.0,
+        "ball": ball,
+        "homePlayers": players,
+        "awayPlayers": [],
+    }
+
+
+def test_only_corners_and_final_third_free_kicks_start_a_set_play():
+    # raw coordinates, home starts left: home attacks +x in periods 1 and 3, -x in 2 and 4
+    meta = {"homeTeamStartLeft": True, "homeTeamStartLeftExtraTime": True}
+    rows = [
+        restart_row("C", True, 1, -50.0),  # corner: always
+        restart_row("F", True, 1, 20.0),  # home, final third
+        restart_row("F", True, 1, 10.0),  # home, attacking half short of the final third
+        restart_row("F", True, 2, 20.0),  # home in period 2 attacks -x: own half
+        restart_row("F", False, 1, -30.0),  # away in period 1 attacks -x: final third
+        restart_row("F", True, 1, None, player_x=25.0),  # no ball: taker's position
+        restart_row("F", True, 1, None),  # no position at all: counts
+        restart_row("F", True, 4, -20.0),  # extra time, period 4 like period 2
+        restart_row("T", True, 1, 50.0),  # throw-ins never
+    ]
+    out = classify_restarts(rows, meta)
+    assert [c["set_play"] for c in out] == [True, True, False, False, True, True, True, True]
+    assert out[3]["x_att"] == -20.0
+    # home starting right: the same situations have mirrored raw positions
+    mirrored = [
+        r
+        | {"ball": [{"x": -b["x"], "y": 0.0} for b in r["ball"]]}
+        | {"homePlayers": [q | {"x": -q["x"]} for q in r["homePlayers"]]}
+        for r in rows
+    ]
+    flipped = classify_restarts(
+        mirrored, {"homeTeamStartLeft": False, "homeTeamStartLeftExtraTime": False}
+    )
+    assert [c["set_play"] for c in flipped] == [c["set_play"] for c in out]
+    assert [c["x_att"] for c in flipped] == [c["x_att"] for c in out]
+
+
 @pytest.fixture(scope="module")
 def parsed():
     reports, events = {}, []
@@ -154,7 +198,7 @@ def test_counts_match_06_all_games(parsed):
     assert counts(events) == {
         "shots": 1518,
         "open_play_strict": 1450,
-        "open_play_proxy": 1153,
+        "open_play_proxy": 1180,  # 1,153 before own-half/midfield free kicks were dropped (06)
         "goals": 172,
         "open_play_shot_goals": 149,
         "shots_per_match": (9, 23, 41),
@@ -169,7 +213,7 @@ def test_counts_match_06_tracked_games(parsed):
     assert counts(tracked) == {
         "shots": 1179,
         "open_play_strict": 1125,
-        "open_play_proxy": 890,
+        "open_play_proxy": 912,  # was 890 with every free kick
         "goals": 129,
         "open_play_shot_goals": 113,
         "shots_per_match": (9, 22, 41),
