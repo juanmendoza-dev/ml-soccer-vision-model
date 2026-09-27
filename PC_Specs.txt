@@ -1,0 +1,35 @@
+PC SPECS - for YOLO Python model
+Generated: 2026-09-27
+
+=== SYSTEM ===
+Manufacturer/Model: Micro-Star International Co., Ltd. MS-7C51
+OS: Microsoft Windows 11 Home, Build 10.0.26200
+System Type: x64-based PC
+
+=== CPU ===
+11th Gen Intel(R) Core(TM) i5-11400F @ 2.60GHz
+Cores: 6
+Logical Processors (threads): 12
+Max Clock Speed: 2592 MHz
+
+=== GPU ===
+NVIDIA GeForce RTX 2060
+VRAM: 6 GB (6144 MiB)
+Driver Version: 32.0.16.1088
+NVIDIA-SMI Version: 610.88
+CUDA (UMD) Version: 13.3
+
+=== RAM ===
+Total: 32,636 MB (~32 GB)
+Available: 23,214 MB (~23 GB)
+Modules: 2x Corsair 16 GB @ 3200 MHz
+
+=== STORAGE ===
+WDC WDS500G2B0C-00PXH0 - 500 GB (Fixed disk / SSD)
+
+=== SOFTWARE ===
+Python Version: 3.13.5 (64-bit)
+
+Notes for YOLO:
+- RTX 2060 has 6GB VRAM - fine for YOLOv8n/s, may need to reduce batch size or image size for larger models (YOLOv8m/l/x).
+- Make sure to install a CUDA-enabled PyTorch build matching your driver's CUDA version.
