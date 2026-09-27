@@ -1,0 +1,200 @@
+"""VisionPipeline + GameStateWriter with fake stages on synthetic frames.
+
+A made-up camera looks at a pitch; four players (two red shirts, two blue),
+a goalkeeper, a referee and a ball stand at known spots. 0-4 s match, 4-6 s an
+ad, 6-10 s match again. The output has to pass the 02 validator.
+"""
+
+import numpy as np
+import polars as pl
+import pytest
+
+cv2 = pytest.importorskip("cv2")
+
+from gamestate.validate import validate_match
+from vision.config import VisionConfig
+from vision.pipeline import Stages, VisionPipeline
+from vision.pitch import TEMPLATE, project
+from vision.types import (
+    BALL,
+    GOALKEEPER,
+    MATCH,
+    OTHER,
+    PLAYER,
+    REFEREE,
+    Detection,
+    Keypoints,
+    Track,
+)
+from vision.writer import GameStateWriter
+
+FPS = 10
+W, H = 1280, 720
+CAMERA = np.array([[9.0, -2.0, 640.0], [0.0, -6.0, 380.0], [0.0, -0.004, 1.0]])
+GREEN, STUDIO = (40, 140, 40), (90, 60, 160)
+RED, BLUE = (30, 30, 220), (220, 60, 30)  # BGR shirts
+
+# (class, TV-frame meters, shirt)
+PEOPLE = [
+    (PLAYER, (10.0, 5.0), RED),
+    (PLAYER, (20.0, -8.0), RED),
+    (PLAYER, (-15.0, 3.0), BLUE),
+    (PLAYER, (-25.0, 10.0), BLUE),
+    (GOALKEEPER, (45.0, 0.0), (0, 200, 200)),  # nearer the red players
+    (REFEREE, (0.0, -20.0), (20, 20, 20)),
+]
+BALL_AT = (12.0, 4.0)
+
+
+def feet_px(xy):
+    return project(CAMERA, [xy])[0]
+
+
+def box_at(xy, w=20, h=50):
+    u, v = feet_px(xy)
+    return (u - w / 2, v - h, u + w / 2, v)
+
+
+def is_ad(frame_id):
+    return 40 <= frame_id < 60
+
+
+def render(frame_id):
+    image = np.full((H, W, 3), STUDIO if is_ad(frame_id) else GREEN, dtype=np.uint8)
+    if not is_ad(frame_id):
+        for _, xy, shirt in PEOPLE:
+            x1, y1, x2, y2 = (round(v) for v in box_at(xy))
+            image[y1:y2, x1:x2] = shirt
+    return image
+
+
+class FakeDetector:
+    def __init__(self):
+        self.called_on = []
+        self.frame_id = 0
+
+    def detect(self, image):
+        self.called_on.append(self.frame_id)
+        dets = [Detection(box_at(xy), cls, 0.9) for cls, xy, _ in PEOPLE]
+        if not 20 <= self.frame_id < 25:  # ball hidden for half a second
+            u, v = feet_px(BALL_AT)
+            dets.append(Detection((u - 4, v - 4, u + 4, v + 4), BALL, 0.8))
+        return dets
+
+
+class FakeTracker:
+    def update(self, detections):
+        return [Track(i, d.box, d.cls, d.confidence) for i, d in enumerate(detections)]
+
+    def reset(self):
+        pass
+
+
+class FakeKeypoints:
+    def detect(self, image):
+        return Keypoints(project(CAMERA, TEMPLATE), np.full(32, 0.9))
+
+
+class ShirtColorTeams:
+    def __init__(self):
+        self.fitted = False
+        self.n_crops = 0
+
+    def add(self, crops):
+        self.n_crops += len(crops)
+
+    def fit(self):
+        self.fitted = True
+
+    def predict(self, crops):
+        return [0 if c[..., 2].mean() > c[..., 0].mean() else 1 for c in crops]  # red -> 0
+
+    def reset(self):
+        self.fitted = False
+        self.n_crops = 0
+
+
+@pytest.fixture
+def run(tmp_path):
+    config = VisionConfig(detect_every=2, team_warmup_s=1.0, team_min_crops=5, home_cluster=0)
+    detector = FakeDetector()
+    pipe = VisionPipeline(
+        config, Stages(detector, FakeTracker(), FakeKeypoints(), ShirtColorTeams())
+    )
+    writer = GameStateWriter(
+        "synth", "Reds", "Blues", FPS, config, tmp_path / "gs", tmp_path / "cache"
+    )
+    frames = []
+    for frame_id in range(100):
+        detector.frame_id = frame_id
+        vf = pipe.step(frame_id, frame_id / FPS, render(frame_id))
+        writer.add(vf)
+        frames.append(vf)
+    return frames, writer.close(), tmp_path / "cache" / "synth", detector
+
+
+def test_output_passes_the_02_validator(run):
+    _, out, _, _ = run
+    assert validate_match(out) == []
+
+
+def test_view_gate_skips_the_ad(run):
+    frames, out, cache, detector = run
+    views = [vf.view for vf in frames]
+    assert views[:10] == [OTHER] * 10  # 1 s before the first switch on
+    assert views[10] == MATCH
+    assert views[44] == MATCH and views[45] == OTHER  # off 0.5 s into the ad
+    assert views[69] == OTHER and views[70] == MATCH  # on 1 s after it ends
+    # detection only on match frames (10-44, 70-99), every 2nd one from each switch on
+    assert detector.called_on == list(range(10, 45, 2)) + list(range(70, 100, 2))
+    objects = pl.read_parquet(out / "objects.parquet")
+    assert objects.filter(pl.col("frame_id").is_between(45, 69)).height == 0
+    fr = pl.read_parquet(out / "frames.parquet")
+    assert fr.height == 100  # every frame keeps a row
+    assert fr.filter(pl.col("frame_id") == 50)["view_polygon"][0] is None
+    assert pl.read_parquet(cache / "view.parquet")["view"].to_list() == views
+
+
+def test_positions_in_meters(run):
+    frames, *_ = run
+    vf = frames[30]
+    by_cls = {}
+    for o in vf.objects:
+        by_cls.setdefault(o.cls, []).append((round(o.x, 3), round(o.y, 3)))
+    assert sorted(by_cls[PLAYER]) == [(-25.0, 10.0), (-15.0, 3.0), (10.0, 5.0), (20.0, -8.0)]
+    assert by_cls[GOALKEEPER] == [(45.0, 0.0)]
+    assert vf.homography_ok and vf.homography_err_m < 1e-3
+
+
+def test_teams_after_warmup(run):
+    frames, *_ = run
+    early = frames[12]  # 0.2 s into match view: teams not fitted yet
+    assert all(o.team is None for o in early.objects)
+    late = {(round(o.x), round(o.y)): o.team for o in frames[35].objects}
+    assert late[(10, 5)] == "home" and late[(20, -8)] == "home"  # red = cluster 0 = home
+    assert late[(-15, 3)] == "away"
+    assert late[(45, 0)] == "home"  # goalkeeper: nearer the red players
+    assert late[(0, -20)] is None  # referee
+
+
+def test_tracker_fills_skipped_frames_and_ids_change_after_the_cut(run):
+    frames, *_ = run
+    assert not any(o.tracked_only for o in frames[30].objects)
+    assert all(o.tracked_only and o.interpolated for o in frames[31].objects)
+    ids_before = {o.object_id for o in frames[30].objects}
+    ids_after = {o.object_id for o in frames[80].objects}
+    assert ids_before.isdisjoint(ids_after)
+
+
+def test_ball_extrapolated_through_a_short_gap(run):
+    frames, *_ = run
+    assert not frames[18].ball.interpolated
+    gap = frames[22].ball
+    assert gap.interpolated and (round(gap.x, 3), round(gap.y, 3)) == BALL_AT  # standing ball
+    assert frames[26].ball.interpolated is False
+
+
+def test_display_boxes_are_fractions(run):
+    frames, *_ = run
+    for o in frames[30].objects:
+        assert all(0 <= v <= 1 for v in o.box_frac)
