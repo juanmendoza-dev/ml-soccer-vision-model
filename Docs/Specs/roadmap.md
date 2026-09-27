@@ -66,6 +66,7 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] Feed vision game state into trained predictor
 - [ ] Compare predictor accuracy on vision vs. dataset tracking
 - [ ] Offline overlay renderer, with debug mode (08)
+- [ ] Benchmark each vision stage on the 2060 (FP16 / TensorRT) and pick the live config (09)
 - [ ] Live mode on workstation
 - [ ] Record a local match for the public demo (see 08)
 - [ ] Fine-tune detection/keypoints on self-recorded footage
