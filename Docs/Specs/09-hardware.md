@@ -31,9 +31,8 @@ The M1 MacBook Pro is covered in 01.
 ## First vision run (workstation)
 ```
 git clone <this repo> && cd <repo>
-uv sync --extra dev --extra vision
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128   # pick the CUDA wheel from pytorch.org
-uv run python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_arch_list())"
+uv sync --extra dev --extra vision   # pyproject sends Windows torch to the cu128 index
+uv run python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_arch_list())"   # True, includes sm_75
 
 # roboflow/sports weights (their examples/soccer/setup.sh, needs gdown)
 git clone https://github.com/roboflow/sports ../sports && bash ../sports/examples/soccer/setup.sh
