@@ -59,13 +59,30 @@ uv run python -m vision.run --video <clip> --weights-dir ..\sports\examples\socc
 ```
 Same direction/period flags as step 3. New match id, because an existing one gets overwritten.
 
-## 7. Write up the results
+## 7. Homography acceptance follow-up
+The first smoke01 run predates homography acceptance (03 Homography acceptance) and put objects >15 m off the pitch. Before rerunning, look at what those old rows actually were:
+```powershell
+uv run python -m vision.offpitch --match-id smoke01
+```
+Then rerun with the current code, new match id (an existing one gets overwritten):
+```powershell
+uv run python -m vision.run --video <clip> --weights-dir ..\sports\examples\soccer\data --match-id smoke03 --device cuda --detect-every 1 --max-frames 750 --home-cluster <0 or 1>
+```
+Same direction/period flags as step 3.
+```powershell
+uv run python -m gamestate.validate data\gamestate\smoke03
+uv run python -m vision.offpitch --match-id smoke03
+```
+Judge this run on `homography_ok` coverage and projections rejected by the pipeline, not just whether the validator passes — nulled positions on a bad fit are the new correct behavior, not a failure. Thresholds (`min_inliers`, `max_homography_err_m`, `max_homography_jump_m`, `homography_max_age_s`, `max_off_pitch_m`) are untuned guesses; note anything that looks obviously wrong but don't tune them in this session.
+
+## 8. Write up the results
 Create `Docs/reviews/smoke-test-<YYYY-MM-DD>.md` with:
 - Commit hash (`git rev-parse HEAD`), GPU, `uv run python -c "import torch, ultralytics, supervision; print(torch.__version__, ultralytics.__version__, supervision.__version__)"`
 - Clip length, resolution, fps, period, home direction (not the file path or name if it identifies private footage)
-- fps from the progress lines, for smoke01 and smoke02
-- Validator output for both runs, and any traceback in full
+- fps from the progress lines, for smoke01, smoke02 and smoke03
+- Validator output for all three runs, and any traceback in full
 - The contents of `data\vision_cache\smoke01\run.json` (without the video path)
 - The user's notes from step 5, and the chosen `home_cluster`
+- The `vision.offpitch` output for smoke01 and smoke03, and what changed between them
 
 Commit and push only that markdown file. Don't commit anything under `data\`, the clip, or the debug video. Don't change code in this session. Fixes happen after the results are reviewed.
