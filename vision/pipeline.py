@@ -74,6 +74,12 @@ def torso_crop(image: np.ndarray, box: Box) -> np.ndarray:
     return image[max(cy1, 0) : max(cy2, cy1 + 1), max(cx1, 0) : max(cx2, cx1 + 1)]
 
 
+def frac_box(box: Box, w: int, h: int) -> Box:
+    """Display box as 0-1 of the frame, clipped: a filled box can drift off screen (03)."""
+    x1, y1, x2, y2 = box
+    return tuple(min(max(v, 0.0), 1.0) for v in (x1 / w, y1 / h, x2 / w, y2 / h))
+
+
 class VisionPipeline:
     def __init__(self, config: VisionConfig, stages: Stages):
         self.config = config
@@ -192,7 +198,7 @@ class VisionPipeline:
 
         objects = []
         for tr in self._tracks.values():
-            x1, y1, x2, y2 = tr.box
+            x1, _, x2, y2 = tr.box
             x, y = to_pitch(((x1 + x2) / 2, y2))  # feet: bottom center of the box
             objects.append(
                 VisionObject(
@@ -206,7 +212,7 @@ class VisionPipeline:
                     tracked_only=tr.tracked_only,
                     interpolated=tr.tracked_only,
                     box_px=tr.box,
-                    box_frac=(x1 / w, y1 / h, x2 / w, y2 / h),
+                    box_frac=frac_box(tr.box, w, h),
                 )
             )
         objects = self._goalkeeper_teams(objects)
@@ -326,7 +332,7 @@ class VisionPipeline:
                 False,
                 False,
                 det.box,
-                (x1 / w, y1 / h, x2 / w, y2 / h),
+                frac_box(det.box, w, h),
             )
         if self._ball is None:
             return None
@@ -336,7 +342,6 @@ class VisionPipeline:
             return None
         # Extrapolate forward only; never filled from later frames (03)
         x, y = xy0 + v * (t - t0)
-        x1, y1, x2, y2 = box
         return VisionObject(
             oid,
             BALL,
@@ -348,5 +353,5 @@ class VisionPipeline:
             True,
             True,
             box,
-            (x1 / w, y1 / h, x2 / w, y2 / h),
+            frac_box(box, w, h),
         )

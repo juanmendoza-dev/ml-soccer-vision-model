@@ -354,3 +354,38 @@ def test_velocities_dont_depend_on_later_timestamps(tmp_path):
 def test_single_frame_run_has_null_velocity(tmp_path):
     objects = write_run(tmp_path, "one", [0.0])
     assert objects["vx"].to_list() == [None]
+
+
+@pytest.mark.parametrize(
+    "bad", [{"detect_every": 0}, {"period": 5}, {"min_det_conf": 1.5}, {"home_cluster": 2}]
+)
+def test_config_rejects_bad_values(bad):
+    with pytest.raises(ValueError):
+        VisionConfig(**bad)
+
+
+def test_filled_box_running_off_screen_stays_a_fraction():
+    detector = RunningDetector()  # 4 px per frame
+    pipe = VisionPipeline(
+        VisionConfig(detect_every=3),
+        Stages(detector, FakeTracker(), FakeKeypoints(), ShirtColorTeams()),
+    )
+    image = render(0)[:, :340]  # narrow frame: the player leaves it on the right
+    for frame_id in range(30):
+        detector.frame_id = frame_id
+        vf = pipe.step(frame_id, frame_id / FPS, image)
+        for o in vf.objects:
+            assert all(0 <= v <= 1 for v in o.box_frac)
+    assert vf.objects and vf.objects[0].box_frac[2] == 1.0
+
+
+def test_run_with_no_detections_writes_typed_caches(tmp_path):
+    writer = GameStateWriter(
+        "empty", "a", "b", FPS, VisionConfig(), tmp_path / "gs", tmp_path / "cache"
+    )
+    for frame_id in range(3):
+        writer.add(VisionFrame(frame_id, frame_id / FPS, OTHER, 0.0, None, False, None, None))
+    writer.close()
+    det = pl.read_parquet(tmp_path / "cache" / "empty" / "detections.parquet")
+    assert det.height == 0 and "frame_id" in det.columns
+    det.partition_by("frame_id", as_dict=True)  # the debug renderer does this
