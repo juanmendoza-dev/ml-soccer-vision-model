@@ -2,6 +2,7 @@
 
     python -m demo.debug --video clip.mp4 --cache data/vision_cache/<match_id> --out debug.mp4
     python -m demo.debug ... --frames 1200-1500
+    python -m demo.debug ... --shape box
 
 For finding where vision went wrong. Internal only, never published (08).
 """
@@ -56,7 +57,7 @@ def _color(r: dict) -> tuple[int, int, int]:
     return CLUSTER_COLORS.get(r["team_cluster"], UNKNOWN)
 
 
-def annotate(image: np.ndarray, rows: pl.DataFrame, view: str | None) -> np.ndarray:
+def annotate(image: np.ndarray, rows: pl.DataFrame, view: str | None, shape: str = "ring") -> np.ndarray:
     out = image.copy()
     for r in rows.iter_rows(named=True):
         x1, y1, x2, y2 = r["x1"], r["y1"], r["x2"], r["y2"]
@@ -65,12 +66,17 @@ def annotate(image: np.ndarray, rows: pl.DataFrame, view: str | None) -> np.ndar
             cx = int((x1 + x2) / 2)
             cv2.drawMarker(out, (cx, int(y1) - 6), color, cv2.MARKER_TRIANGLE_DOWN, 14, 2)
             continue
-        center = (int((x1 + x2) / 2), int(y2))
-        axes = (max(int((x2 - x1) * 0.7), 6), max(int((x2 - x1) * 0.25), 3))
         thickness = 1 if r["tracked_only"] else 2
-        cv2.ellipse(out, center, axes, 0, -45, 235, color, thickness)
+        if shape == "box":
+            cv2.rectangle(out, (int(x1), int(y1)), (int(x2), int(y2)), color, thickness)
+            label_pos = (int(x1), int(y1) - 6)
+        else:
+            center = (int((x1 + x2) / 2), int(y2))
+            axes = (max(int((x2 - x1) * 0.7), 6), max(int((x2 - x1) * 0.25), 3))
+            cv2.ellipse(out, center, axes, 0, -45, 235, color, thickness)
+            label_pos = (center[0] - 8, center[1] + 18)
         label = r["object_id"].split("-")[-1]
-        cv2.putText(out, label, (center[0] - 8, center[1] + 18), 0, 0.45, color, 1, cv2.LINE_AA)
+        cv2.putText(out, label, label_pos, 0, 0.45, color, 1, cv2.LINE_AA)
 
     minimap = draw_minimap(rows)
     mh, mw = minimap.shape[:2]
@@ -93,6 +99,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--cache", type=Path, required=True, help="data/vision_cache/<match_id>")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--frames", help="first-last, e.g. 1200-1500")
+    ap.add_argument("--shape", choices=["ring", "box"], default="ring")
     args = ap.parse_args(argv)
 
     det = pl.read_parquet(args.cache / "detections.parquet")
@@ -116,7 +123,7 @@ def main(argv: list[str] | None = None) -> None:
         if not ok:
             break
         rows = by_frame.get((frame_id,), empty)
-        writer.write(annotate(image, rows, views.get(frame_id)))
+        writer.write(annotate(image, rows, views.get(frame_id), args.shape))
         frame_id += 1
     writer.release()
     print(f"wrote {args.out} ({frame_id - first} frames)")
