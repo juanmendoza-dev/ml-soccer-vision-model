@@ -36,4 +36,30 @@ class VisionConfig:
 
     # Teams and direction (03)
     home_attacks_tv_right_p1: bool = True
-    period: int = 1
+    period: int = 1  # 1-4; vision doesn't do shootouts (02 wants them dead throughout)
+
+    def __post_init__(self):
+        errors = []
+        for name in ("detect_every", "keypoints_every", "homography_window", "min_keypoints"):
+            if getattr(self, name) < 1:
+                errors.append(f"{name} must be >= 1")
+        for name in ("min_grass", "min_det_conf", "track_min_conf", "min_keypoint_conf"):
+            if not 0 <= getattr(self, name) <= 1:
+                errors.append(f"{name} must be in 0-1")
+        for name in (
+            "off_after_s",
+            "on_after_s",
+            "refit_teams_after_s",
+            "lost_track_s",
+            "team_warmup_s",
+            "homography_max_age_s",
+            "ball_max_gap_s",
+        ):
+            if not getattr(self, name) >= 0:
+                errors.append(f"{name} must be >= 0")
+        if self.home_cluster not in (None, 0, 1):
+            errors.append("home_cluster must be 0, 1 or None")
+        if self.period not in (1, 2, 3, 4):
+            errors.append("period must be 1-4")
+        if errors:
+            raise ValueError("; ".join(errors))
