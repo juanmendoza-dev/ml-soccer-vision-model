@@ -67,17 +67,17 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 - [ ] Pick `home_cluster` from the debug video; later a warmup prompt in live mode
 
 **2. Bugs that give wrong output (M1)**
-- [ ] F2: view gate stays `match` on green close-ups (unsampled keypoint frames count as passing)
-- [ ] Tracker: lost-track buffer is double-scaled (1 s → 20 updates), and the 0.3 conf filter removes ByteTrack's low-conf second pass
-- [ ] F3: filled boxes between detections move too slow (motion measured from the last filled box)
-- [ ] F4: home/away can flip after a team refit (match new clusters to old ones)
-- [ ] F1: velocity window picked from the whole run's timestamps; use known fps so it's strictly causal
+- [x] F2: view gate stays `match` on green close-ups (unsampled keypoint frames count as passing)
+- [x] Tracker: lost-track buffer is double-scaled (1 s → 20 updates), and the 0.3 conf filter removes ByteTrack's low-conf second pass
+- [x] F3: filled boxes between detections move too slow (motion measured from the last filled box)
+- [x] F4: home/away can flip after a team refit (match new clusters to old ones)
+- [x] F1: velocity window picked from the whole run's timestamps; use known fps so it's strictly causal
 
 **3. Crashes and guardrails (M1)**
-- [ ] F5: one-frame run crashes in velocities; empty detections cache has no columns (debug renderer crashes)
-- [ ] F9: reject bad config (`detect_every=0`, bad fps/period)
-- [ ] Run the validator at the end of `close()`; an empty run is a failure, not a schema change
-- [ ] F7: clip `box_frac` to 0–1
+- [x] F5: one-frame run crashes in velocities; empty detections cache has no columns (debug renderer crashes)
+- [x] F9: reject bad config (`detect_every=0`, bad fps/period)
+- [x] Run the validator at the end of `close()`; an empty run is a failure, not a schema change
+- [x] F7: clip `box_frac` to 0–1
 
 **4. Quality (after real-clip results)**
 - [ ] Homography acceptance: inlier count, error threshold, no matrix averaging across camera motion
