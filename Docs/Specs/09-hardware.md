@@ -53,7 +53,7 @@ VRAM isn't the limit: detector, ball model, keypoint model and SigLIP together n
 **Live is feasible with the reduced setup 08 already assumes**: a smaller YOLO, frame skip, TensorRT FP16, keypoints and OCR at reduced rates. The benchmark has to confirm it before the live config is fixed. If the ball stage doesn't fit, lower its rate first (the tracker and the < 1 s gap rule cover short misses), then lower the processing resolution.
 
 ### Stages that aren't live-safe as specced
-- **Ball gap interpolation (03 stage 5):** interpolating a gap of up to 1 s needs the frames after the gap. Live mode either runs ~1 s behind the feed or extrapolates forward and marks those frames `interpolated=True`.
+- **Ball gap interpolation (03 stage 5):** interpolating a gap of up to 1 s needs the frames after the gap. Live mode extrapolates forward instead and marks those frames `interpolated=True` (see Live app).
 - **Homography smoothing (03 stage 4):** must use a trailing window only. A centered window leaks future frames, and live mode can't see them anyway.
 - **Team assignment (03 stage 3):** the offline method clusters crops from the whole video. Live mode fits KMeans on the first ~N seconds and then assigns new tracks to the nearest centroid. Refit after half-time kit/side changes if needed.
 - **Jersey OCR (03 stage 6):** voting over frames works incrementally. `player_id` shows up a few seconds after a track appears, and stays null until then.
@@ -62,7 +62,12 @@ VRAM isn't the limit: detector, ball model, keypoint model and SigLIP together n
 ## Training (brief)
 YOLOv8n/s/m fine-tuning at 640 fits in 6 GB at batch size ~8–16. A ball detector at 1280 needs batch size ~2–4 or Colab (01).
 
+## Live app
+Live mode lives in its own repo, `soccer-live-overlay`, which will install this one as a dependency. It never trains or defines formats.
+- **Input:** screen capture of the match already playing, via `dxcam` on the workstation. It captures a monitor region, so the player runs fullscreen. DRM-protected players can capture as black frames; check the streaming service first.
+- **Output:** predictions over a local websocket to an OBS browser source.
+- **Ball gaps:** extrapolated, never buffered. The overlay sits on the video, so ~1 s of delay would show.
+- **Recording:** every live session is recorded (video, per-frame timing, predictions, shot/goal markers) for replays and backtests. Format in that repo's `Docs/Specs/02-session-recording.md`.
+
 ## Open questions
-- How does the broadcast reach the workstation: an HDMI capture card, OBS virtual camera, or a stream URL (RTMP/HLS)? This sets the decode path and adds latency.
-- How far behind the feed can the overlay run? About 1 s makes ball interpolation possible as specced (see above).
 - The live config (model sizes, input resolution, per-stage rates) comes from the benchmark.
