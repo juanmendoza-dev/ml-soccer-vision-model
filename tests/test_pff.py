@@ -5,7 +5,7 @@ import polars as pl
 import pytest
 
 from converters.common import ConversionReport
-from converters.pff import RAW_DIR, convert_game, move_shootout, read_tracking
+from converters.pff import RAW_DIR, convert_game, link_events, move_shootout, read_tracking
 from gamestate.schema import PFF_CONFIDENCE
 
 ROSTER = pl.DataFrame(
@@ -111,12 +111,30 @@ def test_shootout_frames_move_to_period_5():
     )
     report = ConversionReport(match_id="t", source="pff")
     out = move_shootout(frames, 8001.0, report)
-    assert out["period"].to_list() == [3, 4, 5, 5]
-    assert out["timestamp_s"].to_list() == [900.0, 900.0, 0.0, 1.0]
-    assert out["ball_state"].to_list() == ["alive", "alive", "dead", "dead"]
-    assert out["possession_team"].to_list() == ["home", "home", None, None]
-    assert report.changed[0]["count"] == 2
+    # The END frame itself (8001.0) stays in period 4.
+    assert out["period"].to_list() == [3, 4, 4, 5]
+    assert out["timestamp_s"].to_list() == [900.0, 900.0, 901.0, 1.0]
+    assert out["ball_state"].to_list() == ["alive", "alive", "alive", "dead"]
+    assert out["possession_team"].to_list() == ["home", "home", "home", None]
+    assert report.changed[0]["count"] == 1
     assert move_shootout(frames, None, report).equals(frames)
+
+
+def test_events_snap_only_within_half_a_second():
+    frames = pl.DataFrame({"frame_id": [100, 101, 103, 104]})
+    events = pl.DataFrame(
+        {"frame_id": [101, 102, 110, 500], "event_type": ["shot", "shot", "shot", "goal"]}
+    )
+    report = ConversionReport(match_id="t", source="pff")
+    out = link_events(events, frames, report)
+    # 102 moves to a neighbour, 110 is 6 frames out (still < 0.5 s), 500 is past tracking.
+    assert out["frame_id"].to_list()[:2] == [101, 101] or out["frame_id"].to_list()[:2] == [
+        101,
+        103,
+    ]
+    assert out.height == 3 and 500 not in out["frame_id"].to_list()
+    assert {d["reason"].split()[0]: d["count"] for d in report.dropped} == {"goal": 1}
+    assert report.changed[0]["count"] == 2
 
 
 DEV_GAMES = ["10502", "10504", "10505"]
@@ -188,6 +206,9 @@ def test_shots_line_up_with_the_tracked_ball(converted, game):
     assert checks["shot_to_ball_m"]["n"] == checks["shots"] - checks["shots_without_ball"]
     assert checks["shot_to_ball_m"]["n"] >= 0.8 * checks["shots"]
     assert checks["shot_to_ball_m"]["median"] < 1.0
+    # Independent of the event's own ball position: the coded player vs the tracked ball.
+    align = checks["event_player_to_ball_m_by_period"]
+    assert set(align) == {"1", "2"} and all(v["median_m"] < 2 for v in align.values())
 
 
 @needs_data
