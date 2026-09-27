@@ -208,18 +208,27 @@ def process_game(
     frames10.write_parquet(dst / "frames_10hz.parquet")
     objects10.write_parquet(dst / "objects_10hz.parquet")
     report = build_report(match_id, frames, objects_in, frames10, objects10, stats)
+    report = {"source": pl.read_parquet(src / "match.parquet")["source"].item(), **report}
     (dst / "resample_report.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 
 
 def summarize(reports: list[dict]) -> dict:
-    """Totals over a run; per-H positive rate is over eligible (mask true) rows."""
+    """Totals per source; per-H positive rates are over unmasked rows."""
+    sources = sorted({r["source"] for r in reports})
+    return {src: summarize_source([r for r in reports if r["source"] == src]) for src in sources}
+
+
+def summarize_source(reports: list[dict]) -> dict:
     rows = sum(r["rows"]["frames"]["out"] for r in reports)
     eligible = sum(r["eligible_share"] * r["rows"]["frames"]["out"] for r in reports)
+    shares = sorted(r["eligible_share"] for r in reports)
     out = {
         "games": len(reports),
         "rows_10hz": rows,
+        "objects_10hz": sum(r["rows"]["objects"]["out"] for r in reports),
         "eligible_share": round(eligible / rows, 4) if rows else 0.0,
+        "eligible_share_per_game": [shares[0], shares[len(shares) // 2], shares[-1]],
         "open_play_shots": sum(r["open_play_shots"] for r in reports),
     }
     for h in HORIZONS:
