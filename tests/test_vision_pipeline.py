@@ -198,3 +198,11 @@ def test_display_boxes_are_fractions(run):
     frames, *_ = run
     for o in frames[30].objects:
         assert all(0 <= v <= 1 for v in o.box_frac)
+
+
+def test_detections_cache_has_kit_clusters(run):
+    _, _, cache, _ = run
+    det = pl.read_parquet(cache / "detections.parquet").filter(pl.col("frame_id") == 35)
+    players = det.filter(pl.col("class") == PLAYER).sort("pitch_x")
+    assert players["team_cluster"].to_list() == [1, 1, 0, 0]  # blue left, red right
+    assert det.filter(pl.col("class") == REFEREE)["team_cluster"].to_list() == [None]

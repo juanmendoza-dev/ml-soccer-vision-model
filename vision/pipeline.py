@@ -180,6 +180,7 @@ class VisionPipeline:
                 VisionObject(
                     object_id=f"{self._segment}-{tr.track_id}",
                     cls=tr.cls,
+                    cluster=self._cluster_of(tr),
                     team=self._team_of(tr),
                     x=x,
                     y=y,
@@ -249,30 +250,34 @@ class VisionPipeline:
                 if cl >= 0:  # -1 = assigner couldn't tell
                     self._team_votes.setdefault(tr.track_id, []).append(int(cl))
 
-    def _team_of(self, tr: Track) -> str | None:
-        if tr.cls != PLAYER or self.config.home_cluster is None:
-            return None
+    def _cluster_of(self, tr: Track) -> int | None:
         votes = self._team_votes.get(tr.track_id)
-        if not votes:
+        if tr.cls != PLAYER or not votes:
             return None
-        cluster = max(set(votes), key=votes.count)  # majority
+        return max(set(votes), key=votes.count)  # majority
+
+    def _team_of(self, tr: Track) -> str | None:
+        cluster = self._cluster_of(tr)
+        if cluster is None or self.config.home_cluster is None:
+            return None
         return "home" if cluster == self.config.home_cluster else "away"
 
     @staticmethod
     def _goalkeeper_teams(objects: list[VisionObject]) -> list[VisionObject]:
         """A goalkeeper belongs to the team whose outfield players stand nearer on average (x)."""
-        mean_x = {}
-        for team in ("home", "away"):
-            xs = [o.x for o in objects if o.team == team and o.x is not None]
-            if xs:
-                mean_x[team] = float(np.mean(xs))
+        mean_x, team_of = {}, {}
+        for o in objects:
+            if o.cluster is not None and o.x is not None:
+                mean_x.setdefault(o.cluster, []).append(o.x)
+                team_of[o.cluster] = o.team
         if len(mean_x) < 2:
             return objects
+        mean_x = {k: float(np.mean(v)) for k, v in mean_x.items()}
         out = []
         for o in objects:
             if o.cls == GOALKEEPER and o.x is not None:
-                team = min(mean_x, key=lambda k: abs(mean_x[k] - o.x))
-                o = VisionObject(**{**o.__dict__, "team": team})
+                cluster = min(mean_x, key=lambda k: abs(mean_x[k] - o.x))
+                o = VisionObject(**{**o.__dict__, "cluster": cluster, "team": team_of[cluster]})
             out.append(o)
         return out
 
@@ -295,6 +300,7 @@ class VisionPipeline:
                 oid,
                 BALL,
                 None,
+                None,
                 x,
                 y,
                 det.confidence,
@@ -315,6 +321,7 @@ class VisionPipeline:
         return VisionObject(
             oid,
             BALL,
+            None,
             None,
             float(x),
             float(y),

@@ -43,6 +43,7 @@ class Keypoints:
 class VisionObject:
     object_id: str
     cls: str  # detector class
+    cluster: int | None  # stage 3 kit cluster, before the home/away mapping
     team: str | None  # home / away; null until the team fit and home_cluster are known
     x: float | None  # 02 meters; null without a valid homography
     y: float | None

@@ -80,6 +80,7 @@ Debugging works from cached data after the run, not from extra logging during it
 | match_id, frame_id | | Same frame_ids as game state |
 | object_id | str | Same as `objects.object_id` |
 | class | enum | player, goalkeeper, referee, ball (detector class, before team assignment) |
+| team_cluster | int/null | Stage 3 kit cluster (0 / 1) before the home/away mapping; null until teams are fitted, and for referees and the ball |
 | x1, y1, x2, y2 | float | Box in pixels |
 | det_confidence | float | Detector score; null for tracker-filled frames |
 | tracked_only | bool | True if the tracker filled this frame, no detection |

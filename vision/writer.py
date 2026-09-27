@@ -73,6 +73,7 @@ class GameStateWriter:
                     "frame_id": vf.frame_id,
                     "object_id": o.object_id,
                     "class": o.cls,
+                    "team_cluster": o.cluster,
                     "x1": o.box_px[0],
                     "y1": o.box_px[1],
                     "x2": o.box_px[2],
