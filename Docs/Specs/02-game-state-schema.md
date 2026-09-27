@@ -50,6 +50,7 @@ Parquet files under `data/gamestate/<match_id>/`: `match.parquet`, `objects.parq
 | possession_team | enum/null | home, away, null = none or unknown |
 | ball_carrier_id | str/null | object_id of the player in control of the ball; null when the ball is loose or in flight |
 | view_polygon | list[float]/null | Camera footprint on the pitch in meters (x1, y1, ... x4, y4); null for full-pitch tracking |
+| set_play_phase | bool/null | True while `possession_team` is in a set-play phase (the attack that follows its own restart, see Shots, goals and set plays). **Label-side only:** 05 uses it to mask training frames. Never a model input: vision can't produce it and some producers assign it after the fact. null = producer can't tell |
 
 ## `events.parquet`
 | Column | Type | Notes |
@@ -84,12 +85,12 @@ The predictor needs `ball_state`, `possession_team` and `ball_carrier_id` at inf
 ## Shots, goals and set plays
 05 trains on open play only, and each source marks it differently, so producers normalize it here.
 
-| Producer | set_piece | set_play_phase |
-|---|---|---|
-| PFF | `gameEvents.setpieceType`: O → open_play, C → corner, F → free_kick, P → penalty, T → throw_in, G → goal_kick, K → kickoff, D → drop_ball | Proxy: true if ≤ 10 s after a same-team corner or free kick in the same period (06; window unverified) |
-| SkillCorner | From the possession's start type where available, else null | `team_in_possession_phase_type = set_play` |
-| IDSSE, Metrica | Provider event qualifiers via kloppy, where present. Metrica CSV: the `SET PIECE` row at the shot's frame (FREE KICK, CORNER KICK, PENALTY, ...), else open_play | null unless the provider marks it |
-| Vision | null | null |
+| Producer | set_piece | events.set_play_phase | frames.set_play_phase |
+|---|---|---|---|
+| PFF | `gameEvents.setpieceType`: O → open_play, C → corner, F → free_kick, P → penalty, T → throw_in, G → goal_kick, K → kickoff, D → drop_ball | Proxy: true if ≤ 10 s after a same-team corner or free kick in the same period (06; window unverified) | Same proxy and the same restart list: true if a corner or free kick by `possession_team` started ≤ 10 s earlier in the same period (video time, like the events). false when `possession_team` is null |
+| SkillCorner | From the possession's start type where available, else null | `team_in_possession_phase_type = set_play` | `team_in_possession_phase_type = set_play` on the frame |
+| IDSSE, Metrica | Provider event qualifiers via kloppy, where present. Metrica CSV: the `SET PIECE` row at the shot's frame (FREE KICK, CORNER KICK, PENALTY, ...), else open_play | null unless the provider marks it | null unless the provider marks it |
+| Vision | null | null | null |
 
 - Open-play labels (05) use `set_piece = open_play` and `set_play_phase` not true.
 - `outcome = goal` only for goals that stand. A goal that is ruled out (e.g. PFF `shotOutcomeType = G` followed by a free-kick restart) gets `outcome = disallowed` and no `goal` event.
@@ -101,7 +102,8 @@ The predictor needs `ball_state`, `possession_team` and `ball_carrier_id` at inf
 - Missing players (off camera) stay missing rows or `visible=False`; never guessed positions without `interpolated=True`. PFF `visibility = ESTIMATED` and SkillCorner `is_detected = False` rows are written as `visible=False, interpolated=True`.
 - Any schema change is made here first, with a version bump.
 
-**Schema version:** 0.4
+**Schema version:** 0.5
+- 0.5: added `frames.set_play_phase` (label-side only), so 05 can mask set-play phases that don't end in a shot
 - 0.4: `competition`, `season`, `date` nullable; +y direction defined; `vx`/`vy` causal and nullable
 - 0.3: added `match.schema_version`, `objects.z`, `events.set_piece`, `events.set_play_phase`, period 5 for shootouts, `disallowed` outcome, PFF confidence mapping, `visible=False` ⇒ `interpolated=True`
 - 0.2: added `match.parquet`, `ball_state`, `view_polygon`; defined who fills possession fields
