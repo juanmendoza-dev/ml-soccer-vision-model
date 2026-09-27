@@ -411,3 +411,34 @@ def test_low_confidence_tracks_dont_feed_kit_colors():
     for frame_id in range(30):
         pipe.step(frame_id, frame_id / FPS, render(frame_id))
     assert teams.n_crops == 0 and not teams.fitted
+
+
+def test_offpitch_report_finds_the_bad_rows(run, capsys):
+    from vision import offpitch
+
+    _, out, cache, _ = run
+    objects = pl.read_parquet(out / "objects.parquet")
+    # push the extrapolated ball through the gap (frames 19-25) way off the pitch
+    bad = pl.col("object_id").str.ends_with("-ball") & pl.col("frame_id").is_between(21, 23)
+    objects.with_columns(x=pl.when(bad).then(90.0).otherwise(pl.col("x"))).write_parquet(
+        out / "objects.parquet"
+    )
+    objects, ctx = offpitch.load(out, cache)
+    off = offpitch.off_pitch(objects)
+    assert off.height == 3 and set(off["object_type"]) == {"ball"}
+    runs = offpitch.runs(off, ctx)
+    assert runs.select("first", "last", "rows", "interp").row(0) == (21, 23, 3, 3)
+    assert runs["since_switch"][0] == 11  # view switched to match at frame 10
+
+    offpitch.main(
+        [
+            "--match-id",
+            "synth",
+            "--gamestate-dir",
+            str(out.parent),
+            "--cache-dir",
+            str(cache.parent),
+        ]
+    )
+    printed = capsys.readouterr().out
+    assert "off pitch (>15 m) 3" in printed and "ball" in printed
