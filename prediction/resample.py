@@ -69,13 +69,18 @@ def build_grid(frames: pl.DataFrame) -> tuple[pl.DataFrame, int]:
                 (pl.col("first") + GRID_US - 1) // GRID_US, pl.col("last") // GRID_US + 1
             ),
         )
-        .explode("k")
+        .explode("k", empty_as_null=True)
         .drop_nulls("k")
         .select("period", grid_us=pl.col("k").cast(pl.Int64) * GRID_US)
         .sort("grid_us")
     )
     grid = grid.join_asof(
-        frames, left_on="grid_us", right_on="ts_us", by="period", strategy="backward"
+        frames,
+        left_on="grid_us",
+        right_on="ts_us",
+        by="period",
+        strategy="backward",
+        check_sortedness=False,
     ).sort("period", "grid_us")
     fresh = pl.col("grid_us") - pl.col("ts_us") <= tol
     skipped = grid.filter(~fresh).height
