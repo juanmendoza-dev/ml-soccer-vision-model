@@ -140,7 +140,7 @@ class GameStateWriter:
             },
         )
         if objects.height:
-            objects = causal_velocities(objects, frames)
+            objects = causal_velocities(objects, frames, fps=self.native_fps)
         else:
             objects = objects.with_columns(vx=pl.lit(None, pl.Float64), vy=pl.lit(None, pl.Float64))
         match = pl.DataFrame(

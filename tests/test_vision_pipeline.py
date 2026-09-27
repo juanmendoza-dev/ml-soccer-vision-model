@@ -25,6 +25,8 @@ from vision.types import (
     Detection,
     Keypoints,
     Track,
+    VisionFrame,
+    VisionObject,
 )
 from vision.writer import GameStateWriter
 
@@ -327,3 +329,28 @@ def test_filled_boxes_follow_a_moving_player(detect_every):
             assert player.box_px[0] == pytest.approx(300 + 4 * frame_id)
             filled += player.tracked_only
     assert (filled > 0) == (detect_every > 1)
+
+
+def write_run(tmp_path, name, timestamps, fps=10):
+    """One player at x = frame_id squared through the writer; returns objects."""
+    writer = GameStateWriter(name, "a", "b", fps, VisionConfig(), tmp_path / "gs")
+    for frame_id, t in enumerate(timestamps):
+        x = float(frame_id**2)
+        player = VisionObject(
+            "0-1", PLAYER, None, None, x, 0.0, 0.9, False, False, (0, 0, 1, 1), (0, 0, 0.1, 0.1)
+        )
+        writer.add(VisionFrame(frame_id, t, MATCH, 0.9, None, True, 0.0, None, [player]))
+    out = writer.close()
+    return pl.read_parquet(out / "objects.parquet").sort("frame_id")
+
+
+def test_velocities_dont_depend_on_later_timestamps(tmp_path):
+    # review F1: the window came from the whole run's median frame gap
+    short = write_run(tmp_path, "short", [0, 0.1, 0.2, 0.3])
+    longer = write_run(tmp_path, "long", [0, 0.1, 0.2, 0.3, 0.31, 0.32, 0.33, 0.34, 0.35, 0.36])
+    assert longer["vx"].head(4).to_list() == short["vx"].to_list()
+
+
+def test_single_frame_run_has_null_velocity(tmp_path):
+    objects = write_run(tmp_path, "one", [0.0])
+    assert objects["vx"].to_list() == [None]

@@ -14,15 +14,21 @@ from gamestate.validate import validate_match
 VELOCITY_WINDOW_S = 0.2
 
 
-def causal_velocities(objects: pl.DataFrame, frames: pl.DataFrame) -> pl.DataFrame:
+def causal_velocities(
+    objects: pl.DataFrame, frames: pl.DataFrame, fps: float | None = None
+) -> pl.DataFrame:
     """Add vx, vy (m/s) from frames <= t of the same track only (02).
 
     v_t = (p_t - p_{t-k}) / (ts_t - ts_{t-k}), with k = min(window, frames since
     the segment started). That's the same as differencing a trailing mean over
     full windows, without the half-speed warm-up a filling window gives. A
     segment breaks on a missing frame or a new period; its first frame is null.
+
+    Pass fps when it's known up front (vision): the median fallback looks at the
+    whole table, so a later timestamp could change an earlier frame's window.
     """
-    fps = 1 / frames["timestamp_s"].diff().filter(frames["timestamp_s"].diff() > 0).median()
+    if fps is None:
+        fps = 1 / frames["timestamp_s"].diff().filter(frames["timestamp_s"].diff() > 0).median()
     window = max(1, round(VELOCITY_WINDOW_S * fps))
     track = ["object_id", "segment"]
 
