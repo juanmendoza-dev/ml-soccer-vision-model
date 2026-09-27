@@ -6,6 +6,8 @@ with each landmark at its real position, in the TV frame: meters, center origin,
 the match direction.
 """
 
+from dataclasses import dataclass
+
 import cv2
 import numpy as np
 
@@ -42,21 +44,38 @@ def _template() -> np.ndarray:
 TEMPLATE = _template()  # (32, 2), index i = roboflow keypoint i + 1
 
 
+@dataclass(frozen=True)
+class Fit:
+    """One frame's keypoints -> homography. H is None when there's nothing to fit."""
+
+    H: np.ndarray | None
+    n_confident: int  # keypoints over min_conf (what stage 0 counts)
+    n_inliers: int  # of those, the ones RANSAC kept
+    err_m: float | None  # mean reprojection error of the inliers, meters
+    src: np.ndarray  # inlier pixels (N, 2)
+    dst: np.ndarray  # their template positions (N, 2)
+
+
 def fit_homography(
-    xy_px: np.ndarray, conf: np.ndarray, min_conf: float
-) -> tuple[np.ndarray | None, int, float | None]:
-    """Pixels -> TV-frame meters. Returns (H or None, keypoints used, mean reprojection error m)."""
+    xy_px: np.ndarray, conf: np.ndarray, min_conf: float, ransac_m: float = 2.0
+) -> Fit:
+    """Pixels -> TV-frame meters from the confident keypoints, RANSAC at ransac_m."""
     keep = conf >= min_conf
     n = int(keep.sum())
+    empty = np.zeros((0, 2))
     if n < 4:
-        return None, n, None
+        return Fit(None, n, 0, None, empty, empty)
     src = xy_px[keep].astype(np.float64)
     dst = TEMPLATE[keep]
-    H, _ = cv2.findHomography(src, dst, cv2.RANSAC, 2.0)
-    if H is None:
-        return None, n, None
+    H, mask = cv2.findHomography(src, dst, cv2.RANSAC, ransac_m)
+    if H is None or not np.isfinite(H).all() or abs(H[2, 2]) < 1e-12:
+        return Fit(None, n, 0, None, empty, empty)
+    inl = mask.ravel().astype(bool)
+    src, dst = src[inl], dst[inl]
+    H = H / H[2, 2]
+    # outliers only raise the error of a fit RANSAC already threw them out of
     err = float(np.linalg.norm(project(H, src) - dst, axis=1).mean())
-    return H / H[2, 2], n, err
+    return Fit(H, n, int(inl.sum()), err, src, dst)
 
 
 def project(H: np.ndarray, pts: np.ndarray) -> np.ndarray:

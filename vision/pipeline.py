@@ -142,12 +142,7 @@ class VisionPipeline:
         # on keypoints as well as grass. Ads and studio cuts skip it.
         probe = not in_match and grass >= cfg.min_grass and n % cfg.keypoints_every == 0
         if (in_match and self._steps % cfg.keypoints_every == 0) or probe:
-            kp = self.stages.keypoints.detect(image)
-            H, kp_found, h_err = fit_homography(kp.xy, kp.conf, cfg.min_keypoint_conf)
-            self._kp_seen = kp_found
-            if in_match and H is not None:
-                self.smoother.add(H)
-                self._last_h_t = t
+            kp_found, h_err = self._keypoints(image, t, use=in_match)
 
         before = self.gate.view
         view = self.gate.update(t, grass, self._kp_seen)
@@ -159,12 +154,8 @@ class VisionPipeline:
             return VisionFrame(frame_id, t, OTHER, grass, kp_found, False, None, None)
         if before == OTHER:
             self._enter_match(t)
-            kp = self.stages.keypoints.detect(image)  # don't wait for the next keypoint frame
-            H, kp_found, h_err = fit_homography(kp.xy, kp.conf, cfg.min_keypoint_conf)
-            self._kp_seen = kp_found
-            if H is not None:
-                self.smoother.add(H)
-                self._last_h_t = t
+            # don't wait for the next keypoint frame
+            kp_found, h_err = self._keypoints(image, t, use=True)
         self._match_seconds += dt
 
         step = self._steps
@@ -223,6 +214,26 @@ class VisionPipeline:
             corners = project(H, [[0, 0], [w, 0], [w, h], [0, h]])
             polygon = [float(v) for v in to_02(corners, cfg.home_attacks_tv_right_p1).ravel()]
         return VisionFrame(frame_id, t, MATCH, grass, kp_found, h_ok, h_err, polygon, objects, ball)
+
+    # --- homography (stage 4) --------------------------------------------
+
+    def _keypoints(self, image: np.ndarray, t: float, use: bool) -> tuple[int, float | None]:
+        """Run stage 4 once. The gate gets the confident keypoint count; the fit is
+        only used (use=True, match view) when enough of it survives RANSAC with a
+        small error. A rejected fit leaves the old one to age out (03)."""
+        cfg = self.config
+        kp = self.stages.keypoints.detect(image)
+        fit = fit_homography(kp.xy, kp.conf, cfg.min_keypoint_conf, cfg.ransac_m)
+        self._kp_seen = fit.n_confident
+        if (
+            use
+            and fit.H is not None
+            and fit.n_inliers >= cfg.min_inliers
+            and fit.err_m <= cfg.max_homography_err_m
+        ):
+            self.smoother.add(fit.H)
+            self._last_h_t = t
+        return fit.n_confident, fit.err_m
 
     # --- tracking --------------------------------------------------------
 

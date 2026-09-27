@@ -357,7 +357,15 @@ def test_single_frame_run_has_null_velocity(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "bad", [{"detect_every": 0}, {"period": 5}, {"min_det_conf": 1.5}, {"home_cluster": 2}]
+    "bad",
+    [
+        {"detect_every": 0},
+        {"period": 5},
+        {"min_det_conf": 1.5},
+        {"home_cluster": 2},
+        {"min_inliers": 3},
+        {"max_homography_err_m": 0},
+    ],
 )
 def test_config_rejects_bad_values(bad):
     with pytest.raises(ValueError):
@@ -442,3 +450,25 @@ def test_offpitch_report_finds_the_bad_rows(run, capsys):
     )
     printed = capsys.readouterr().out
     assert "off pitch (>15 m) 3" in printed and "ball" in printed
+
+
+class NoisyKeypoints:
+    """Every keypoint off by up to ~1 m on the pitch: a real fit, but a sloppy one."""
+
+    def detect(self, image):
+        rng = np.random.default_rng(0)
+        noisy = TEMPLATE + rng.uniform(-1.0, 1.0, TEMPLATE.shape)
+        return Keypoints(project(CAMERA, noisy), np.full(32, 0.9))
+
+
+def test_sloppy_homography_is_rejected_but_still_feeds_the_gate():
+    pipe = VisionPipeline(
+        VisionConfig(max_homography_err_m=0.1),
+        Stages(FakeDetector(), FakeTracker(), NoisyKeypoints(), ShirtColorTeams()),
+    )
+    frames = [pipe.step(i, i / FPS, render(i)) for i in range(40)]
+    assert frames[-1].view == MATCH  # the gate counts confident keypoints, not inliers
+    assert not any(vf.homography_ok for vf in frames)
+    assert all(o.x is None for vf in frames for o in vf.objects)
+    errs = [vf.homography_err_m for vf in frames if vf.homography_err_m is not None]
+    assert errs and min(errs) > 0.1

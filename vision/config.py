@@ -29,6 +29,10 @@ class VisionConfig:
     # Stage 4: homography
     keypoints_every: int = 5
     min_keypoint_conf: float = 0.5
+    # Homography acceptance. Guesses until they're tuned on real clips
+    ransac_m: float = 2.0  # RANSAC inlier distance on the template, meters
+    min_inliers: int = 4  # RANSAC inliers a fit needs
+    max_homography_err_m: float = 1.0  # mean inlier reprojection error; worse -> fit rejected
     homography_window: int = 3  # trailing fits averaged
     homography_max_age_s: float = 1.0  # older fit -> homography not ok
 
@@ -58,6 +62,11 @@ class VisionConfig:
         ):
             if not getattr(self, name) >= 0:
                 errors.append(f"{name} must be >= 0")
+        if self.min_inliers < 4:
+            errors.append("min_inliers must be >= 4 (a homography needs 4 points)")
+        for name in ("ransac_m", "max_homography_err_m"):
+            if not getattr(self, name) > 0:
+                errors.append(f"{name} must be > 0")
         if self.home_cluster not in (None, 0, 1):
             errors.append("home_cluster must be 0, 1 or None")
         if self.period not in (1, 2, 3, 4):
