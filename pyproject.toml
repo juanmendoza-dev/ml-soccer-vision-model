@@ -20,7 +20,7 @@ prediction = [
 ]
 vision = [
     "ultralytics>=8.2",
-    "supervision>=0.21",
+    "supervision>=0.21,<0.31",  # ByteTrack is removed in 0.31
     "opencv-python>=4.9",
 ]
 dev = ["pytest>=8", "ruff>=0.5"]
