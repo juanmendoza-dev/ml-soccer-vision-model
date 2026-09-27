@@ -23,10 +23,12 @@ from pathlib import Path
 import polars as pl
 
 from converters.common import ConversionReport
+from gamestate.schema import PITCH_LENGTH
 
 RAW_DIR = Path("data/raw/pff")
 FPS = 29.97
 SET_PLAY_WINDOW_S = 10.0
+FINAL_THIRD_X = PITCH_LENGTH / 6  # m past halfway, in the taking team's attacking direction
 
 SET_PIECES = {
     "O": "open_play",
@@ -101,21 +103,60 @@ def location(row: dict, player_id, flip: bool) -> tuple[float, float, bool] | No
     return s * point["x"], s * point["y"], from_player
 
 
-def set_play_restarts(rows: list[dict]) -> list[tuple[int, bool, float]]:
-    """(period, home team, startTime) of every corner and free kick: the restarts that
-    start a set-play phase (02). Shared by the events proxy and frames.set_play_phase."""
+def home_attacks_positive_x(meta: dict, period: int) -> bool:
+    """In 02's frame home attacks +x in period 1; extra time follows
+    homeTeamStartLeftExtraTime (checked against every non-shootout shot, 06)."""
+    if period in (1, 2):
+        return period == 1
+    same = meta.get("homeTeamStartLeftExtraTime") == meta["homeTeamStartLeft"]
+    return same if period == 3 else not same
+
+
+def classify_restarts(rows: list[dict], meta: dict) -> list[dict]:
+    """Every corner and free kick: period, home, start_s, kind (C/F), x_att (m in the
+    taking team's attacking direction, None if the row has no position) and whether
+    it starts a set-play phase (02: corners, and free kicks in the final third)."""
+    flip = not meta["homeTeamStartLeft"]
+    out = []
+    for r in rows:
+        g = r["gameEvents"]
+        if g["period"] not in PERIODS or g["setpieceType"] not in ("C", "F"):
+            continue
+        loc = location(r, g["playerId"], flip)
+        x_att = None
+        if loc is not None:
+            sign = 1 if home_attacks_positive_x(meta, g["period"]) == g["homeTeam"] else -1
+            x_att = sign * loc[0]
+        kind = g["setpieceType"]
+        out.append(
+            {
+                "period": g["period"],
+                "home": g["homeTeam"],
+                "start_s": r["startTime"],
+                "kind": kind,
+                "x_att": x_att,
+                "set_play": kind == "C" or x_att is None or x_att >= FINAL_THIRD_X,
+            }
+        )
+    return out
+
+
+def set_play_restarts(rows: list[dict], meta: dict) -> list[tuple[int, bool, float]]:
+    """(period, home team, startTime) of the restarts that start a set-play phase (02).
+    Shared by the events proxy and frames.set_play_phase."""
     return [
-        (r["gameEvents"]["period"], r["gameEvents"]["homeTeam"], r["startTime"])
-        for r in rows
-        if r["gameEvents"]["period"] in PERIODS and r["gameEvents"]["setpieceType"] in ("C", "F")
+        (c["period"], c["home"], c["start_s"])
+        for c in classify_restarts(rows, meta)
+        if c["set_play"]
     ]
 
 
 def load_set_play_restarts(game_id: str, raw_dir: Path = RAW_DIR) -> pl.DataFrame:
     """set_play_restarts as a table: period, team (home/away), start_s (video time)."""
     raw = json.loads((raw_dir / "Event Data" / f"{game_id}.json").read_text())
+    restarts = set_play_restarts(raw, load_metadata(game_id, raw_dir))
     return pl.DataFrame(
-        [(p, "home" if home else "away", t) for p, home, t in set_play_restarts(raw)],
+        [(p, "home" if home else "away", t) for p, home, t in restarts],
         schema={"period": pl.Int64, "team": pl.String, "start_s": pl.Float64},
         orient="row",
     )
@@ -135,7 +176,8 @@ def parse_events(
     report.drop("events", len(raw) - len(rows), "period not in 1-4 (placeholder rows)")
     # 02's +x is where home attacks in period 1. Raw coordinates are a fixed pitch
     # frame with home starting on the left (-x) when homeTeamStartLeft is true.
-    flip = not load_metadata(game_id, raw_dir)["homeTeamStartLeft"]
+    meta = load_metadata(game_id, raw_dir)
+    flip = not meta["homeTeamStartLeft"]
 
     # File order is the event sequence; ~100 rows (mostly FOULs) are out of time order by
     # up to a few seconds, so restarts go by position, time windows by startTime.
@@ -160,7 +202,15 @@ def parse_events(
 
     # Same-team corners and free kicks, for the set-play-phase proxy. Times are the
     # game event's startTime; that reproduces 06 (eventTime lets 5 more shots through).
-    set_plays = set_play_restarts(rows)
+    restarts_all = classify_restarts(rows, meta)
+    set_plays = [(c["period"], c["home"], c["start_s"]) for c in restarts_all if c["set_play"]]
+    free_kicks = [c for c in restarts_all if c["kind"] == "F"]
+    report.checks["set_play_restarts"] = {
+        "corners": sum(c["kind"] == "C" for c in restarts_all),
+        "free_kicks_final_third": sum(c["x_att"] is not None and c["set_play"] for c in free_kicks),
+        "free_kicks_no_location": sum(c["x_att"] is None for c in free_kicks),
+        "free_kicks_not_a_set_play": sum(not c["set_play"] for c in free_kicks),
+    }
 
     def in_set_play(row: dict) -> bool:
         g = row["gameEvents"]
