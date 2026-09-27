@@ -64,6 +64,8 @@ Parquet files under `data/gamestate/<match_id>/`: `match.parquet`, `objects.parq
 | set_play_phase | bool/null | True if the event happens during a set-play phase (the attack that follows a restart, see below). null = producer can't tell |
 
 ## `players.parquet`
+May be empty (0.6): vision has no players until jersey OCR (03 stage 6) links a track to a roster. `objects.player_id` is then null throughout.
+
 | Column | Type | Notes |
 |---|---|---|
 | match_id, player_id | | |
@@ -103,7 +105,8 @@ The predictor needs `ball_state`, `possession_team` and `ball_carrier_id` at inf
 - Missing players (off camera) stay missing rows or `visible=False`; never guessed positions without `interpolated=True`. PFF `visibility = ESTIMATED` and SkillCorner `is_detected = False` rows are written as `visible=False, interpolated=True`.
 - Any schema change is made here first, with a version bump.
 
-**Schema version:** 0.5
+**Schema version:** 0.6
+- 0.6: `players` may be empty (vision before jersey OCR). Only relaxes a rule, so 0.5 files stay valid and nothing is reconverted
 - 0.5: added `frames.set_play_phase` (label-side only), so 05 can mask set-play phases that don't end in a shot
 - 0.4: `competition`, `season`, `date` nullable; +y direction defined; `vx`/`vy` causal and nullable
 - 0.3: added `match.schema_version`, `objects.z`, `events.set_piece`, `events.set_play_phase`, period 5 for shootouts, `disallowed` outcome, PFF confidence mapping, `visible=False` ⇒ `interpolated=True`

@@ -5,8 +5,9 @@ Keep this in sync with 02. Change the spec first, then this file.
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = "0.5"
-SUPPORTED_VERSIONS = frozenset({"0.5"})
+SCHEMA_VERSION = "0.6"
+# 0.6 only relaxed a rule (players may be empty), so 0.5 files are still valid
+SUPPORTED_VERSIONS = frozenset({"0.5", "0.6"})
 
 PITCH_LENGTH = 105.0
 PITCH_WIDTH = 68.0
@@ -104,5 +105,6 @@ TABLES: dict[str, list[Column]] = {
     ],
 }
 
-# Tables that may legitimately have zero rows (vision output has no events).
-MAY_BE_EMPTY = frozenset({"events"})
+# Tables that may legitimately have zero rows: vision output has no events, and
+# no players until jersey OCR (0.6).
+MAY_BE_EMPTY = frozenset({"events", "players"})

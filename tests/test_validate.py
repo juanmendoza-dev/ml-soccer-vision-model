@@ -123,6 +123,15 @@ def test_empty_events_allowed(tmp_path):
     assert errors_after(tmp_path, "events", lambda df: df.clear()) == []
 
 
+def test_empty_players_allowed(tmp_path):
+    # 0.6: vision has no players until jersey OCR, so player_id is null everywhere
+    tables = tiny_match()
+    tables["players"] = tables["players"].clear()
+    tables["objects"] = tables["objects"].with_columns(player_id=pl.lit(None, pl.String))
+    tables["events"] = tables["events"].with_columns(player_id=pl.lit(None, pl.String))
+    assert validate_match(write(tmp_path, tables)) == []
+
+
 def test_unknown_match_metadata_allowed(tmp_path):
     def blank(df):
         return df.with_columns(
@@ -166,7 +175,7 @@ def test_cli_exit_codes(tmp_path, capsys):
         ("frames", lambda df: df.with_columns(timestamp_s=pl.lit(None, pl.Float64)), "non-null"),
         ("events", lambda df: df.with_columns(set_piece=pl.lit("penalty_kick")), "not allowed"),
         ("frames", lambda df: df.with_columns(ball_state=pl.lit("paused")), "not allowed"),
-        ("players", lambda df: df.clear(), "players: no rows"),
+        ("frames", lambda df: df.clear(), "frames: no rows"),
     ],
 )
 def test_column_errors(tmp_path, table, fn, expected):
