@@ -52,7 +52,7 @@ class TeamAssigner(Protocol):
 
     def fit(self) -> None: ...
 
-    def predict(self, crops: list[np.ndarray]) -> list[int]: ...
+    def predict(self, crops: list[np.ndarray]) -> list[int]: ...  # 0 / 1, or -1 = can't tell
 
     def reset(self) -> None: ...
 
@@ -245,8 +245,9 @@ class VisionPipeline:
         ]
         if todo:
             clusters = teams.predict([c for _, c in todo])
-            for (tr, _), cl in zip(todo, clusters):
-                self._team_votes.setdefault(tr.track_id, []).append(int(cl))
+            for (tr, _), cl in zip(todo, clusters, strict=True):
+                if cl >= 0:  # -1 = assigner couldn't tell
+                    self._team_votes.setdefault(tr.track_id, []).append(int(cl))
 
     def _team_of(self, tr: Track) -> str | None:
         if tr.cls != PLAYER or self.config.home_cluster is None:
