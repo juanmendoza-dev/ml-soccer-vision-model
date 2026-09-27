@@ -33,7 +33,8 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 | flipped | bool/null | True if coordinates were rotated so `possession_team` attacks +x. null when `possession_team` is null (not rotated) |
 | eligible | bool | `ball_state = alive` and `possession_team` set. Uses nothing after t, so features and inference may use it |
 | all_estimated | bool | Every player and goalkeeper `visible = False` (or none present). Training drops these; they're scored as null (see Off-camera players) |
-| label_mask_h5, label_mask_h3 | bool | `eligible`, and no non-open-play shot or goal by `possession_team` in (t, t+H]. **Looks ahead** |
+| label_set_play_phase | bool/null | 02's `frames.set_play_phase` at the native frame. Label-side only: never a feature (02) |
+| label_mask_h5, label_mask_h3 | bool | `eligible`, not in a set-play phase (null counts as not), and no non-open-play shot or goal by `possession_team` in (t, t+H]. **Looks ahead** |
 | label_shot_h5, label_shot_h3 | bool/null | Open-play shot by `possession_team` in (t, t+H]. null where the mask is false |
 | label_goal_h5, label_goal_h3 | bool/null | Open-play goal for `possession_team` in (t, t+H]. null where the mask is false |
 
@@ -51,7 +52,7 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 - Shots: `event_type = shot` rows, any outcome (a disallowed goal was still a shot). Goals: `event_type = goal` rows with `outcome` in {goal, own_goal}. Both are credited to the event's `team`, which for own goals is the scoring team (02).
 - Only the team in possession at t counts. A shot by the other side after a turnover is a 0.
 - **Mask, not 0:** a window containing a non-open-play shot or goal (penalty, direct free kick, set-play-phase shot) by the possession team is neither a clean positive nor a clean negative, so the frame is masked. Masked and ineligible frames stay in the table with null labels.
-- The mask only sees set plays that end in a shot. A set-play phase that ends without one stays labelled 0.
+- **Set-play phases are masked whether or not they end in a shot** (02 `frames.set_play_phase`; schema 0.5). Otherwise every corner or free kick that comes to nothing would train as a clean 0 and the model could learn "set-piece shape → no shot". An open-play shot just after a phase keeps the lead-up frames that fall outside the phase.
 
 ### Leakage
 - Every column not prefixed `label_` uses frames ≤ t only. `tests/test_resample.py` alters frames, objects and events after t and checks those columns don't change.
