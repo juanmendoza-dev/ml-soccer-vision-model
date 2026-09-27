@@ -13,6 +13,32 @@ from vision.types import BALL, GOALKEEPER, PLAYER, REFEREE, VisionFrame
 
 OBJECT_TYPES = {PLAYER: "player", GOALKEEPER: "goalkeeper", REFEREE: "referee", BALL: "ball"}
 
+# 03 Diagnostics; typed so a run with no detections still writes the columns
+DETECTIONS_SCHEMA = {
+    "match_id": pl.String,
+    "frame_id": pl.Int64,
+    "object_id": pl.String,
+    "class": pl.String,
+    "team_cluster": pl.Int64,
+    "x1": pl.Float64,
+    "y1": pl.Float64,
+    "x2": pl.Float64,
+    "y2": pl.Float64,
+    "det_confidence": pl.Float64,
+    "tracked_only": pl.Boolean,
+    "pitch_x": pl.Float64,
+    "pitch_y": pl.Float64,
+    "homography_ok": pl.Boolean,
+    "homography_err_m": pl.Float64,
+}
+VIEW_SCHEMA = {
+    "match_id": pl.String,
+    "frame_id": pl.Int64,
+    "view": pl.String,
+    "grass_share": pl.Float64,
+    "keypoints_found": pl.Int64,
+}
+
 
 class GameStateWriter:
     def __init__(
@@ -192,12 +218,10 @@ class GameStateWriter:
 
         if self.cache is not None:
             self.cache.mkdir(parents=True, exist_ok=True)
-            pl.DataFrame(self._detections, infer_schema_length=None).write_parquet(
+            pl.DataFrame(self._detections, schema=DETECTIONS_SCHEMA).write_parquet(
                 self.cache / "detections.parquet"
             )
-            pl.DataFrame(self._views, infer_schema_length=None).write_parquet(
-                self.cache / "view.parquet"
-            )
+            pl.DataFrame(self._views, schema=VIEW_SCHEMA).write_parquet(self.cache / "view.parquet")
             run = {
                 **self.run_info,
                 "config": self.config.__dict__,
