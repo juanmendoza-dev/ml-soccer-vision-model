@@ -206,3 +206,25 @@ def test_detections_cache_has_kit_clusters(run):
     players = det.filter(pl.col("class") == PLAYER).sort("pitch_x")
     assert players["team_cluster"].to_list() == [1, 1, 0, 0]  # blue left, red right
     assert det.filter(pl.col("class") == REFEREE)["team_cluster"].to_list() == [None]
+
+
+def test_debug_renderer_draws_the_run(run, tmp_path):
+    from demo.debug import main as debug_main
+
+    _, _, cache, _ = run
+    video = tmp_path / "synth.mp4"
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (W, H))
+    for frame_id in range(100):
+        writer.write(render(frame_id))
+    writer.release()
+    out = tmp_path / "debug.mp4"
+    debug_main(
+        ["--video", str(video), "--cache", str(cache), "--out", str(out), "--frames", "30-59"]
+    )
+    cap = cv2.VideoCapture(str(out))
+    assert int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) == 30
+    ok, first = cap.read()
+    assert ok
+    # the minimap sits in the bottom-right corner and is pitch green
+    corner = first[H - 60 : H - 30, W - 200 : W - 100]
+    assert corner[..., 1].mean() > corner[..., 2].mean()
