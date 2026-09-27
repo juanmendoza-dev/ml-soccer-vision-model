@@ -125,6 +125,7 @@ class KitColorTeams:
 
     def __init__(self, seed: int = 0):
         self.rng = np.random.default_rng(seed)
+        self.centers: np.ndarray | None = None
         self.reset()
 
     @staticmethod
@@ -150,6 +151,13 @@ class KitColorTeams:
             centers = np.array(
                 [x[labels == k].mean(axis=0) if (labels == k).any() else centers[k] for k in (0, 1)]
             )
+        # Cluster numbers are arbitrary; after a refit keep each kit on the number it had,
+        # since home_cluster points at a number (F4)
+        old = self._old_centers
+        if old is not None:
+            d = np.linalg.norm(centers[:, None] - old[None], axis=2)
+            if d[0, 1] + d[1, 0] < d[0, 0] + d[1, 1]:
+                centers = centers[::-1]
         self.centers = centers
         self.fitted = True
 
@@ -162,7 +170,9 @@ class KitColorTeams:
         return out
 
     def reset(self) -> None:
+        """Forget the samples for a refit; the old centers only anchor the cluster numbers."""
+        self._old_centers = self.centers
         self._samples: list[np.ndarray] = []
         self.n_crops = 0
         self.fitted = False
-        self.centers: np.ndarray | None = None
+        self.centers = None

@@ -77,3 +77,15 @@ def test_byte_tracker_keeps_a_track_on_low_confidence_detections():
     for step in range(5, 10):  # partly occluded: second-pass confidence
         (low,) = tracker.update([player_at(step, conf=0.15)])
         assert low.track_id == first.track_id
+
+
+def test_kit_clusters_keep_their_numbers_after_a_refit():
+    teams = KitColorTeams()
+    teams.add([crop(RED) for _ in range(10)] + [crop(BLUE) for _ in range(10)])
+    teams.fit()
+    red, blue = teams.predict([crop(RED), crop(BLUE)])
+    for _ in range(5):  # long breaks: refit on differently ordered samples
+        teams.reset()
+        teams.add([crop(BLUE) for _ in range(7)] + [crop(RED) for _ in range(12)])
+        teams.fit()
+        assert teams.predict([crop(RED), crop(BLUE)]) == [red, blue]
