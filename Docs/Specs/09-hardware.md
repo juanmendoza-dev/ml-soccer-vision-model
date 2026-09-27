@@ -28,6 +28,23 @@ The M1 MacBook Pro is covered in 01.
 - **Video decode/encode:** no Quick Sync, so decoding runs on the CPU (6 cores handle 1080p30 H.264) or on the 2060's NVDEC. Encoding the overlay output, e.g. for OBS, should use NVENC so the CPU stays free.
 - **Disk:** 500 GB is tight once SoccerNet downloads, raw match video (2–4 GB per 1080p match) and `data/vision_cache/` pile up. Keep raw video on external or homelab storage (01 open question).
 
+## First vision run (workstation)
+```
+git clone <this repo> && cd <repo>
+uv sync --extra dev --extra vision
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128   # pick the CUDA wheel from pytorch.org
+uv run python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_arch_list())"
+
+# roboflow/sports weights (their examples/soccer/setup.sh, needs gdown)
+git clone https://github.com/roboflow/sports ../sports && bash ../sports/examples/soccer/setup.sh
+
+uv run python -m vision.run --video <demo clip> --weights-dir ../sports/examples/soccer/data --match-id demo1 --max-frames 750
+uv run python -m demo.debug --video <demo clip> --cache data/vision_cache/demo1 --out demo1_debug.mp4
+```
+- Watch `demo1_debug.mp4`: rings colored by kit cluster, IDs, minimap. Then rerun `vision.run` with `--home-cluster 0|1` to get home/away in the game state.
+- The progress lines print fps. That's the first real number for the live budget below.
+- Keep clips and outputs outside iCloud or other synced folders (08: footage is private).
+
 ## Live feasibility
 
 ### Frame budget

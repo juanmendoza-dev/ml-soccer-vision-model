@@ -54,10 +54,16 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] Final models on IDSSE, once
 
 ## Phase 2 — Vision pipeline (RTX 2060)
+- [x] Streaming `VisionPipeline` (03): stage 0 gate, detection + ByteTrack with frame skip, kit-color teams after warmup, homography from roboflow's 32 keypoints in 02 coords, ball extrapolation. Tested with fake stages on a synthetic match (output passes the 02 validator)
+- [x] `vision.run` (video → game state + detections cache) and `demo.debug` renderer (08 debug mode)
+- [ ] **First workstation run:** `vision.run` + `demo.debug` on a demo clip with roboflow's weights. Real stages are untested until then
+- [ ] Check keypoint orientation on that clip (center spot, penalty spots land right; 03 Pitch template)
+- [ ] Pick `home_cluster` from the debug video; later a warmup prompt in live mode
 - [ ] Run roboflow/sports end to end on a SoccerNet sample clip
-- [ ] Stage 0 view gate (grass share + keypoints, hysteresis) and `view.parquet`; tune on broadcast clips with ads and studio cuts (03)
+- [ ] Tune the stage 0 thresholds on broadcast clips with ads and studio cuts (`view.parquet`, 03)
+- [ ] Move off `sv.ByteTrack` before supervision 0.31 (pinned below it)
 - [ ] Homography → pitch meters → game state writer (incl. `match.parquet`, `view_polygon`)
-- [ ] Detections cache + `run.json` (03 Diagnostics)
+- [x] Detections cache + `view.parquet` + `run.json` (03 Diagnostics)
 - [ ] Ball tracking improvements + interpolation
 - [ ] Plug in stage 8 (possession / ball state) from Phase 1
 - [ ] Jersey OCR → player_id
