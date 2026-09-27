@@ -22,7 +22,9 @@ class VisionConfig:
     lost_track_s: float = 1.0  # a lost track is dropped after this long
 
     # Stage 3: teams
-    team_warmup_s: float = 10.0  # match-view seconds of crops before fitting
+    # smoke03: a clip's one long match segment can be short (11 s here), so a 10 s
+    # warmup barely fits before it ends and colors show for almost none of it
+    team_warmup_s: float = 3.0  # match-view seconds of crops before fitting
     team_min_crops: int = 60
     home_cluster: int | None = None  # which cluster is home; null -> team stays null
 
