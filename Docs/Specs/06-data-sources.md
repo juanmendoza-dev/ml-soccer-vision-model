@@ -99,7 +99,7 @@ All 64 tracking files are now on disk; the second 13 all convert and validate. F
 | 5 s | 2,294,619 | 51,482 | 2.24% | 6,137 | 0.27% | 1,127 / 1,127 |
 | 3 s | 2,296,256 | 31,820 | 1.39% | 3,745 | 0.16% | 1,121 / 1,127 |
 
-  Of the H = 5 shot positives, 2,301 (4.5%) are all-ESTIMATED frames, which training drops.
+  Of the H = 5 shot positives, 2,301 (4.5%) are all-ESTIMATED frames, which training drops. Counting only trainable positives (not all-ESTIMATED), 3 shots have none at H = 5 (3840 ×1, 3845 ×2: the whole lead-up is a cutaway) and 9 at H = 3 (those 3 plus the 6 below).
 - **Shots with no positive frame:** none at H = 5. At H = 3, six (10505, 10506, 10510, 3829, 3851, and 3853's away goal at 208 s): PFF's `possession_team` only switches to the shooting team at the shot, so the whole 3 s window belongs to the other side. Listed per game in `resample_report.json`.
 - **Flip check:** at the grid row covering each shot, with possession agreeing with the shooter, the ball's `x_att` is > 0 for every shot in 10502, 10504, 10505 and 3855. The one negative found (10508) is a real shot from the center circle 0.3 s into period 4.
 - **Metrica** gets no eligible rows (null `ball_state` and `possession_team`), so no labels, as expected. Its goal rows have a null `set_piece`, so they'd count as not open play; that only matters once Metrica has possession.
