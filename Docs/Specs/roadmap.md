@@ -80,7 +80,8 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 - [x] F7: clip `box_frac` to 0–1
 
 **4. Quality (after real-clip results)**
-- [ ] Homography acceptance: inlier count, error threshold, no matrix averaging across camera motion
+- [x] Homography acceptance: inlier count, error threshold, no matrix averaging across camera motion, null positions > 10 m off the pitch (03 Homography acceptance). Code done, thresholds untuned
+- [ ] Run `vision.offpitch` on smoke01 to see what the 36 off-pitch rows were, then a second smoke run with the new acceptance (judge it on `homography_ok` coverage and rejected projections, not just the validator)
 - [ ] Ball: reset motion after long gaps and cuts, temporal candidate association, null when homography is invalid (F8)
 - [ ] Per-stage timings + effective model settings in `run.json` (03)
 - [ ] Run roboflow/sports end to end on a SoccerNet sample clip as a reference

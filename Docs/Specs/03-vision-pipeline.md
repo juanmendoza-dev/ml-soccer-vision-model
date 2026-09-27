@@ -20,7 +20,7 @@ Turn broadcast video into game state (02) for each frame.
 1. **Detection** — YOLOv8 fine-tuned on players, goalkeepers, referees, ball. Start from Roboflow's pretrained soccer weights.
 2. **Tracking** — ByteTrack (via `supervision`) for stable `object_id`s. People down to `track_min_conf` (~0.1) go to the tracker, whose second pass keeps existing tracks alive on weak detections; the ball and kit-color samples need `min_det_conf` (new tracks need ~0.35, inside supervision). A lost track is dropped after `lost_track_s` (~1 s) of wall time, whatever the frame skip.
 3. **Team assignment** — SigLIP crop embeddings → UMAP → KMeans(k=2), as in roboflow/sports. Goalkeepers assigned by nearest team centroid.
-4. **Pitch homography** — pitch keypoint model → per-frame homography → pixel to meters. Smooth over time to reduce jitter.
+4. **Pitch homography** — pitch keypoint model → per-frame homography → pixel to meters. Smooth over time to reduce jitter. Fits are accepted or rejected as in Pitch template → Homography acceptance.
 5. **Ball tracking** — dedicated detector at higher input resolution; interpolate short gaps (< 1 s) and mark `interpolated=True`.
 6. **Jersey OCR** — read numbers over multiple frames, vote per track, link to roster → `player_id`. Borrow approach from sn-gamestate.
 7. **Velocities** — backward differences on trailing-smoothed positions (causal, frames `<= t` only; see 02 `vx, vy`). A centered window would leak future frames into the features.
@@ -51,7 +51,7 @@ One stateful object, one frame at a time. Offline is a loop over it, so live (so
 - Live forms of stages that are batch-style in roboflow/sports:
   - **Teams:** fit on a warmup window (the first `team_warmup_s` of `match` frames), then assign. `team = null` until fitted.
   - **Ball gaps:** extrapolated forward from the last velocity, `interpolated=True`, never filled from later frames.
-  - **Homography:** smoothed over a trailing window only.
+  - **Homography:** smoothed over a trailing window only, and only across fits that agree with each other (no averaging across a camera cut).
 
 ## Pitch template
 The keypoint model is roboflow/sports' `football-pitch-detection` (32 keypoints). Its template (`SoccerPitchConfiguration`) is 120 × 70 m in centimetres, origin at a corner, y growing toward the near touchline, with a 20.15 m deep penalty box. We keep its **keypoint order** (that's what the weights predict) but put each landmark at its **real** position in 02's frame: meters, center origin, 105 × 68, penalty area 16.5 × 40.32, goal area 5.5 × 18.32, penalty spot 11, center circle 9.15. The homography then outputs 02 coordinates directly, nothing gets rescaled.
@@ -59,6 +59,12 @@ The keypoint model is roboflow/sports' `football-pitch-detection` (32 keypoints)
 - Keypoints 9 / 22 (penalty spots) → `(∓41.5, 0)`; 31 / 32 (center circle on the halfway line) → `(∓9.15, 0)`.
 - The corner assignment is read from roboflow's radar drawing (y down = toward the camera). Check it on the first real clip: the center spot and a penalty spot should land where they are on screen.
 - Keypoints below `min_keypoint_conf` are dropped; at least 4 are needed for a homography (stage 0 counts them).
+
+### Homography acceptance
+The first 2060 smoke test (`Docs/reviews/smoke-test-2026-09-27.md`) put objects more than 15 m off the pitch. When a fit can't be trusted, positions go null. They are never clamped or guessed. All thresholds are in `VisionConfig`, and they are guesses until they're tuned on real clips.
+- **Per fit:** RANSAC at `ransac_m` on the template. A fit needs `min_inliers` inliers and a mean inlier reprojection error ≤ `max_homography_err_m`. Stage 0 still gets the count of confident keypoints, not inliers. Four inliers always fit exactly (error 0), so the next two checks are what catch a bad four-point fit.
+- **Across fits:** a new fit is compared with the one in use at its own inlier keypoints. If the mean distance is ≤ `max_homography_jump_m`, it joins the trailing average. If not, it waits and the homography isn't ok until the next fit. If that next fit agrees with the waiting one, the camera changed and the two start a new window. If it agrees with the old one, the waiting fit is dropped. Once the fit in use is older than `homography_max_age_s`, any fit that passes the per-fit checks is taken. Frames already emitted are never rewritten.
+- **Per position:** a projection more than `max_off_pitch_m` (10 m, under the validator's 15) outside the lines, or not finite, gets null x/y. The detections cache keeps the row, with `homography_ok` true and a null `pitch_x`. An extrapolated ball that crosses that bound is dropped, and its motion is forgotten. Genuine out-of-play balls within the margin are kept for stage 8.
 
 ## Teams and direction
 Clustering gives cluster 0 / 1, and the homography gives the TV frame. 02 needs `team` as home/away and +x toward the goal home attacks in period 1. Two config inputs:
@@ -87,7 +93,7 @@ Debugging works from cached data after the run, not from extra logging during it
 | tracked_only | bool | True if the tracker filled this frame, no detection |
 | pitch_x, pitch_y | float/null | Box anchor through the homography; null without a valid homography |
 | homography_ok | bool | Per frame (repeated on each row) |
-| homography_err_m | float/null | Mean keypoint reprojection error in meters, per frame |
+| homography_err_m | float/null | Mean reprojection error of this frame's RANSAC inliers in meters; null when stage 4 didn't run or nothing could be fit |
 
 `view.parquet` next to it, one row per frame (stage 0), so gate thresholds can be tuned after a run:
 
@@ -100,7 +106,7 @@ Debugging works from cached data after the run, not from extra logging during it
 
 Plus `run.json` next to it: config, git commit, model weights hash, video file hash, per-stage wall time, and the 02 validator errors (`vision.run` exits nonzero if there are any; a clip with no match view fails). With the video, this is enough to redraw any moment of the run.
 
-- Anomaly checks (ID switches, ball gaps, homography jumps, ...) are scripts over this cache, written when a real problem shows up. Not part of the pipeline.
+- Anomaly checks (ID switches, ball gaps, homography jumps, ...) are scripts over this cache, written when a real problem shows up. Not part of the pipeline. So far: `python -m vision.offpitch --match-id <id>` (off-pitch rows grouped into runs, with view and keypoint context, plus the count of projections the pipeline rejected).
 - The overlay renderer's debug mode (08) draws boxes, IDs and teams for a frame range from this cache.
 
 ## Acceptance criteria
