@@ -500,3 +500,47 @@ def test_one_bad_keypoint_frame_gives_nulls_not_wrong_positions():
     for vf in frames:
         placed = {(round(o.x), round(o.y)) for o in vf.objects if o.x is not None}
         assert placed <= truth
+
+
+class OffPitchDetector:
+    """A 'player' 17.5 m past the goal line, and a ball flying right at 30 m/s that
+    disappears at frame 20."""
+
+    def __init__(self):
+        self.frame_id = 0
+
+    def detect(self, image):
+        dets = [
+            Detection(box_at((10.0, 5.0)), PLAYER, 0.9),
+            Detection(box_at((70.0, 0.0)), PLAYER, 0.9),
+        ]
+        if self.frame_id < 20:
+            u, v = feet_px((30.0 + 3.0 * (self.frame_id - 10), 0.0))
+            dets.append(Detection((u - 4, v - 4, u + 4, v + 4), BALL, 0.8))
+        return dets
+
+
+def test_projections_far_off_the_pitch_go_null(tmp_path):
+    config = VisionConfig()
+    detector = OffPitchDetector()
+    pipe = VisionPipeline(
+        config, Stages(detector, FakeTracker(), FakeKeypoints(), ShirtColorTeams())
+    )
+    writer = GameStateWriter("off", "a", "b", FPS, config, tmp_path / "gs", tmp_path / "cache")
+    frames = []
+    for i in range(30):
+        detector.frame_id = i
+        frames.append(pipe.step(i, i / FPS, render(i)))
+        writer.add(frames[-1])
+    out = writer.close()
+
+    vf = frames[15]
+    assert vf.homography_ok
+    assert sorted((o.x is None) for o in vf.objects) == [False, True]  # the one at 70 m
+    assert round(frames[20].ball.x) == 60  # extrapolated, still within 10 m of the line
+    assert frames[21].ball is None and frames[22].ball is None  # 63 m: dropped for good
+    assert writer.errors == []
+    det = pl.read_parquet(tmp_path / "cache" / "off" / "detections.parquet")
+    # the cache keeps the row: homography fine, position thrown away
+    assert det.filter(pl.col("homography_ok") & pl.col("pitch_x").is_null()).height > 0
+    assert pl.read_parquet(out / "objects.parquet")["x"].abs().max() <= 62.5

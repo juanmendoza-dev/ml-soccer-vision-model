@@ -11,7 +11,7 @@ from typing import Protocol
 import numpy as np
 
 from vision.config import VisionConfig
-from vision.pitch import HomographyFilter, fit_homography, project, to_02
+from vision.pitch import HomographyFilter, fit_homography, on_pitch, project, to_02
 from vision.types import (
     BALL,
     GOALKEEPER,
@@ -182,6 +182,8 @@ class VisionPipeline:
             if not h_ok:
                 return None, None
             xy = to_02(project(H, [px]), cfg.home_attacks_tv_right_p1)[0]
+            if not on_pitch(xy, cfg.max_off_pitch_m):
+                return None, None  # the cache keeps the row: homography ok, no position
             return float(xy[0]), float(xy[1])
 
         objects = []
@@ -353,6 +355,9 @@ class VisionPipeline:
             return None
         # Extrapolate forward only; never filled from later frames (03)
         x, y = xy0 + v * (t - t0)
+        if not on_pitch(np.array([x, y]), self.config.max_off_pitch_m):
+            self._ball = None  # flew off with a bad velocity: stop guessing
+            return None
         return VisionObject(
             oid,
             BALL,

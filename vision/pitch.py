@@ -84,6 +84,14 @@ def project(H: np.ndarray, pts: np.ndarray) -> np.ndarray:
     return cv2.perspectiveTransform(pts, H).reshape(-1, 2)
 
 
+def on_pitch(xy: np.ndarray, margin_m: float) -> bool:
+    """Finite and no more than margin_m outside the lines (either frame: symmetric)."""
+    x, y = xy
+    return bool(
+        np.isfinite(xy).all() and abs(x) <= HALF_L + margin_m and abs(y) <= HALF_W + margin_m
+    )
+
+
 def to_02(xy_tv: np.ndarray, home_attacks_tv_right_p1: bool) -> np.ndarray:
     """TV frame -> 02: +x toward the goal home attacks in period 1 (a 180° turn if that's TV left)."""
     return xy_tv if home_attacks_tv_right_p1 else -xy_tv
