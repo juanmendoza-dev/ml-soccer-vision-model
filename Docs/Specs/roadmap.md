@@ -62,9 +62,9 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 - [x] Detections cache + `view.parquet` + `run.json` (03 Diagnostics)
 
 **1. First real run (2060)**
-- [ ] **First workstation run:** `vision.run` + validator + `demo.debug` on a short demo clip with roboflow's weights. Real stages are untested until then
-- [ ] Check keypoint orientation on that clip (center spot, penalty spots land right; 03 Pitch template)
-- [ ] Pick `home_cluster` from the debug video; later a warmup prompt in live mode
+- [x] **First workstation run:** `vision.run` + validator + `demo.debug` on a short demo clip with roboflow's weights. Ran end to end, validator fails on off-pitch rows (`Docs/reviews/smoke-test-2026-09-27.md`)
+- [x] Check keypoint orientation on that clip (center spot, penalty spots land right; 03 Pitch template)
+- [x] Pick `home_cluster` from the debug video; later a warmup prompt in live mode
 
 **2. Bugs that give wrong output (M1)**
 - [x] F2: view gate stays `match` on green close-ups (unsampled keypoint frames count as passing)
