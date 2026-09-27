@@ -400,3 +400,14 @@ def test_writer_reports_validation(run, tmp_path):
     writer.add(VisionFrame(0, 0.0, OTHER, 0.0, None, False, None, None))
     writer.close()
     assert writer.errors  # no match view at all: a failed run, not an empty valid one
+
+
+def test_low_confidence_tracks_dont_feed_kit_colors():
+    teams = ShirtColorTeams()
+    pipe = VisionPipeline(
+        VisionConfig(team_warmup_s=0.0, team_min_crops=1),
+        Stages(LowConfDetector(), FakeTracker(), FakeKeypoints(), teams),
+    )
+    for frame_id in range(30):
+        pipe.step(frame_id, frame_id / FPS, render(frame_id))
+    assert teams.n_crops == 0 and not teams.fitted

@@ -252,7 +252,11 @@ class VisionPipeline:
 
     def _update_teams(self, image: np.ndarray, tracks: list[Track]) -> None:
         teams = self.stages.teams
-        players = [tr for tr in tracks if tr.cls == PLAYER]
+        # confident detections only: a second-pass (low-conf) track is usually part
+        # hidden, and its torso crop may be someone else's shirt
+        players = [
+            tr for tr in tracks if tr.cls == PLAYER and tr.confidence >= self.config.min_det_conf
+        ]
         if not players:
             return
         crops = [torso_crop(image, tr.box) for tr in players]

@@ -14,9 +14,10 @@ class VisionConfig:
 
     # Stage 1-2: detection and tracking
     detect_every: int = 1  # 2-3 for live (09); the tracker fills the frames between
-    min_det_conf: float = 0.3  # ball, and new tracks (ByteTrack starts them above ~0.35)
+    min_det_conf: float = 0.3  # ball, and kit-color samples/votes
     # People down to this go to the tracker: ByteTrack's second pass keeps existing
-    # tracks alive on 0.1-0.25 detections (partly occluded players)
+    # tracks alive on 0.1-0.25 detections (partly occluded players). New tracks need
+    # ~0.35, set inside supervision, not by min_det_conf
     track_min_conf: float = 0.1
     lost_track_s: float = 1.0  # a lost track is dropped after this long
 

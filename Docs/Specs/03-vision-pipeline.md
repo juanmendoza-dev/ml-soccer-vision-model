@@ -18,7 +18,7 @@ Turn broadcast video into game state (02) for each frame.
    - **Replays pass the gate** (grass, valid keypoints) and get tracked as if live. See open questions.
    - Thresholds are config values, tuned on labeled broadcast clips.
 1. **Detection** — YOLOv8 fine-tuned on players, goalkeepers, referees, ball. Start from Roboflow's pretrained soccer weights.
-2. **Tracking** — ByteTrack (via `supervision`) for stable `object_id`s. People down to `track_min_conf` (~0.1) go to the tracker, whose second pass keeps existing tracks alive on weak detections; new tracks and the ball need `min_det_conf`. A lost track is dropped after `lost_track_s` (~1 s) of wall time, whatever the frame skip.
+2. **Tracking** — ByteTrack (via `supervision`) for stable `object_id`s. People down to `track_min_conf` (~0.1) go to the tracker, whose second pass keeps existing tracks alive on weak detections; the ball and kit-color samples need `min_det_conf` (new tracks need ~0.35, inside supervision). A lost track is dropped after `lost_track_s` (~1 s) of wall time, whatever the frame skip.
 3. **Team assignment** — SigLIP crop embeddings → UMAP → KMeans(k=2), as in roboflow/sports. Goalkeepers assigned by nearest team centroid.
 4. **Pitch homography** — pitch keypoint model → per-frame homography → pixel to meters. Smooth over time to reduce jitter.
 5. **Ball tracking** — dedicated detector at higher input resolution; interpolate short gaps (< 1 s) and mark `interpolated=True`.
