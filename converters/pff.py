@@ -17,7 +17,7 @@ from pathlib import Path
 import polars as pl
 
 from converters.common import ConversionReport, causal_velocities, write_gamestate
-from converters.pff_events import RAW_DIR, load_metadata, parse_events
+from converters.pff_events import FPS, RAW_DIR, load_metadata, parse_events
 from gamestate.schema import (
     PFF_CONFIDENCE,
     PITCH_LENGTH,
@@ -30,6 +30,11 @@ from gamestate.validate import POSITION_MARGIN_M
 OUT_DIR = Path("data/gamestate")
 CHUNK_FRAMES = 10_000
 MAX_PLAYER_SPEED = 12.0  # m/s, only used for the report check
+SNAP_FRAMES = 15  # an event may move this far (0.5 s) to the nearest tracked frame
+# Events vs tracking alignment: the player PFF codes on the ball is ~1.2 m from the
+# tracked ball (median, both VISIBLE) when they line up. Periods above this are dropped.
+ALIGN_MAX_M = 5.0
+ALIGN_MIN_N = 30
 KICKOFFS = {"FIRSTKICKOFF", "SECONDKICKOFF", "THIRDKICKOFF", "FOURTHKICKOFF"}
 LEFT = {"LB", "LWB", "LW", "LM", "LCB"}
 RIGHT = {"RB", "RWB", "RW", "RM", "RCB"}
@@ -200,7 +205,8 @@ def move_shootout(frames: pl.DataFrame, start_s: float | None, report: Conversio
     no possession, timestamp from the shootout start (02)."""
     if start_s is None:
         return frames
-    shootout = (pl.col("period") == 4) & (pl.col("video_time_s") >= start_s)
+    # Strictly after: the period-4 END frame itself stays in period 4.
+    shootout = (pl.col("period") == 4) & (pl.col("video_time_s") > start_s)
     report.change("frames", frames.filter(shootout).height, "shootout frames moved to period 5")
     return frames.with_columns(
         period=pl.when(shootout).then(SHOOTOUT_PERIOD).otherwise("period"),
@@ -251,29 +257,69 @@ def side_check(objects: pl.DataFrame, frames: pl.DataFrame, roster: pl.DataFrame
 
 def link_events(events: pl.DataFrame, frames: pl.DataFrame, report: ConversionReport):
     """Event frame = round(eventTime x fps), the same rule as frameNum. Events that
-    land on a missing frame snap to the nearest tracked frame (logged)."""
-    known = events.join(frames.select("frame_id"), on="frame_id", how="semi")
-    missing = events.join(frames.select("frame_id"), on="frame_id", how="anti")
+    land on a missing frame snap to the nearest tracked frame within SNAP_FRAMES;
+    events further from any tracked frame (outside tracked time) are dropped."""
+    tracked = frames.select("frame_id")
+    known = events.join(tracked, on="frame_id", how="semi")
+    missing = events.join(tracked, on="frame_id", how="anti")
     if missing.height:
         snapped = (
-            missing.with_columns(t=pl.col("frame_id").cast(pl.Float64))
-            .sort("t")
+            missing.sort("frame_id")
             .join_asof(
-                frames.select(pl.col("frame_id").alias("nearest"))
-                .with_columns(t=pl.col("nearest").cast(pl.Float64))
-                .sort("t"),
-                on="t",
+                tracked.select(pl.col("frame_id").alias("nearest"), t=pl.col("frame_id")),
+                left_on="frame_id",
+                right_on="t",
                 strategy="nearest",
             )
+            .with_columns(gap=(pl.col("nearest") - pl.col("frame_id")).abs())
         )
+        close = snapped.filter(pl.col("gap") <= SNAP_FRAMES)
         report.change(
-            "events",
-            missing.height,
-            "event frame not in tracking; moved to the nearest frame "
-            f"(max {snapped.select((pl.col('nearest') - pl.col('frame_id')).abs().max()).item()} frames)",
+            "events", close.height, f"event frame not in tracking; moved <= {SNAP_FRAMES} frames"
         )
-        missing = snapped.with_columns(frame_id=pl.col("nearest")).drop("t", "nearest")
-    return pl.concat([known, missing.select(known.columns)]).sort("frame_id")
+        for kind, n in (
+            snapped.filter(pl.col("gap") > SNAP_FRAMES).group_by("event_type").len().iter_rows()
+        ):
+            report.drop("events", n, f"{kind} outside tracked time (no frame within 0.5 s)")
+        missing = close.with_columns(frame_id=pl.col("nearest")).select(known.columns)
+    return pl.concat([known, missing]).sort("frame_id")
+
+
+def event_alignment(game_id: str, raw_dir: Path, objects: pl.DataFrame) -> dict:
+    """Per period: median distance from the player PFF codes on the ball to the
+    tracked ball at the event's frame (both VISIBLE). Independent of the event's
+    own ball position, which PFF samples from tracking."""
+    rows = json.loads((raw_dir / "Event Data" / f"{game_id}.json").read_text())
+    ev = pl.DataFrame(
+        [
+            (
+                round(r["eventTime"] * FPS),
+                r["gameEvents"]["period"],
+                str(r["gameEvents"]["playerId"]),
+            )
+            for r in rows
+            if r["gameEvents"]["period"] in (1, 2, 3, 4) and r["gameEvents"]["playerId"]
+        ],
+        schema=["frame_id", "period", "player_id"],
+        orient="row",
+    )
+    seen = objects.filter(pl.col("visible")).select(
+        "frame_id", "object_type", "player_id", "x", "y"
+    )
+    ball = seen.filter(pl.col("object_type") == "ball").select("frame_id", bx="x", by="y")
+    people = seen.filter(pl.col("player_id").is_not_null()).drop("object_type")
+    d = (
+        ev.join(people, on=["frame_id", "player_id"])
+        .join(ball, on="frame_id")
+        .group_by("period")
+        .agg(
+            n=pl.len(),
+            median_m=((pl.col("x") - pl.col("bx")) ** 2 + (pl.col("y") - pl.col("by")) ** 2)
+            .sqrt()
+            .median(),
+        )
+    )
+    return {int(p): {"n": n, "median_m": round(m, 2)} for p, n, m in d.sort("period").iter_rows()}
 
 
 def convert_game(game_id: str, raw_dir: Path = RAW_DIR, out_dir: Path = OUT_DIR) -> list[str]:
@@ -307,6 +353,28 @@ def convert_game(game_id: str, raw_dir: Path = RAW_DIR, out_dir: Path = OUT_DIR)
     objects = objects.filter(~far)
 
     frames = move_shootout(frames, report.checks["shootout"]["start_s"], report)
+
+    # 10506 and 10517 have extra time where events and tracking don't line up
+    # (coded player ~15-19 m from the ball, no constant time offset). Drop such
+    # periods whole, so they can't become unlabeled "no shot" stretches.
+    align = event_alignment(game_id, raw_dir, objects)
+    report.checks["event_player_to_ball_m_by_period"] = {str(p): v for p, v in align.items()}
+    bad = [p for p, v in align.items() if v["n"] >= ALIGN_MIN_N and v["median_m"] > ALIGN_MAX_M]
+    if bad:
+        drop = frames.filter(pl.col("period").is_in(bad))
+        lo, hi = drop["frame_id"].min(), drop["frame_id"].max()
+        in_range = pl.col("frame_id").is_between(lo, hi)
+        reason = f"periods {bad}: events and tracking don't line up (coded player > {ALIGN_MAX_M:g} m from ball)"
+        report.drop("frames", drop.height, reason)
+        report.drop(
+            "objects",
+            objects.join(drop.select("frame_id"), on="frame_id", how="semi").height,
+            reason,
+        )
+        report.drop("events", events.filter(in_range).height, reason)
+        frames = frames.filter(~pl.col("period").is_in(bad))
+        objects = objects.join(drop.select("frame_id"), on="frame_id", how="anti")
+        events = events.filter(~in_range)
 
     home_gk = roster.filter(
         (pl.col("team") == "home") & pl.col("started") & (pl.col("position") == "GK")
