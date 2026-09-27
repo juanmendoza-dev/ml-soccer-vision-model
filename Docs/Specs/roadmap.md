@@ -18,7 +18,7 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [x] PFF event parser → `events.parquet` (`converters/pff_events.py`, all 64 games): shots, goals (incl. own goals and non-shot goals, disallowed goals marked), `set_piece`, `set_play_phase`; reproduces the 06 counts and all 64 scores (tests). PFF doesn't track shootouts, so period 5 stays empty
 - [ ] SkillCorner → game state converter: tracking, possession, `visible` / `interpolated` from `is_detected`, `view_polygon`, `ball_state` from dynamic events (02)
 - [ ] IDSSE → game state converter (external test set; don't look at results until the final check)
-- [ ] 10 Hz resampling + label generation: `shot_within_H`, open play only (set plays excluded, 05)
+- [x] 10 Hz resampling + label generation (`prediction/resample.py`, `prediction/labels.py`, all 64 PFF + Metrica 1–2): causal grid, flip to the attacking team, `shot`/`goal` within 3 s and 5 s, set-play windows masked (05). H = 5: 2.24% shot positives on 2.29M unmasked rows, eligible 58.8%, every one of the 1,127 open-play shots has a positive frame (6 miss at H = 3); numbers in 06
 - [ ] Grouped folds over PFF + SkillCorner → `data/splits/folds.json` (07); provisional until all 64 PFF games are in
 
 **Evaluation harness**
