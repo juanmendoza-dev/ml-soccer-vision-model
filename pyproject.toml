@@ -19,11 +19,23 @@ prediction = [
     "unravelsports",
 ]
 vision = [
+    "torch>=2.3",
+    "torchvision>=0.18",
     "ultralytics>=8.2",
-    "supervision>=0.21",
+    "supervision>=0.21,<0.31",  # ByteTrack is removed in 0.31
     "opencv-python>=4.9",
 ]
 dev = ["pytest>=8", "ruff>=0.5"]
+
+# PyPI's Windows torch is CPU-only; the workstation (RTX 2060) takes the CUDA build
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32'" }]
 
 [build-system]
 requires = ["setuptools>=69"]

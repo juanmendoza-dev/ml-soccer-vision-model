@@ -36,6 +36,39 @@ Turn broadcast video into game state (02) for each frame.
 - Stage 0 runs on every frame, including skipped ones, so a cut is caught within `off_after_s`.
 - Every stage can cache its output so later stages rerun without redoing detection.
 
+## Streaming API
+One stateful object, one frame at a time. Offline is a loop over it, so live (soccer-live-overlay) and offline share code, and every stage is causal by construction.
+
+    pipe = VisionPipeline(config, stages)
+    for frame_id, t, image in video:
+        vf = pipe.step(frame_id, t, image)      # VisionFrame
+        writer.add(vf)                           # game state (02) + caches
+    writer.close()
+
+- `VisionFrame`: `frame_id`, `t`, `view` (stage 0), `homography_ok`, `objects` (object_id, class, team, pitch x/y or null, confidence, `tracked_only`, display box), `ball` (same, or null), `view_polygon`.
+- Stages are injected (detector, tracker, team assigner, keypoint model), so tests run with fakes and live mode can swap in smaller models.
+- Live forms of stages that are batch-style in roboflow/sports:
+  - **Teams:** fit on a warmup window (the first `team_warmup_s` of `match` frames), then assign. `team = null` until fitted.
+  - **Ball gaps:** extrapolated forward from the last velocity, `interpolated=True`, never filled from later frames.
+  - **Homography:** smoothed over a trailing window only.
+
+## Pitch template
+The keypoint model is roboflow/sports' `football-pitch-detection` (32 keypoints). Its template (`SoccerPitchConfiguration`) is 120 × 70 m in centimetres, origin at a corner, y growing toward the near touchline, with a 20.15 m deep penalty box. We keep its **keypoint order** (that's what the weights predict) but put each landmark at its **real** position in 02's frame: meters, center origin, 105 × 68, penalty area 16.5 × 40.32, goal area 5.5 × 18.32, penalty spot 11, center circle 9.15. The homography then outputs 02 coordinates directly, nothing gets rescaled.
+- Keypoint 1 (roboflow `(0, 0)`) is the far-left corner as seen on TV → `(-52.5, 34)` in the TV frame (+x right, +y toward the far touchline, as in 02).
+- Keypoints 9 / 22 (penalty spots) → `(∓41.5, 0)`; 31 / 32 (center circle on the halfway line) → `(∓9.15, 0)`.
+- The corner assignment is read from roboflow's radar drawing (y down = toward the camera). Check it on the first real clip: the center spot and a penalty spot should land where they are on screen.
+- Keypoints below `min_keypoint_conf` are dropped; at least 4 are needed for a homography (stage 0 counts them).
+
+## Teams and direction
+Clustering gives cluster 0 / 1, and the homography gives the TV frame. 02 needs `team` as home/away and +x toward the goal home attacks in period 1. Two config inputs:
+- `home_cluster`: which cluster is home (picked from sample crops at warmup, or a flag). Until set, `team = null`. Never guessed.
+- `home_attacks_tv_right_p1`: if false, positions are rotated 180° (x → -x, y → -y) for the whole match, so +x is always home's period-1 attack. `home_attacks_positive_x` is true in odd periods, false in even ones.
+- Later: infer direction from which end each team's goalkeeper stands at during warmup.
+- `period` and the period start come from config too (live: set at kickoff and half-time).
+
+## Display output (pixel exception)
+Pixels never leave `vision/` as data, but the live overlay draws rings on the video, so it needs screen positions. The one exception: `VisionFrame` carries each object's box as fractions (0–1) of the frame, for **display only**. Same status as the detections cache below, which 08's debug mode draws from. Game state, prediction and evaluation never read it.
+
 ## Diagnostics
 Debugging works from cached data after the run, not from extra logging during it. Nothing here adds work to the inference loop beyond writing the cache.
 
@@ -47,6 +80,7 @@ Debugging works from cached data after the run, not from extra logging during it
 | match_id, frame_id | | Same frame_ids as game state |
 | object_id | str | Same as `objects.object_id` |
 | class | enum | player, goalkeeper, referee, ball (detector class, before team assignment) |
+| team_cluster | int/null | Stage 3 kit cluster (0 / 1) before the home/away mapping; null until teams are fitted, and for referees and the ball |
 | x1, y1, x2, y2 | float | Box in pixels |
 | det_confidence | float | Detector score; null for tracker-filled frames |
 | tracked_only | bool | True if the tracker filled this frame, no detection |
