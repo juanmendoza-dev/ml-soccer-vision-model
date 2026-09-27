@@ -8,7 +8,7 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 | Dataset | Matches | Tracking | Shot events | Players | License / access | Loader |
 |---|---|---|---|---|---|---|
 | SkillCorner open data (A-League 2024/25) | 20 | 10 Hz, broadcast-derived, off-camera players extrapolated | Yes: `dynamic_events.csv`, `player_possession` rows with `end_type = shot` and `frame_start`/`frame_end`. **526 shots** counted, 409 outside set plays; 61 followed by `game_interruption_after = goal_for` | Named, with IDs and jersey numbers | MIT, on GitHub (tracking via git-lfs, ~90 MB/match; all 20 confirmed downloadable) | kloppy `skillcorner` (verify it reads dynamic events) |
-| PFF FC World Cup 2022 | 64 (tracking on disk for 51) | 29.97 Hz, broadcast-derived, all 22 players every frame with a per-player `visibility` flag (VISIBLE / ESTIMATED), 3D ball | Yes: per-game event JSON, `possessionEventType = SH`. **1,518 shots** counted (shootouts excluded), 1,450 not from a penalty/free kick/corner; 172 goals | Rosters with names and IDs; tracking uses jersey numbers | Free, by request form. **Access granted 2026-09-25**; terms of use still to confirm | kloppy `pff.load_tracking` only (drops visibility, see below); no event loader |
+| PFF FC World Cup 2022 | 64 (tracking for all 64; extra time missing or unusable in 4, see below) | 29.97 Hz, broadcast-derived, all 22 players every frame with a per-player `visibility` flag (VISIBLE / ESTIMATED), 3D ball | Yes: per-game event JSON, `possessionEventType = SH`. **1,518 shots** counted (shootouts excluded), 1,450 not from a penalty/free kick/corner; 172 goals | Rosters with names and IDs; tracking uses jersey numbers | Free, by request form. **Access granted 2026-09-25**; terms of use still to confirm | kloppy `pff.load_tracking` only (drops visibility, see below); no event loader |
 | IDSSE (Bassek et al. 2025, Bundesliga 1 + 2, 2022/23) | 7 | 25 Hz, TRACAB optical, full pitch | Yes: official DFL events | Named | CC-BY 4.0, attribute DFL + cite paper | kloppy `sportec.load_open_tracking_data` |
 | Metrica Sports sample data | 3 | 25 Hz, full pitch | Yes: synchronized events | Anonymized | No formal license; acknowledge source | kloppy `metrica` |
 
@@ -21,7 +21,7 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 | PFF, all games | 64 | 1,518 counted (1,450 open play strict, ~1,153 set-play-phase proxy) |
 
 #### PFF counts (counted 2026-09-25)
-| | All 64 games | 51 with tracking |
+| | All 64 games | First 51 with tracking |
 |---|---|---|
 | Shots (`SH`, shootout kicks excluded) | 1,518 | 1,179 |
 | Open play, strict (`setpieceType = O`) | 1,450 | 1,125 |
@@ -33,7 +33,7 @@ The shot predictor needs continuous tracking **and** shot events on the same fra
 How they were identified (event files, one row per possession event):
 - **Shot:** `possessionEvents.possessionEventType = "SH"`.
 - **Set piece:** `gameEvents.setpieceType` of the game event the shot belongs to: `O` open, `P` penalty, `F` free kick, `C` corner, `T` throw-in, `G` goal kick, `K` kickoff, `D` drop ball. Shots by type: 1,450 `O`, 44 `F`, 24 `P` (in-match), 0 `C`. A header from a corner cross is its own game event coded `O`, so "strict" keeps it. SkillCorner's 409 drops the whole set-play phase; the proxy row is the closer comparison (unverified: 10 s window is arbitrary, throw-ins not excluded). The window is measured between the game events' `startTime`s; using the shot row's `eventTime` lets 5 more shots through (1,158 / 894), so the counts above depend on it.
-- **Shootout:** a `P` shot in period 4 with no kickoff after it. 41 kicks, 26 scored; matches the five real shootouts. The shootout starts at the period-4 `END` event. All five shootout games (10506, 10508, 10510, 10511, 10517) are among the 13 without tracking, so period-5 frames haven't been seen in real tracking yet.
+- **Shootout:** a `P` shot in period 4 with no kickoff after it. 41 kicks, 26 scored; matches the five real shootouts. The shootout starts at the period-4 `END` event. PFF doesn't track shootouts: tracking ends at that `END` (at most one frame after it), so period 5 is empty or a single dead frame.
 - **Goal:** `shotOutcomeType = "G"` on an `SH` row whose next restart is a kickoff (or period end). 168 shot goals (149 open play, 2 free kick, 17 penalties) + 4 goals not coded as shots (1 `CR`, Bruno Fernandes vs Uruguay; 3 `RE`, the 2 own goals plus Costa Rica's 2nd vs Germany) = **172**, matching the official total. Rebuilt scores match the real results for all 64 games.
 - `shotOutcomeType = "G"` followed by a free-kick restart = **disallowed goal** (22, e.g. 3 in Argentina–Saudi Arabia). Don't label these as goals.
 - Sabiri's goal (Belgium–Morocco) is coded twice, as `CR` + `SH`; count the `SH` only. PFF credits that `SH` to Romain Saïss, so the goal event carries his `player_id`. The parser's rule is general: a non-shot `G` is skipped when an `SH` `G` comes before the same restart.
@@ -68,13 +68,24 @@ The v2.2 spec PDF in `docs/` is corrupt (binary bytes replaced by `EF BF BD`, pa
 - **Cost:** ~17 s and 2.4 GB peak per game on the M1; 173k–198k frames and 3.9M–4.5M object rows per game (objects.parquet ~44 MB).
 - **Duplicates:** 33,336 duplicate `frameNum`s over 51 games, every one an identical copy of the previous frame. No `frameNum` gaps after dedupe, `periodElapsedTime` never goes backwards, no null positions, never more than one ball.
 - **Direction:** 8 games have `homeTeamStartLeft = false` and are rotated 180°. The home keeper is on the expected side in periods 1 and 2 in all 51. **+y confirmed:** in every team-period, left-sided players (LB/LWB/LW/LM/LCB) have a larger mean y than right-sided ones when the team attacks +x (margin 1.7–31 m), so kloppy's claim holds.
-- **Not yet seen in real tracking:** extra time and shootouts. None of the 51 went to extra time; all five extra-time games are among the 13 missing files.
 - **Shot vs tracked ball:** 1,176 of 1,179 shots have a tracked ball; median 0.0 m, p90 0.44 m, per-game median ≤ 0.67 m. 80% are exactly 0 m, so the event's ball position is mostly copied from tracking. This check catches frame or direction mistakes, not independent disagreement. **Doesn't reproduce the 0.18 m above:** on the same four games (10502, 10504, 3814, 3850), all 104 shots give median 0.0 m, p90 1.0 m. Which 76 shots and which ball copy (raw or smoothed) the earlier check used isn't recorded.
 - **Ball far off the pitch:** 845 ball rows in 25 games are more than 15 m off the pitch (ESTIMATED balls in the stands). They're dropped and logged, because the validator treats them as pixel errors.
 - **Speed:** raw positions jitter. Player speed p99 is 6.9–12.4 m/s (median 8.3); 5k–42k rows per game are over 12 m/s, from VISIBLE as well as ESTIMATED rows. They're reported and kept as-is; smoothing is left to feature code.
 - **Visibility:** two definitions. Every player ESTIMATED (the converter's check): 29–54% of frames, median 41%. Cutaway as in the table above (no ball *and* no visible player): 21–47%, median 32%. That's wider than the 26–35% seen on the first 4 games. Ball alive on 48–72% of frames.
 - **Ball carrier: not in the data; `ball_carrier_id` stays null.** Each frame of an `OTB` span carries that event's `shirt_number` + `home_ball`, and that player looks like a carrier at first: 0.9–1.4 m from the ball (per-game median, VISIBLE player) over 51 games, always on the `possession_team` side. But the span (its own `start_frame`..`end_frame`) runs until PFF codes the next event: through the pass flight and through touches PFF didn't code. In 13 games the p90 is 5–24 m. In 10512, center backs Pepe and Dias stay "on the ball" for 5–7 s while another Portugal player is 0.5 m from it. It's "last player PFF coded on the ball", not control, so 02's null-not-a-guess rule applies. It can still help score 03 stage 8's inferred carrier.
 - `view_polygon` is null.
+
+### Extra time and the last 13 files (added 2026-09-26)
+All 64 tracking files are now on disk; the second 13 all convert and validate. Five of them went to extra time, and only one has usable extra-time tracking:
+| Game | Extra-time tracking | What the converter does |
+|---|---|---|
+| 10508 Morocco–Spain | Fine: coded player 1.1–1.2 m from the ball, keeper on the side the metadata says | Kept |
+| 10510 Croatia–Brazil, 10511 Netherlands–Argentina | **None**: the tracking file ends at the end of period 2 | Extra-time events dropped as "outside tracked time" (17 shots, incl. 10510's 2 goals, so its events score 0–0) |
+| 10506 Japan–Croatia, 10517 Argentina–France | Present but **doesn't line up with the events**: the player PFF codes on the ball is 14–19 m from the tracked ball (1.1–1.4 m in regulation). The home keeper stands at the end his own team is shooting at, and the frame of Messi's 108' goal shows a France attack. No constant time offset within ±2 min fixes it | Periods 3–4 dropped whole (frames, objects, events), so they can't become unlabeled stretches. Events score 1–1 and 2–2 |
+- **The alignment check** is independent of the event's own ball position (PFF samples that from tracking, hence the 0.0 m shot-to-ball). For each event row, it measures the coded `playerId`'s tracked position against the tracked ball, both VISIBLE, at `round(eventTime × 29.97)`. The converter runs it on every period of every game and drops any period with median > 5 m (`event_player_to_ball_m_by_period` in the report). Regulation is 1.1–1.5 m everywhere.
+- `homeTeamStartLeftExtraTime` agreed with the keeper in 10508. In 10506/10517 the keeper contradicts it, but those periods are dropped anyway.
+- **Events snap to a tracked frame only within 0.5 s.** Before this, 10510/10511's extra-time events were snapped onto the last regulation frames.
+- Net: extra-time tracking with labels exists for one game (10508). The 172 goals and 64 scores from the event parser are unaffected; only the tracked `events.parquet` loses the dropped stretches.
 
 ### Loading PFF with kloppy (3.19.0, latest release)
 - `kloppy.pff.load_tracking(meta_data, roster_meta_data, raw_data)` loads the June 2025 files without errors (~34 s per game, 176,818 frames for 10502). It fills `ball_state` and `ball_owning_team` as described above.
@@ -98,7 +109,7 @@ The v2.2 spec PDF in `docs/` is corrupt (binary bytes replaced by `EF BF BD`, pa
 
 ### PFF release layout (as shared on Google Drive)
 - `Event Data/{game_id}.json`, `Metadata/{game_id}.json`, `Rosters/{game_id}.json`: one file per game, small.
-- `Tracking Data/{game_id}.jsonl.bz2`: 64 files, the bulk of the download (~40 MB each, keep compressed). 51 on disk; missing 10503 10506 10507 10508 10510 10511 10517 3812 3813 3819 3827 3834 3848 (second Drive part).
+- `Tracking Data/{game_id}.jsonl.bz2`: 64 files, the bulk of the download (~40–65 MB each, keep compressed). All 64 on disk; 13 came from the second Drive part (added 2026-09-26).
 - `players.csv`, `competitions.csv`.
 - `PFF FC Change Log` (Google Doc): format changes. Latest noted: June 2025, which added `teamAttackingDirection`. Older dated subfolders in `Event Data` are earlier versions; use the top-level files.
 - Store under `data/raw/pff/` keeping PFF's folder names. Don't put the Drive links in the repo; `data/README.md` points to the request form instead.
