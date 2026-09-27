@@ -32,6 +32,8 @@ Tracking datasets (PFF, SkillCorner, IDSSE, Metrica) enter the pipeline directly
 ```
 
 ## Hardware split
+Workstation specs and the live budget are in 09.
+
 | Task | Machine | Why |
 |---|---|---|
 | Coding, prediction training | MacBook Pro M1 | Tracking data is small; CPU/MPS is enough |

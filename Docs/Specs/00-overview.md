@@ -33,5 +33,6 @@ Goals are too rare (~2–3 per match) to predict directly. Instead:
 | 06-data-sources.md | Datasets |
 | 07-evaluation.md | Metrics and testing |
 | 08-demo-overlay.md | Visual output |
+| 09-hardware.md | Workstation specs, live feasibility |
 | roadmap.md | Phases and tasks |
 | references.md | Inspiration projects and papers |

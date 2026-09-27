@@ -9,6 +9,7 @@ Read `Docs/Specs/` before writing code. Start with `Docs/Specs/00-overview.md`, 
 - Keep vision (`vision/`) and prediction (`prediction/`) as separate packages that only share the schema.
 
 ## Hardware
+Full workstation specs and live feasibility: `Docs/Specs/09-hardware.md`.
 - MacBook Pro M1: coding, prediction model training, offline vision inference on short clips.
 - Workstation (RTX 2060, 32GB RAM): YOLO fine-tuning, full-video vision inference, live demo.
 - Google Colab: fallback for jobs that exceed the 2060's VRAM.
