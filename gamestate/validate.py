@@ -112,6 +112,11 @@ def _check_frames(f: pl.DataFrame) -> list[str]:
         errors.append(
             f"frames: {carrier_no_team} frames with a ball carrier but no possession_team"
         )
+    phase_no_team = f.filter(
+        pl.col("set_play_phase").fill_null(False) & pl.col("possession_team").is_null()
+    ).height
+    if phase_no_team:
+        errors.append(f"frames: {phase_no_team} frames in a set-play phase but no possession_team")
     return errors
 
 

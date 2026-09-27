@@ -5,8 +5,8 @@ Keep this in sync with 02. Change the spec first, then this file.
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = "0.4"
-SUPPORTED_VERSIONS = frozenset({"0.4"})
+SCHEMA_VERSION = "0.5"
+SUPPORTED_VERSIONS = frozenset({"0.5"})
 
 PITCH_LENGTH = 105.0
 PITCH_WIDTH = 68.0
@@ -80,6 +80,7 @@ TABLES: dict[str, list[Column]] = {
         Column("possession_team", "str", nullable=True, values=TEAMS),
         Column("ball_carrier_id", "str", nullable=True),
         Column("view_polygon", "list_float", nullable=True),
+        Column("set_play_phase", "bool", nullable=True),  # label-side only (02)
     ],
     "events": [
         Column("match_id", "str"),

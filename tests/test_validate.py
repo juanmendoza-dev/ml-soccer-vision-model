@@ -10,7 +10,7 @@ MATCH_ID = "m1"
 
 
 def tiny_match() -> dict[str, pl.DataFrame]:
-    """Three frames, two players, one ball, a referee and one shot. Valid under 0.3."""
+    """Three frames, two players, one ball, a referee and one shot. Valid under 0.5."""
     n = 3
     frames = pl.DataFrame(
         {
@@ -23,6 +23,7 @@ def tiny_match() -> dict[str, pl.DataFrame]:
             "possession_team": ["home", "home", None],
             "ball_carrier_id": ["p1", "p1", None],
             "view_polygon": [[-10.0, -30, 10, -30, 20, 30, -20, 30], None, None],
+            "set_play_phase": [False, True, None],
         },
         schema_overrides={"view_polygon": pl.List(pl.Float64)},
     )
@@ -202,6 +203,11 @@ def test_column_errors(tmp_path, table, fn, expected):
             "frames",
             lambda df: df.with_columns(possession_team=pl.lit(None, pl.String)),
             "no possession_team",
+        ),
+        (
+            "frames",
+            lambda df: df.with_columns(set_play_phase=pl.lit(True)),
+            "set-play phase but no possession_team",
         ),
         (
             "frames",
