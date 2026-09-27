@@ -17,7 +17,14 @@ from pathlib import Path
 import polars as pl
 
 from converters.common import ConversionReport, causal_velocities, write_gamestate
-from converters.pff_events import FPS, RAW_DIR, load_metadata, parse_events
+from converters.pff_events import (
+    FPS,
+    RAW_DIR,
+    SET_PLAY_WINDOW_S,
+    load_metadata,
+    load_set_play_restarts,
+    parse_events,
+)
 from gamestate.schema import (
     PFF_CONFIDENCE,
     PITCH_LENGTH,
@@ -218,6 +225,30 @@ def move_shootout(frames: pl.DataFrame, start_s: float | None, report: Conversio
     )
 
 
+def add_set_play_phase(frames: pl.DataFrame, restarts: pl.DataFrame) -> pl.DataFrame:
+    """frames.set_play_phase (02): a corner or free kick by possession_team started
+    <= SET_PLAY_WINDOW_S earlier in the same period. Video time, like the events proxy."""
+    latest = (
+        frames.select("frame_id", "period", "video_time_s", team="possession_team")
+        .sort("video_time_s")
+        .join_asof(
+            restarts.sort("start_s"),
+            left_on="video_time_s",
+            right_on="start_s",
+            by=["period", "team"],
+            strategy="backward",
+            check_sortedness=False,
+        )
+        .select(
+            "frame_id",
+            set_play_phase=(
+                pl.col("video_time_s") - pl.col("start_s") <= SET_PLAY_WINDOW_S
+            ).fill_null(False),
+        )
+    )
+    return frames.join(latest, on="frame_id", how="left")
+
+
 def keeper_x(objects: pl.DataFrame, frames: pl.DataFrame, object_id: str) -> dict[int, float]:
     gk = (
         objects.filter(pl.col("object_id") == object_id)
@@ -353,6 +384,7 @@ def convert_game(game_id: str, raw_dir: Path = RAW_DIR, out_dir: Path = OUT_DIR)
     objects = objects.filter(~far)
 
     frames = move_shootout(frames, report.checks["shootout"]["start_s"], report)
+    frames = add_set_play_phase(frames, load_set_play_restarts(game_id, raw_dir))
 
     # 10506 and 10517 have extra time where events and tracking don't line up
     # (coded player ~15-19 m from the ball, no constant time offset). Drop such

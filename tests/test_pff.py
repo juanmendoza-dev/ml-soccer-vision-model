@@ -5,7 +5,14 @@ import polars as pl
 import pytest
 
 from converters.common import ConversionReport
-from converters.pff import RAW_DIR, convert_game, link_events, move_shootout, read_tracking
+from converters.pff import (
+    RAW_DIR,
+    add_set_play_phase,
+    convert_game,
+    link_events,
+    move_shootout,
+    read_tracking,
+)
 from gamestate.schema import PFF_CONFIDENCE
 
 ROSTER = pl.DataFrame(
@@ -118,6 +125,23 @@ def test_shootout_frames_move_to_period_5():
     assert out["possession_team"].to_list() == ["home", "home", "home", None]
     assert report.changed[0]["count"] == 1
     assert move_shootout(frames, None, report).equals(frames)
+
+
+def test_set_play_phase_follows_own_restart_for_ten_seconds():
+    t = [99.0, 100.0, 105.0, 110.0, 110.5, 111.0, 112.0, 200.0]
+    frames = pl.DataFrame(
+        {
+            "frame_id": range(len(t)),
+            "period": [1] * 7 + [2],
+            "video_time_s": t,
+            "possession_team": ["home", "home", "home", "home", "away", "home", None, "home"],
+        }
+    )
+    restarts = pl.DataFrame({"period": [1, 2], "team": ["home", "away"], "start_s": [100.0, 150.0]})
+    out = add_set_play_phase(frames, restarts).sort("frame_id")
+    # before the kick, inside 10 s, at exactly 10 s, other team in possession, past 10 s,
+    # nobody in possession, and a period-2 frame that only the away team's restart precedes
+    assert out["set_play_phase"].to_list() == [False, True, True, True, False, False, False, False]
 
 
 def test_events_snap_only_within_half_a_second():
@@ -247,3 +271,26 @@ def test_duplicates_logged_and_nulls_where_02_says(converted, game):
     assert frames["view_polygon"].null_count() == frames.height
     assert 0.5 < r["checks"]["frames_ball_alive"] < 0.8
     assert load(out, game, "match")["native_fps"][0] == 29.97
+
+
+@needs_data
+@pytest.mark.parametrize("game", DEV_GAMES)
+def test_frame_set_play_phase_agrees_with_shots(converted, game):
+    """Same restart list and window as the events proxy; they can only differ where
+    possession at the shot frame isn't the shooter's team. Direct free kicks are left
+    out: the kick is its own restart and its frame can round to just before startTime.
+    The events proxy times the shot by its game event's startTime, frames by their own
+    time, so a shot whose game event starts inside 10 s but shoots after can differ
+    (10504: free kick at 5190.8, game event 5199.8, shot 5201.1)."""
+    out, _ = converted
+    frames = load(out, game, "frames")
+    shots = load(out, game, "events").filter(
+        pl.col("event_type") == "shot", pl.col("set_piece") == "open_play"
+    )
+    j = shots.join(frames, on="frame_id", suffix="_frame")
+    agree = j.filter(pl.col("team") == pl.col("possession_team"))
+    assert agree.height >= 0.9 * shots.height
+    diff = agree.filter(pl.col("set_play_phase") != pl.col("set_play_phase_frame")).height
+    assert diff <= 1
+    assert frames["set_play_phase"].null_count() == 0
+    assert 0 < frames["set_play_phase"].mean() < 0.2
