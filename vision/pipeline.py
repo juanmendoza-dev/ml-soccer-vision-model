@@ -163,12 +163,12 @@ class VisionPipeline:
         self._steps += 1
         ball_det = None
         if detect_now:
-            dets = [
-                d for d in self.stages.detector.detect(image) if d.confidence >= cfg.min_det_conf
-            ]
-            balls = [d for d in dets if d.cls == BALL]
+            dets = self.stages.detector.detect(image)
+            balls = [d for d in dets if d.cls == BALL and d.confidence >= cfg.min_det_conf]
             ball_det = max(balls, key=lambda d: d.confidence) if balls else None
-            tracks = self.stages.tracker.update([d for d in dets if d.cls != BALL])
+            # low-confidence people too: the tracker only uses them to extend existing tracks
+            people = [d for d in dets if d.cls != BALL and d.confidence >= cfg.track_min_conf]
+            tracks = self.stages.tracker.update(people)
             self._update_tracks(tracks)
             self._update_teams(image, tracks)
         else:

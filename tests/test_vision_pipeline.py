@@ -268,3 +268,33 @@ def test_green_close_up_turns_off_despite_sparse_keypoints():
     assert off <= 75 + 5 + round(0.5 * 25)  # next keypoint frame + off_after_s
     assert views[off:150] == [OTHER] * (150 - off)
     assert views[-1] == MATCH  # the probe lets it come back on lines + grass
+
+
+class LowConfDetector:
+    def detect(self, image):
+        u, v = feet_px(BALL_AT)
+        return [
+            Detection(box_at((10.0, 5.0)), PLAYER, 0.15),  # tracker's second pass
+            Detection(box_at((20.0, -8.0)), PLAYER, 0.05),  # below track_min_conf
+            Detection((u - 4, v - 4, u + 4, v + 4), BALL, 0.2),  # below min_det_conf
+        ]
+
+
+class SpyTracker(FakeTracker):
+    def __init__(self):
+        self.seen = []
+
+    def update(self, detections):
+        self.seen.append([d.confidence for d in detections])
+        return super().update(detections)
+
+
+def test_low_confidence_people_reach_the_tracker_but_not_the_ball():
+    tracker = SpyTracker()
+    pipe = VisionPipeline(
+        VisionConfig(), Stages(LowConfDetector(), tracker, FakeKeypoints(), ShirtColorTeams())
+    )
+    for frame_id in range(15):
+        vf = pipe.step(frame_id, frame_id / FPS, render(frame_id))
+    assert tracker.seen[-1] == [0.15]
+    assert vf.ball is None

@@ -64,12 +64,15 @@ class BallAndPeopleDetector:
 class ByteTracker:
     """supervision's ByteTrack. Deprecated in supervision 0.28, removed in 0.31: pinned < 0.31."""
 
-    def __init__(self, fps: float, lost_track_s: float = 1.0):
+    def __init__(self, update_rate: float, lost_track_s: float = 1.0):
+        """update_rate: update() calls per second, fps / detect_every."""
         import supervision as sv
 
         self._sv = sv
+        # supervision keeps a lost track frame_rate / 30 * lost_track_buffer updates;
+        # frame_rate=30 makes the buffer a plain update count
         self._tracker = sv.ByteTrack(
-            frame_rate=fps, lost_track_buffer=max(1, round(lost_track_s * fps))
+            frame_rate=30, lost_track_buffer=max(1, round(lost_track_s * update_rate))
         )
         self._classes = list(CLASSES)
 

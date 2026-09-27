@@ -33,7 +33,7 @@ def test_byte_tracker_keeps_ids():
     pytest.importorskip("supervision")
     from vision.stages import ByteTracker
 
-    tracker = ByteTracker(fps=10)
+    tracker = ByteTracker(update_rate=10)
     ids = None
     for step in range(5):
         dets = [
@@ -46,3 +46,34 @@ def test_byte_tracker_keeps_ids():
         assert ids is None or now == ids
         ids = now
     assert tracker.update([]) == []
+
+
+def player_at(step, conf=0.9):
+    return Detection((100 + step, 100, 120 + step, 150), PLAYER, conf)
+
+
+@pytest.mark.parametrize("gap, same_id", [(9, True), (12, False)])
+def test_byte_tracker_lost_track_lasts_lost_track_s(gap, same_id):
+    pytest.importorskip("supervision")
+    from vision.stages import ByteTracker
+
+    tracker = ByteTracker(update_rate=10, lost_track_s=1.0)  # 10 updates
+    for step in range(5):
+        (first,) = tracker.update([player_at(step)])
+    for _ in range(gap):
+        tracker.update([])
+    tracker.update([player_at(5)])  # a new track only shows from its second update
+    (back,) = tracker.update([player_at(6)])
+    assert (back.track_id == first.track_id) == same_id
+
+
+def test_byte_tracker_keeps_a_track_on_low_confidence_detections():
+    pytest.importorskip("supervision")
+    from vision.stages import ByteTracker
+
+    tracker = ByteTracker(update_rate=10)
+    for step in range(5):
+        (first,) = tracker.update([player_at(step)])
+    for step in range(5, 10):  # partly occluded: second-pass confidence
+        (low,) = tracker.update([player_at(step, conf=0.15)])
+        assert low.track_id == first.track_id

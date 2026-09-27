@@ -29,15 +29,16 @@ from vision.types import BALL
 from vision.writer import GameStateWriter
 
 
-def build_stages(weights_dir: Path, device: str, fps: float) -> Stages:
-    people = YoloDetector(weights_dir / PLAYER_WEIGHTS, device=device)
+def build_stages(weights_dir: Path, device: str, fps: float, config: VisionConfig) -> Stages:
+    conf = config.track_min_conf  # the pipeline filters the ball and new tracks higher
+    people = YoloDetector(weights_dir / PLAYER_WEIGHTS, device=device, conf=conf)
     detector = people
     if (weights_dir / BALL_WEIGHTS).exists():
-        ball = YoloDetector(weights_dir / BALL_WEIGHTS, device=device, required=(BALL,))
+        ball = YoloDetector(weights_dir / BALL_WEIGHTS, device=device, conf=conf, required=(BALL,))
         detector = BallAndPeopleDetector(people, ball)
     return Stages(
         detector=detector,
-        tracker=ByteTracker(fps),
+        tracker=ByteTracker(fps / config.detect_every, config.lost_track_s),
         keypoints=YoloKeypoints(weights_dir / PITCH_WEIGHTS, device=device),
         teams=KitColorTeams(),
     )
@@ -72,7 +73,7 @@ def main(argv: list[str] | None = None) -> None:
         home_attacks_tv_right_p1=not args.home_attacks_left,
         period=args.period,
     )
-    pipe = VisionPipeline(config, build_stages(args.weights_dir, args.device, fps))
+    pipe = VisionPipeline(config, build_stages(args.weights_dir, args.device, fps, config))
     writer = GameStateWriter(
         args.match_id,
         args.home,
