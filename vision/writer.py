@@ -217,16 +217,18 @@ class GameStateWriter:
             ("players", players),
         ]:
             df.write_parquet(self.out / f"{name}.parquet")
-        # An all-other clip (no objects) fails here on purpose: a run that saw no
-        # match is a failed run, not a valid empty one
-        self.errors = validate_match(self.out)
-
-        if self.cache is not None:
+        if self.cache is not None:  # before validating, so a failed run keeps its diagnostics
             self.cache.mkdir(parents=True, exist_ok=True)
             pl.DataFrame(self._detections, schema=DETECTIONS_SCHEMA).write_parquet(
                 self.cache / "detections.parquet"
             )
             pl.DataFrame(self._views, schema=VIEW_SCHEMA).write_parquet(self.cache / "view.parquet")
+
+        # An all-other clip (no objects) fails here on purpose: a run that saw no
+        # match is a failed run, not a valid empty one
+        self.errors = validate_match(self.out)
+
+        if self.cache is not None:
             run = {
                 **self.run_info,
                 "config": self.config.__dict__,
