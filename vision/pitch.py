@@ -89,19 +89,49 @@ def to_02(xy_tv: np.ndarray, home_attacks_tv_right_p1: bool) -> np.ndarray:
     return xy_tv if home_attacks_tv_right_p1 else -xy_tv
 
 
-class HomographySmoother:
-    """Average of the last `window` fits. Trailing only: never looks ahead (03)."""
+class HomographyFilter:
+    """Accepted fits -> the homography in use. Trailing only: never looks ahead (03).
 
-    def __init__(self, window: int):
-        self.window = window
-        self._fits: list[np.ndarray] = []
+    Averages the last `window` fits while they agree. A fit that jumps more than
+    max_jump_m from the current one (mean distance of its inlier keypoints under
+    the current homography) isn't averaged in: it waits for the next fit. If that
+    one agrees with it, the camera changed and the two start a new window; if not,
+    it was a bad fit. Nothing is in use while a jump waits or once the last fit is
+    older than max_age_s, so positions go null rather than wrong.
+    """
 
-    def add(self, H: np.ndarray) -> np.ndarray:
-        self._fits = (self._fits + [H / H[2, 2]])[-self.window :]
-        return self.current()
-
-    def current(self) -> np.ndarray | None:
-        return np.mean(self._fits, axis=0) if self._fits else None
+    def __init__(self, window: int, max_jump_m: float, max_age_s: float):
+        self.window, self.max_jump_m, self.max_age_s = window, max_jump_m, max_age_s
+        self.reset()
 
     def reset(self) -> None:
-        self._fits = []
+        self._fits: list[np.ndarray] = []
+        self._t: float | None = None  # when the last fit was accepted
+        self._pending: tuple[Fit, float] | None = None
+
+    def _fresh(self, t: float) -> np.ndarray | None:
+        if not self._fits or t - self._t > self.max_age_s:
+            return None
+        return np.mean(self._fits, axis=0)
+
+    @staticmethod
+    def jump_m(H: np.ndarray, fit: Fit) -> float:
+        return float(np.linalg.norm(project(H, fit.src) - fit.dst, axis=1).mean())
+
+    def offer(self, fit: Fit, t: float) -> bool:
+        """Offer a fit that passed the per-frame checks. True if it's in use now."""
+        ref = self._fresh(t)
+        if ref is None or self.jump_m(ref, fit) <= self.max_jump_m:
+            self._fits = ([] if ref is None else self._fits) + [fit.H]
+            self._fits = self._fits[-self.window :]
+            self._t, self._pending = t, None
+            return True
+        if self._pending is not None and self.jump_m(self._pending[0].H, fit) <= self.max_jump_m:
+            self._fits = [self._pending[0].H, fit.H][-self.window :]  # new camera
+            self._t, self._pending = t, None
+            return True
+        self._pending = (fit, t)
+        return False
+
+    def current(self, t: float) -> np.ndarray | None:
+        return None if self._pending is not None else self._fresh(t)

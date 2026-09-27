@@ -35,6 +35,9 @@ class VisionConfig:
     max_homography_err_m: float = 1.0  # mean inlier reprojection error; worse -> fit rejected
     homography_window: int = 3  # trailing fits averaged
     homography_max_age_s: float = 1.0  # older fit -> homography not ok
+    # a fit this far (meters, at its keypoints) from the one in use waits for a second
+    # fit to agree: a new camera, or a bad fit that gets dropped
+    max_homography_jump_m: float = 5.0
 
     # Stage 5: ball
     ball_max_gap_s: float = 1.0  # extrapolate at most this long, then null
@@ -64,7 +67,7 @@ class VisionConfig:
                 errors.append(f"{name} must be >= 0")
         if self.min_inliers < 4:
             errors.append("min_inliers must be >= 4 (a homography needs 4 points)")
-        for name in ("ransac_m", "max_homography_err_m"):
+        for name in ("ransac_m", "max_homography_err_m", "max_homography_jump_m"):
             if not getattr(self, name) > 0:
                 errors.append(f"{name} must be > 0")
         if self.home_cluster not in (None, 0, 1):

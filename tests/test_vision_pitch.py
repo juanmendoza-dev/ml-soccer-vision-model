@@ -3,7 +3,7 @@ import pytest
 
 cv2 = pytest.importorskip("cv2")
 
-from vision.pitch import TEMPLATE, HomographySmoother, fit_homography, project, to_02
+from vision.pitch import TEMPLATE, HomographyFilter, fit_homography, project, to_02
 
 # A made-up broadcast camera: meters (TV frame) -> 1280x720 pixels, with perspective
 CAMERA = np.array([[9.0, -2.0, 640.0], [0.0, -6.0, 380.0], [0.0, -0.004, 1.0]])
@@ -55,9 +55,48 @@ def test_direction_turns_the_pitch():
     assert np.array_equal(to_02(pts, False), [[-41.5, 0.0], [52.5, -34.0]])
 
 
-def test_smoother_is_trailing():
-    s = HomographySmoother(window=2)
-    s.add(np.eye(3))
-    s.add(2 * np.eye(3))  # normalized: same as eye
-    out = s.add(np.diag([3.0, 1.0, 1.0]))
-    assert np.allclose(out, np.diag([2.0, 1.0, 1.0]))  # mean of the last 2 only
+def fit_for(camera):
+    return fit_homography(project(camera, TEMPLATE), np.full(32, 0.9), min_conf=0.5)
+
+
+def shifted(dx):
+    """The camera panned dx meters along x: the old center-spot pixel now sees x = dx."""
+    return CAMERA @ np.array([[1.0, 0.0, -dx], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+
+
+def test_filter_averages_agreeing_fits_trailing():
+    f = HomographyFilter(window=2, max_jump_m=5.0, max_age_s=1.0)
+    for i, dx in enumerate([0.0, 1.0, 2.0]):
+        assert f.offer(fit_for(shifted(dx)), t=i * 0.2)
+    center = project(CAMERA, [[0.0, 0.0]])
+    # mean of the last 2 fits only, the camera at 1 m and 2 m
+    x = project(f.current(0.4), center)[0, 0]
+    assert 1.4 < x < 1.6
+
+
+def test_filter_drops_one_bad_fit():
+    f = HomographyFilter(window=3, max_jump_m=5.0, max_age_s=1.0)
+    good = fit_for(CAMERA)
+    f.offer(good, 0.0)
+    assert not f.offer(fit_for(shifted(30.0)), 0.2)  # jumps: waits
+    assert f.current(0.2) is None  # null while it waits, not the old or the new one
+    assert f.offer(good, 0.4)  # next fit agrees with the old camera: the jump was noise
+    assert np.allclose(f.current(0.4), good.H)
+
+
+def test_filter_follows_a_camera_cut_after_two_fits():
+    f = HomographyFilter(window=3, max_jump_m=5.0, max_age_s=1.0)
+    f.offer(fit_for(CAMERA), 0.0)
+    new = fit_for(shifted(30.0))
+    assert not f.offer(new, 0.2)
+    assert f.offer(new, 0.4)  # second fit agrees with the jump: new camera
+    assert np.allclose(f.current(0.4), new.H)  # nothing from the old camera averaged in
+
+
+def test_filter_takes_any_fit_once_the_old_one_is_stale():
+    f = HomographyFilter(window=3, max_jump_m=5.0, max_age_s=1.0)
+    f.offer(fit_for(CAMERA), 0.0)
+    assert f.current(1.5) is None
+    new = fit_for(shifted(30.0))
+    assert f.offer(new, 1.5)
+    assert np.allclose(f.current(1.5), new.H)

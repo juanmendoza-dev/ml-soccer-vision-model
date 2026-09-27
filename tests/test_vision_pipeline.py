@@ -365,6 +365,7 @@ def test_single_frame_run_has_null_velocity(tmp_path):
         {"home_cluster": 2},
         {"min_inliers": 3},
         {"max_homography_err_m": 0},
+        {"max_homography_jump_m": -1},
     ],
 )
 def test_config_rejects_bad_values(bad):
@@ -472,3 +473,30 @@ def test_sloppy_homography_is_rejected_but_still_feeds_the_gate():
     assert all(o.x is None for vf in frames for o in vf.objects)
     errs = [vf.homography_err_m for vf in frames if vf.homography_err_m is not None]
     assert errs and min(errs) > 0.1
+
+
+class GlitchKeypoints:
+    """Right keypoints, except one call where they come out 30 m along the pitch."""
+
+    def __init__(self, bad_call):
+        self.calls, self.bad_call = 0, bad_call
+
+    def detect(self, image):
+        self.calls += 1
+        pts = TEMPLATE + ([30.0, 0.0] if self.calls == self.bad_call else 0.0)
+        return Keypoints(project(CAMERA, pts), np.full(32, 0.9))
+
+
+def test_one_bad_keypoint_frame_gives_nulls_not_wrong_positions():
+    pipe = VisionPipeline(
+        VisionConfig(),
+        Stages(FakeDetector(), FakeTracker(), GlitchKeypoints(bad_call=5), ShirtColorTeams()),
+    )
+    frames = [pipe.step(i, i / FPS, render(i)) for i in range(40)]
+    truth = {(round(x), round(y)) for _, (x, y), _ in PEOPLE}
+    nulled = [vf.frame_id for vf in frames if vf.view == MATCH and not vf.homography_ok]
+    assert nulled  # the glitch frame and the ones after it, until the next good fit
+    assert frames[-1].homography_ok
+    for vf in frames:
+        placed = {(round(o.x), round(o.y)) for o in vf.objects if o.x is not None}
+        assert placed <= truth

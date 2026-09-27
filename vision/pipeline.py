@@ -11,7 +11,7 @@ from typing import Protocol
 import numpy as np
 
 from vision.config import VisionConfig
-from vision.pitch import HomographySmoother, fit_homography, project, to_02
+from vision.pitch import HomographyFilter, fit_homography, project, to_02
 from vision.types import (
     BALL,
     GOALKEEPER,
@@ -85,7 +85,9 @@ class VisionPipeline:
         self.config = config
         self.stages = stages
         self.gate = ViewGate(config)
-        self.smoother = HomographySmoother(config.homography_window)
+        self.homography = HomographyFilter(
+            config.homography_window, config.max_homography_jump_m, config.homography_max_age_s
+        )
         self._reset_segment()
         self._segment = -1  # bumped on every switch to match, prefixes object_ids
         self._off_since: float | None = None
@@ -98,7 +100,6 @@ class VisionPipeline:
 
     def _reset_segment(self) -> None:
         self._steps = 0  # frames since the view became match
-        self._last_h_t: float | None = None
         self._tracks: dict[int, Track] = {}
         self._track_motion: dict[int, np.ndarray] = {}  # px per frame, x1 y1 x2 y2
         # last detected box and its step, kept apart from filled boxes so fills don't compound
@@ -114,7 +115,7 @@ class VisionPipeline:
         self._segment += 1
         self._reset_segment()
         self.stages.tracker.reset()
-        self.smoother.reset()  # the camera after a cut isn't the one before it
+        self.homography.reset()  # the camera after a cut isn't the one before it
         if (
             self._off_since is not None
             and t - self._off_since > self.config.refit_teams_after_s
@@ -174,12 +175,8 @@ class VisionPipeline:
         else:
             self._fill_tracks(step)
 
-        H = self.smoother.current()
-        h_ok = (
-            H is not None
-            and self._last_h_t is not None
-            and t - self._last_h_t <= cfg.homography_max_age_s
-        )
+        H = self.homography.current(t)
+        h_ok = H is not None
 
         def to_pitch(px: tuple[float, float]) -> tuple[float | None, float | None]:
             if not h_ok:
@@ -220,7 +217,7 @@ class VisionPipeline:
     def _keypoints(self, image: np.ndarray, t: float, use: bool) -> tuple[int, float | None]:
         """Run stage 4 once. The gate gets the confident keypoint count; the fit is
         only used (use=True, match view) when enough of it survives RANSAC with a
-        small error. A rejected fit leaves the old one to age out (03)."""
+        small error, and then only if it agrees with the one in use (HomographyFilter)."""
         cfg = self.config
         kp = self.stages.keypoints.detect(image)
         fit = fit_homography(kp.xy, kp.conf, cfg.min_keypoint_conf, cfg.ransac_m)
@@ -231,8 +228,7 @@ class VisionPipeline:
             and fit.n_inliers >= cfg.min_inliers
             and fit.err_m <= cfg.max_homography_err_m
         ):
-            self.smoother.add(fit.H)
-            self._last_h_t = t
+            self.homography.offer(fit, t)
         return fit.n_confident, fit.err_m
 
     # --- tracking --------------------------------------------------------
