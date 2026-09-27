@@ -267,6 +267,7 @@ def convert_game(game: int, raw_dir: Path = RAW_DIR, out_dir: Path = OUT_DIR) ->
         possession_team=pl.lit(None, pl.String),
         ball_carrier_id=pl.lit(None, pl.String),
         view_polygon=pl.lit(None, pl.List(pl.Float64)),
+        set_play_phase=pl.lit(None, pl.Boolean),  # no possession to hang a phase on (02)
     )
 
     objects = causal_velocities(objects, frames).with_columns(
