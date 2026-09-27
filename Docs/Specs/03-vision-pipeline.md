@@ -11,6 +11,7 @@ Turn broadcast video into game state (02) for each frame.
 0. **View gate** — decides per frame whether it's a usable match view, before any GPU work. Broadcasts cut to ads, studio, crowd and close-ups; detection on those wastes time and produces junk.
    - **Grass share:** downscale to 160×90, share of pixels in a green HSV range. Below `min_grass` (~0.3) → `other`. ~1 ms on CPU, every frame.
    - **Keypoints:** when stage 4 runs, fewer than `min_keypoints` (~4) pitch keypoints found → `other`, even if green (close-ups on grass, green ads).
+     The last count holds until stage 4 runs again, so failures on keypoint frames add up across the frames between them. While `other`, a green frame gets a keypoint probe every `keypoints_every` frames (feeds the gate only, no homography), so a view comes back on grass and lines, not grass alone.
    - **Hysteresis:** switch to `other` after `off_after_s` (~0.5 s) of failing frames; back to `match` after `on_after_s` (~1 s) of passing frames. Causal: uses frames `<= t` only.
    - **While `other`:** stages 1–7 don't run. Game state still gets a `frames` row with `ball_state`, `possession_team`, `ball_carrier_id` and `view_polygon` null (02: can't decide → null), and no `objects` rows.
    - **Back to `match`:** reset the tracker (IDs don't survive a cut). Keep the team assignment fit; refit if the break was longer than `refit_after_s` (~120 s, e.g. half-time).

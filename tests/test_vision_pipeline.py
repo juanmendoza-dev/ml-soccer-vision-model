@@ -228,3 +228,43 @@ def test_debug_renderer_draws_the_run(run, tmp_path):
     # the minimap sits in the bottom-right corner and is pitch green
     corner = first[H - 60 : H - 30, W - 200 : W - 100]
     assert corner[..., 1].mean() > corner[..., 2].mean()
+
+
+class SwitchKeypoints:
+    """Pitch lines visible only while `lines` is on (off = green close-up)."""
+
+    def __init__(self):
+        self.lines = True
+        self.calls = 0
+
+    def detect(self, image):
+        self.calls += 1
+        return Keypoints(project(CAMERA, TEMPLATE), np.full(32, 0.9 if self.lines else 0.0))
+
+
+def run_green(lines_at, n, fps=25):
+    """Every frame green; lines_at(frame_id) says whether pitch lines show."""
+    config = VisionConfig()  # keypoints every 5th frame, the default
+    kps = SwitchKeypoints()
+    pipe = VisionPipeline(config, Stages(FakeDetector(), FakeTracker(), kps, ShirtColorTeams()))
+    image = render(0)
+    views = []
+    for frame_id in range(n):
+        kps.lines = lines_at(frame_id)
+        views.append(pipe.step(frame_id, frame_id / fps, image).view)
+    return views, kps
+
+
+def test_green_close_up_without_lines_never_turns_match():
+    views, _ = run_green(lambda f: False, 150)
+    assert views == [OTHER] * 150
+
+
+def test_green_close_up_turns_off_despite_sparse_keypoints():
+    # 0-3 s wide shot, 3-6 s close-up with grass but no lines, 6-9 s wide again
+    views, _ = run_green(lambda f: not 75 <= f < 150, 225)
+    assert views[70] == MATCH
+    off = views.index(OTHER, 75)
+    assert off <= 75 + 5 + round(0.5 * 25)  # next keypoint frame + off_after_s
+    assert views[off:150] == [OTHER] * (150 - off)
+    assert views[-1] == MATCH  # the probe lets it come back on lines + grass

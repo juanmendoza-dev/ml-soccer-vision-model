@@ -85,6 +85,10 @@ class VisionPipeline:
         self._off_since: float | None = None
         self._match_seconds = 0.0
         self._last_t: float | None = None
+        self._n = 0  # frames seen, match or not
+        # Last keypoint count, held until the next keypoint frame so the gate sees
+        # failures between samples (a green close-up has grass but no pitch lines)
+        self._kp_seen: int | None = None
 
     def _reset_segment(self) -> None:
         self._steps = 0  # frames since the view became match
@@ -120,17 +124,27 @@ class VisionPipeline:
         dt = 0.0 if self._last_t is None else max(t - self._last_t, 0.0)
         self._last_t = t
 
+        n = self._n
+        self._n += 1
+
         kp_found = None
         h_err = None
-        if self.gate.view == MATCH and self._steps % cfg.keypoints_every == 0:
+        in_match = self.gate.view == MATCH
+        # In other, a low-rate probe on green frames only, so a view comes back
+        # on keypoints as well as grass. Ads and studio cuts skip it.
+        probe = not in_match and grass >= cfg.min_grass and n % cfg.keypoints_every == 0
+        if (in_match and self._steps % cfg.keypoints_every == 0) or probe:
             kp = self.stages.keypoints.detect(image)
             H, kp_found, h_err = fit_homography(kp.xy, kp.conf, cfg.min_keypoint_conf)
-            if H is not None:
+            self._kp_seen = kp_found
+            if in_match and H is not None:
                 self.smoother.add(H)
                 self._last_h_t = t
 
         before = self.gate.view
-        view = self.gate.update(t, grass, kp_found)
+        view = self.gate.update(t, grass, self._kp_seen)
+        if view != before:
+            self._kp_seen = None  # the other view's sample says nothing about this one
         if before == MATCH and view == OTHER:
             self._off_since = t
         if view == OTHER:
@@ -139,6 +153,7 @@ class VisionPipeline:
             self._enter_match(t)
             kp = self.stages.keypoints.detect(image)  # don't wait for the next keypoint frame
             H, kp_found, h_err = fit_homography(kp.xy, kp.conf, cfg.min_keypoint_conf)
+            self._kp_seen = kp_found
             if H is not None:
                 self.smoother.add(H)
                 self._last_h_t = t
