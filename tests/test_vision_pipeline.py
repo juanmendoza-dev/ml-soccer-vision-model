@@ -389,3 +389,14 @@ def test_run_with_no_detections_writes_typed_caches(tmp_path):
     det = pl.read_parquet(tmp_path / "cache" / "empty" / "detections.parquet")
     assert det.height == 0 and "frame_id" in det.columns
     det.partition_by("frame_id", as_dict=True)  # the debug renderer does this
+
+
+def test_writer_reports_validation(run, tmp_path):
+    import json
+
+    _, _, cache, _ = run
+    assert json.loads((cache / "run.json").read_text())["validation_errors"] == []
+    writer = GameStateWriter("none", "a", "b", FPS, VisionConfig(), tmp_path / "gs2")
+    writer.add(VisionFrame(0, 0.0, OTHER, 0.0, None, False, None, None))
+    writer.close()
+    assert writer.errors  # no match view at all: a failed run, not an empty valid one

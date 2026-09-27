@@ -7,6 +7,7 @@ Then look at it with: python -m demo.debug --video clip.mp4 --cache data/vision_
 """
 
 import argparse
+import math
 import time
 from pathlib import Path
 
@@ -58,6 +59,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--period", type=int, default=1)
     ap.add_argument("--device", default="cuda", help="cuda, cpu or mps")
     ap.add_argument("--detect-every", type=int, default=1)
+    ap.add_argument("--fps", type=float, help="override when the video reports none or a bad one")
     ap.add_argument("--max-frames", type=int)
     ap.add_argument("--gamestate-dir", type=Path, default=Path("data/gamestate"))
     ap.add_argument("--cache-dir", type=Path, default=Path("data/vision_cache"))
@@ -66,13 +68,18 @@ def main(argv: list[str] | None = None) -> None:
     cap = cv2.VideoCapture(str(args.video))
     if not cap.isOpened():
         raise SystemExit(f"can't open {args.video}")
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    config = VisionConfig(
-        detect_every=args.detect_every,
-        home_cluster=args.home_cluster,
-        home_attacks_tv_right_p1=not args.home_attacks_left,
-        period=args.period,
-    )
+    fps = args.fps or cap.get(cv2.CAP_PROP_FPS)
+    if not (math.isfinite(fps) and fps > 0):
+        raise SystemExit(f"{args.video} reports fps {fps}; pass --fps")
+    try:
+        config = VisionConfig(
+            detect_every=args.detect_every,
+            home_cluster=args.home_cluster,
+            home_attacks_tv_right_p1=not args.home_attacks_left,
+            period=args.period,
+        )
+    except ValueError as e:
+        raise SystemExit(f"bad config: {e}") from None
     pipe = VisionPipeline(config, build_stages(args.weights_dir, args.device, fps, config))
     writer = GameStateWriter(
         args.match_id,
@@ -102,11 +109,16 @@ def main(argv: list[str] | None = None) -> None:
             rate = frame_id / (time.perf_counter() - start)
             print(f"  {frame_id} frames, {rate:.1f} fps, view {pipe.gate.view}")
     cap.release()
+    if frame_id == 0:
+        raise SystemExit(f"no frames decoded from {args.video}")
     out = writer.close()
     rate = frame_id / max(time.perf_counter() - start, 1e-9)
     print(f"{frame_id} frames at {rate:.1f} fps -> {out}")
     if args.home_cluster is None:
         print("team is null until you pass --home-cluster (check the colors in demo.debug)")
+    if writer.errors:
+        print("02 validation failed:", *writer.errors, sep="\n  ")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import polars as pl
 
 from converters.common import causal_velocities, git_commit
 from gamestate.schema import SCHEMA_VERSION
+from gamestate.validate import validate_match
 from vision.config import VisionConfig
 from vision.types import BALL, GOALKEEPER, PLAYER, REFEREE, VisionFrame
 
@@ -64,6 +65,7 @@ class GameStateWriter:
         self._detections: list[dict] = []
         self._views: list[dict] = []
         self._started = time.time()
+        self.errors: list[str] = []  # 02 validator output, set by close()
 
     def add(self, vf: VisionFrame) -> None:
         period = self.config.period
@@ -215,6 +217,9 @@ class GameStateWriter:
             ("players", players),
         ]:
             df.write_parquet(self.out / f"{name}.parquet")
+        # An all-other clip (no objects) fails here on purpose: a run that saw no
+        # match is a failed run, not a valid empty one
+        self.errors = validate_match(self.out)
 
         if self.cache is not None:
             self.cache.mkdir(parents=True, exist_ok=True)
@@ -227,6 +232,7 @@ class GameStateWriter:
                 "config": self.config.__dict__,
                 "git_commit": git_commit(),
                 "wall_time_s": time.time() - self._started,
+                "validation_errors": self.errors,
             }
             (self.cache / "run.json").write_text(json.dumps(run, indent=2, default=str))
         return self.out

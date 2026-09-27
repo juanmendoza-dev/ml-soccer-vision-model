@@ -98,7 +98,7 @@ Debugging works from cached data after the run, not from extra logging during it
 | grass_share | float | 0–1 |
 | keypoints_found | int/null | null on frames where stage 4 didn't run |
 
-Plus `run.json` next to it: config, git commit, model weights hash, video file hash, per-stage wall time. With the video, this is enough to redraw any moment of the run.
+Plus `run.json` next to it: config, git commit, model weights hash, video file hash, per-stage wall time, and the 02 validator errors (`vision.run` exits nonzero if there are any; a clip with no match view fails). With the video, this is enough to redraw any moment of the run.
 
 - Anomaly checks (ID switches, ball gaps, homography jumps, ...) are scripts over this cache, written when a real problem shows up. Not part of the pipeline.
 - The overlay renderer's debug mode (08) draws boxes, IDs and teams for a frame range from this cache.
