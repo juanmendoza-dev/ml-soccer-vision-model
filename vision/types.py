@@ -22,12 +22,12 @@ class Detection:
 
 @dataclass(frozen=True)
 class Track:
-    """A tracker output. confidence is null and tracked_only True on frames the tracker filled."""
+    """A tracker output. tracked_only is True on frames the tracker filled (no detection)."""
 
     track_id: int
     box: Box
     cls: str
-    confidence: float | None
+    confidence: float
     tracked_only: bool = False
 
 
@@ -46,7 +46,7 @@ class VisionObject:
     team: str | None  # home / away; null until the team fit and home_cluster are known
     x: float | None  # 02 meters; null without a valid homography
     y: float | None
-    confidence: float | None
+    confidence: float  # last detection's for filled frames
     tracked_only: bool
     interpolated: bool
     box_px: Box  # vision-internal (detections cache)
