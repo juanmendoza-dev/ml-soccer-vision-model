@@ -120,9 +120,8 @@ class KitColorTeams:
     """Two teams by shirt color: mean Lab chroma of the non-grass torso pixels, 2-means.
 
     Much cheaper than roboflow's SigLIP + UMAP + KMeans, which matters live (09).
-    Swap in SigLIP if kits are too alike for color: chroma can't tell two
-    achromatic kits (white vs black) apart, only hue, and no color feature
-    survives two kits of the same hue.
+    Chroma only, so kits that differ mainly in lightness (sky blue vs navy,
+    white vs black) need L back in the feature or SigLIP instead.
     """
 
     N_INIT = 10  # k-means restarts; the best inertia wins
