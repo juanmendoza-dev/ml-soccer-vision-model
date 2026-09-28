@@ -132,4 +132,4 @@ def test_real_folds_cover_all_pff_games():
             if pl.read_parquet(d)["source"].item() == "pff"
         }
         assert {m["match_id"] for m in pff} == on_disk
-    assert sum(m["open_play_shots"] for m in pff) == 1127  # 06, proxy open play
+    assert sum(m["open_play_shots"] for m in pff) == 1154  # 06, proxy open play, final third free kick rule
