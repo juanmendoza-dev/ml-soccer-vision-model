@@ -2,6 +2,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from prediction.features import goal_angle, goal_distance
 from prediction.floor import LogisticFloor
 
 
@@ -72,12 +73,28 @@ def test_base_rate_counts_rows_without_a_ball():
 
 
 def test_heavy_angle_tail_doesnt_diverge():
-    # real data: angle is ~0.13 +- 0.09 with a few rows at pi on the goal line, which
-    # sent plain Newton steps off to overflow
-    df = data(n=50_000).with_columns(ball_angle=pl.col("ball_angle") * 0.1)
-    tail = data(n=40, seed=3).with_columns(
-        ball_angle=pl.lit(np.pi), ball_dist=pl.lit(0.5), label_shot_h5=pl.lit(False)
+    # the real fold 0 fit: shot rate peaks at mid angles and drops again on the goal line,
+    # with a thin tail up to pi. Plain Newton steps blew up by the 4th iteration there,
+    # and do here too (checked by removing the step halving)
+    rng = np.random.default_rng(1)
+    n = 50_000
+    x, y = rng.uniform(-50, 52.5, n), rng.uniform(-34, 34, n)
+    dist, ang = goal_distance(x, y), goal_angle(x, y)
+    rate = np.select(
+        [ang <= 0.2, ang <= 0.5, ang <= 1, ang <= 2, ang <= 3],
+        [0.012, 0.17, 0.22, 0.17, 0.12],
+        0.09,
     )
-    m = LogisticFloor().fit(pl.concat([df, tail]), "h5")
-    assert np.all(np.isfinite(m.w))
+    df = pl.DataFrame(
+        {
+            "ball_dist": dist,
+            "ball_angle": ang,
+            "label_mask_h5": np.ones(n, dtype=bool),
+            "label_shot_h5": rng.random(n) < rate,
+            "eligible": np.ones(n, dtype=bool),
+            "all_estimated": np.zeros(n, dtype=bool),
+        }
+    )
+    m = LogisticFloor().fit(df, "h5")
+    assert np.abs(m.w).max() < 20
     assert m.coef["ball_dist"] < 0
