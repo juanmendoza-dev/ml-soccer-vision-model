@@ -87,29 +87,29 @@ All 64 tracking files are now on disk; the second 13 all convert and validate. F
 - **Events snap to a tracked frame only within 0.5 s.** Before this, 10510/10511's extra-time events were snapped onto the last regulation frames.
 - Net: extra-time tracking with labels exists for one game (10508). The 172 goals and 64 scores from the event parser are unaffected; only the tracked `events.parquet` loses the dropped stretches.
 
-### 10 Hz resample and labels (all 64 games, 2026-09-26)
-`prediction/resample.py` (05, "Resampled frames and labels"). ~25 s for all 66 games on the M1, ~1.4 GB peak per game; `data/processed/summary.json` has the totals.
+### 10 Hz resample and labels (all 64 games, 2026-09-26, rerun 2026-09-27)
+`prediction/resample.py` (05, "Resampled frames and labels"). ~25 s for all 66 games on the M1, ~1.4 GB peak per game; `data/processed/summary.json` has the totals. Numbers below are from the 2026-09-27 rerun (`b31a0eb`), under the final-third set-play rule (02); the rerun reproduced the 09-26 23:01 `summary.json` exactly.
 - **Rows:** 3,912,924 grid rows over 64 games (~61k per game), 88.7M object rows (~1.39M per game). No grid points skipped for gaps (there are none, see converter results), and every shot/goal event has a tracked frame.
-- **Shots reconcile with the counts above.** The tracked `events.parquet` has 1,479 shots: 1,412 strict open play and **1,127 proxy open play**. The extra-time drops (10506, 10510, 10511, 10517) account for the rest exactly: 39 shots, 38 strict and 26 proxy, so 1,450 − 38 = 1,412 and 1,153 − 26 = 1,127. The labels use the proxy definition, so 1,127 is the shot count. 391 shot/goal rows aren't open play and only mask windows. 129 open-play goal rows (incl. the 3 own goals).
-- **Eligible** (ball alive and possession set): 58.8% of rows, 47.8–72.1% per game (median 58.7%). 12.2% of eligible rows are all-ESTIMATED. Masking (schema 0.5, whole set-play phases): 174,877 eligible rows at H = 5 (7.6% of eligible; 174,850 at H = 3). Almost all of it is `frames.set_play_phase` (174,755 eligible rows); set-play shot windows alone masked 7,808 before 0.5. Trainable rows at H = 5 (unmasked, not all-ESTIMATED): 1,872,562, 48% of all rows.
+- **Shots reconcile with the counts above.** The tracked `events.parquet` has 1,479 shots: 1,412 strict open play and **1,154 proxy open play**. The extra-time drops (10506, 10510, 10511, 10517) account for the rest exactly: 39 shots, 38 strict and 26 proxy, so 1,450 − 38 = 1,412 and 1,180 − 26 = 1,154. The labels use the proxy definition, so 1,154 is the shot count (1,127 before the final-third rule). 391 shot/goal rows aren't open play and only mask windows (numbers from before the rule). 129 open-play goal rows (incl. the 3 own goals).
+- **Eligible** (ball alive and possession set): 58.8% of rows, 47.8–72.1% per game (median 58.7%). 12.2% of eligible rows are all-ESTIMATED. Masking (schema 0.5, whole set-play phases, final-third rule): 48,149 eligible rows at H = 5 (2.1% of eligible; 48,141 at H = 3), down from 174,877 (7.6%) when every free kick started a phase. Almost all of it is `frames.set_play_phase` (48,090 eligible rows); set-play shot windows alone masked 7,808 before 0.5. Trainable rows at H = 5 (unmasked, not all-ESTIMATED): 1,977,379, 51% of all rows (1,872,562 before).
 - **Positives:**
 
 | H | Unmasked rows | Shot positives | Rate | Goal positives | Rate | Open-play shots with a positive frame |
 |---|---|---|---|---|---|---|
-| 5 s | 2,127,550 | 50,773 | 2.39% | 6,018 | 0.28% | 1,127 / 1,127 |
-| 3 s | 2,127,577 | 31,562 | 1.48% | 3,691 | 0.17% | 1,121 / 1,127 |
+| 5 s | 2,254,278 | 52,221 | 2.32% | 6,073 | 0.27% | 1,154 / 1,154 |
+| 3 s | 2,254,286 | 32,393 | 1.44% | 3,721 | 0.17% | 1,148 / 1,154 |
 
-  Of the H = 5 shot positives, 2,280 (4.5%) are all-ESTIMATED frames, which training drops. Counting only trainable positives (not all-ESTIMATED), 3 shots have none at H = 5 (3840 ×1, 3845 ×2: the whole lead-up is a cutaway) and 9 at H = 3 (those 3 plus the 6 below).
+  Of the H = 5 shot positives, 2,409 (4.6%) are all-ESTIMATED frames, which training drops. Counting only trainable positives (not all-ESTIMATED), 3 shots have none at H = 5 (3840 ×1, 3845 ×2: the whole lead-up is a cutaway) and 9 at H = 3 (those 3 plus the 6 below). Same shots as before the final-third rule.
 - **Shots with no positive frame:** none at H = 5. At H = 3, six (10505, 10506, 10510, 3829, 3851, and 3853's away goal at 208 s): PFF's `possession_team` only switches to the shooting team at the shot, so the whole 3 s window belongs to the other side. Listed per game in `resample_report.json`.
 - **Flip check:** at the grid row covering each shot, with possession agreeing with the shooter, the ball's `x_att` is > 0 for every shot in 10502, 10504, 10505 and 3855. The one negative found (10508) is a real shot from the center circle 0.3 s into period 4.
 - **Metrica** gets no eligible rows (null `ball_state` and `possession_team`), so no labels, as expected. Its goal rows have a null `set_piece`, so they'd count as not open play; that only matters once Metrica has possession.
 
 #### Set-play phases on frames (schema 0.5, 2026-09-26)
-- `frames.set_play_phase` comes from the same corner/free-kick list as the events proxy (`set_play_restarts`), and is only true while the restart team has the ball. Reconverting all 66 games left every `events.parquet` identical, so the 1,127 and the frozen folds are unchanged.
-- It's true on 200,309 grid rows (5.1%).
-- **Frame vs event proxy:** at 1,396 open-play shots where possession agrees with the shooter, 5 disagree. That matches the 5 shots 06 already notes: the events proxy times a shot by its game event's `startTime`, frames by their own time. Direct free kicks are left out of the comparison, because each is its own restart and its frame can round to just before `startTime`.
-- **Shots with a positive frame didn't drop** (still 1,127 at H = 5, 1,121 at H = 3). A proxy-open-play shot is > 10 s after the restart, so the frames between the phase end and the shot keep it labelled.
-- **Where the masked rows come from** (eligible rows in a phase, by the restart that started it; x in the attacking direction):
+- `frames.set_play_phase` comes from the same corner/free-kick list as the events proxy (`set_play_restarts`), and is only true while the restart team has the ball. Reconverting all 66 games left every `events.parquet` identical, so the 1,127 and the frozen folds were unchanged by 0.5 itself (the final-third rule later moved it to 1,154).
+- It's true on 68,519 grid rows (1.8%) under the final-third rule; 200,309 (5.1%) when every free kick started a phase.
+- **Frame vs event proxy** (checked before the final-third rule, not rerun): at 1,396 open-play shots where possession agrees with the shooter, 5 disagree. That matches the 5 shots 06 already notes: the events proxy times a shot by its game event's `startTime`, frames by their own time. Direct free kicks are left out of the comparison, because each is its own restart and its frame can round to just before `startTime`.
+- **Shots with a positive frame didn't drop** (1,127 at H = 5, 1,121 at H = 3 at the time; 1,154 / 1,148 under the final-third rule). A proxy-open-play shot is > 10 s after the restart, so the frames between the phase end and the shot keep it labelled.
+- **Where the masked rows came from** before the final-third rule, which is what motivated it (eligible rows in a phase, by the restart that started it; x in the attacking direction):
 
 | Restart | Rows | Share |
 |---|---|---|
