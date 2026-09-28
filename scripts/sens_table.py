@@ -27,7 +27,7 @@ def deltas(md: str) -> dict[str, tuple[int, float]]:
     """compare's own summary lines: metric -> (folds where A is better, mean delta A - B)."""
     out = {}
     for m in re.finditer(
-        r"^- (.+?) \(.*?A better on \*\*(\d)/\d\*\* folds, mean Δ \(A − B\) ([-+.\d]+)",
+        r"^- (.+?) \(.*?A better on \*\*(\d)/\d\*\* folds, mean Δ \(A − B\) ([-+]?\d+\.\d+)",
         md,
         re.MULTILINE,
     ):
