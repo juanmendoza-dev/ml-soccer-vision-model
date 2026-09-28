@@ -9,6 +9,7 @@ from vision.stages import KitColorTeams
 from vision.types import PLAYER, REFEREE, Detection
 
 GREEN, RED, BLUE = (40, 140, 40), (30, 30, 220), (220, 60, 30)
+YELLOW = (40, 230, 240)  # the keeper, the ref, a floodlit sleeve: a few crops off to one side
 
 
 def crop(shirt, grass_share=0.4):
@@ -89,3 +90,18 @@ def test_kit_clusters_keep_their_numbers_after_a_refit():
         teams.add([crop(BLUE) for _ in range(7)] + [crop(RED) for _ in range(12)])
         teams.fit()
         assert teams.predict([crop(RED), crop(BLUE)]) == [red, blue]
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_kit_colors_split_the_kits_not_the_odd_crops(seed):
+    """smoke03: a single random init put a handful of bright crops in one cluster and
+    both kits in the other, so every player came out the same team."""
+    teams = KitColorTeams(seed=seed)
+    teams.add(
+        [crop(RED) for _ in range(30)]
+        + [crop(BLUE) for _ in range(30)]
+        + [crop(YELLOW) for _ in range(10)]
+    )
+    teams.fit()
+    red, blue = teams.predict([crop(RED), crop(BLUE)])
+    assert {red, blue} == {0, 1}
