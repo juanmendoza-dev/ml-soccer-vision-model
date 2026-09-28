@@ -92,6 +92,46 @@ Vision only sees players inside the broadcast frame. All training tracking has a
 - The ball carrier and ball are always kept if the source has them, since the broadcast camera follows the ball.
 - Compare **full** vs. **broadcast view** on the SkillCorner folds (see 07 #5; PFF's ESTIMATED positions are too poor for a full-view arm). If broadcast view costs a lot, vision output will too.
 
+## Vision sensitivity test
+How much the baseline loses when PFF tracking is degraded the way vision fails (detection review W9). It decides which Phase 2 vision work is worth doing. It measures sensitivity. It doesn't show that real vision output looks like this (07 #4 does that, once paired footage exists).
+
+**Degradations** (`prediction/degrade.py`) are applied to `objects_10hz` in memory when a match is loaded. `data/processed` is never rewritten.
+- **Causal and deterministic.** Every random draw is a hash of (seed, degradation, match, period, grid tenth, object). Episodes and correlated noise run forward in time only. So a degraded row depends only on rows at or before it, and a match always degrades the same way for a given seed (default `20260928`).
+- **Episodes** (gaps, false balls, flips) start with a fixed chance on each grid row. Lengths are geometric with a set mean. The start chance is set so the expected share of time covered equals the severity. It's never "pick exactly f of the match", because that would use the whole match. The realized share is recorded in `run.json`.
+- **Correlated noise** is AR(1) per axis with stationary σ and a correlation time.
+- Anything that depends on where the ball is (drift center, "near the ball") uses the **clean held VISIBLE ball**, never an ESTIMATED one. That's where the camera and the crowd actually are.
+- **Labels and scored rows never change.** `eligible`, `all_estimated`, `possession_team`, `ball_state` and labels come from `frames_10hz` as before. So every run is scored on the same rows, and a row that loses all its objects stays scored, with NaN features. Possession and ball state stay provider values (inferred state is 07 #6).
+- **Held ball only.** `--degrade` with `ball_source=raw` is an error.
+- **No feature cache for degraded runs.** Features take ~8 s for all 64 games, so it isn't needed, and a degraded run can't read or overwrite the clean `features_v1_held` cache.
+
+**Severity levels.** The first pass puts each arm at the detection review's proposed acceptance targets (§4). These are engineering targets, not measured vision numbers, so the question is "is the target good enough?" Worse levels are swept only for arms that hurt. The one measured number is homography acceptance on smoke04: 310 of 375 match frames, so 17% lost.
+
+| Arm | Vision failure | What it does | Severity | Target level | Sweep |
+|---|---|---|---|---|---|
+| `ball_miss` | Ball not detected (small, blurred, occluded) | Episodes, mean 2 s: the VISIBLE ball goes not visible. The held ball covers the first 1 s | share of time | 0.10 (ball recall ≥ 90%) | 0.25, 0.5 |
+| `ball_false` | Distractor ball: boots, heads, lines, spare balls (D2) | Episodes, mean 0.5 s: the VISIBLE ball moves by one offset per episode, 5–30 m in a random direction | share of time | 0.05 (ball precision ≥ 95%) | 0.1, 0.2 |
+| `ball_noise` | Ball localization, airborne ball through a ground homography | AR(1), τ = 1 s, on the ball | σ, m | 1 | 2, 4 |
+| `no_ball_z` | Vision has no ball height (02: `z` null) | `z` → null | none | always | none |
+| `camera_drift` | Homography error, shared by the whole frame | AR(1), τ = 3 s: an offset (σ per axis) plus a scale error around the ball (σ / 20 per m, so σ at 20 m) on every object | σ, m | 0.93 | 2, 4 |
+| `geom_loss` | Rejected homography: nothing gets projected | Episodes, mean 1 s: every object goes not visible | share of time | 0.17 (smoke04) | 0.3, 0.5 |
+| `player_miss` | Missed player detections | Per-player episodes, mean 1 s: not visible | share of time | 0.10 | 0.2, 0.4 |
+| `player_noise` | Foot-anchor and box error | Per-player AR(1), τ = 0.5 s | σ, m | 0.93 | 2 |
+| `team_flip` | Wrong kit cluster | Per-player episodes, mean 3 s, covering f everywhere plus another f within 10 m of the ball (crowding) | share of time | 0.05 (team accuracy > 95%) | 0.1, 0.2 |
+| `team_unknown` | W5's "unknown" team instead of a guess | Same process, `team` → null (counted as neither side) | share of time | 0.05 | 0.1, 0.2 |
+| `id_fragment` | Track breaks (occlusion, 1 s lost-track buffer, cuts) | Per-player new `object_id` at a constant rate. Player velocities need the same ID 0.5 s apart | mean track life, s | 2 | 1, 0.5 |
+
+- 0.93 m per axis is the review's "≥ 90% of players within 2 m" target: for 2D Gaussian error, P(r < 2) = 0.9.
+- **Combined arm:** every arm at its target level at once. `camera_drift` and `player_noise` each take 0.66 m, so together they still make 0.93. This is the headline. Arms always apply in the table's order, whatever the command-line order.
+
+**Protocol**
+- `python -m prediction.cv --model lgbm --degrade <arm>:<severity> [--degrade ...] [--degrade-arm both|test] [--degrade-seed N]`. The arms, seed and realized severity go into `run.json` config.
+- **Primary arm (`both`):** degrade training and test matches. Vision errors can be simulated in training, so this is the deployable setting.
+- **Secondary arm (`test`):** fit and choose τ on clean data, then predict degraded held-out folds. This is the cost of not simulating errors. It's run for the combined arm and the arms that hurt most.
+- Same folds, same τ rule, H = 5 only (H = 3 tracked H = 5 closely for LightGBM). Each run is compared with the clean `lgbm-held-2026-09-27` using `evaluation.compare`. At the lane commit the clean features recompute to that run's cache exactly on all 64 games.
+- **Ranking:** by mean ΔPR-AUC over folds, plus how many folds get worse. Miss rate and false alarms per match are secondary. They're noisy at this budget: raw vs held ball swung fold 0's miss rate from 0.75 to 0.89 on +0.01 PR-AUC.
+- **Seed noise:** `ball_miss` at its target level is also run with a second seed, to show how big a Δ is just noise.
+- **Caveat:** the ranking is for this baseline's features. ID fragmentation can only reach `carrier_speed` and `carrier_vgoal` (about 5% of gain), and ball history is about 7%. The temporal GNN and the planned attack-building features will lean much more on tracks and history. So a small loss here doesn't clear tracking work.
+
 ## xG model
 ### Feature rule
 Every xG feature must be (a) computable at frame t from game state (02), before any shot happens, and (b) present in the training source. Anything only known once the shot is taken is out.

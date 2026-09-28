@@ -79,7 +79,7 @@ An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where
 1. Distance + angle floor vs. LightGBM baseline vs. frame GNN vs. temporal GNN.
 2. Player profiles: none vs. position only vs. full (see 04).
 3. H = 3 s vs. H = 5 s.
-4. Dataset tracking vs. vision-pipeline tracking on the same matches, if available (measures how much vision errors hurt).
+4. Dataset tracking vs. vision-pipeline tracking on the same matches, if available (measures how much vision errors hurt). Before paired footage exists, the vision sensitivity test (05) degrades PFF tracking the way vision fails and measures the loss.
 5. Full tracking vs. broadcast view (off-camera players dropped, see 05) on the same folds. **SkillCorner folds only** (plus IDSSE at the final check): PFF's off-camera positions are ESTIMATED and ~12 m off at shots (06), so its full view isn't a meaningful arm.
 6. Provider vs. inferred possession/ball state (03 stage 8) on dataset tracking: same model, same folds. Measures how much the inference rules alone cost before vision errors are added.
 
