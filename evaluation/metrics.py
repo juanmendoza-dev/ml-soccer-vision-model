@@ -203,8 +203,10 @@ def score_alarms(
     A shot takes the alarm active at it, else one that ended within grace_s; lead_s is
     t_s - that alarm's start, null for a miss. One alarm can lead several shots
     (rebounds). An alarm is true if it covers any shot by its team, set play included.
+    Only shots from matches in `pred` count, so one shots table can serve every fold.
     """
     al = alarms(pred, tau)
+    shots = shots.filter(pl.col("match_id").is_in(pred["match_id"].unique().implode()))
     shots = shots.with_row_index("shot_id")
     pairs = _covering(shots, al, grace_s)
     best = (

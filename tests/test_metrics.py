@@ -243,3 +243,11 @@ def test_shots_table_keeps_set_plays_and_drops_goal_rows():
         (2.0, "away", True),
         (3.0, "home", False),
     ]
+
+
+def test_shots_from_other_matches_are_ignored():
+    both = pl.concat(
+        [shots((0.6, "home", True)), shots((0.6, "home", True)).with_columns(match_id=pl.lit("x"))]
+    )
+    s = alarm_summary(frames(QUIET), both, TAU)
+    assert (s["shots"], s["missed"]) == (1, 0)
