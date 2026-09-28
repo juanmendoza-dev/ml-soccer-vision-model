@@ -58,11 +58,11 @@ So **home is cluster 0 in smoke04**. Note smoke03 ran with `--home-cluster 1` un
 fit: cluster numbering is only stable across refits *within* a run, not across runs, so the
 number has to be re-checked per run until the live warmup prompt exists.
 
+Watched afterwards on the full-length render: the two kits are separated and the
+assignment doesn't switch during the match segment. Cluster 1 is Japan, not a leftovers
+bucket. Kit colors are good enough on this clip.
+
 ## Still open
-- Watching `smoke04/debug.mp4` (now the full 25 s) is still worth it for the things pixels
-  don't answer: whether cluster 1 is really Japan and not a leftovers bucket, and whether
-  ring colors track the kits through the match segment. Only ~12.5 s of the clip is `match`
-  view, so there isn't much to see either way.
 - Thresholds (`min_inliers`, `max_homography_err_m`, `max_homography_jump_m`,
   `homography_max_age_s`, `max_off_pitch_m`) are still the untuned guesses. 83% coverage on
   one 25 s clip isn't enough to tune on — leave them until there are broadcast clips with

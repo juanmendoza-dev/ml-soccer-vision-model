@@ -90,7 +90,7 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 **5. Small cleanups**
 - [ ] 03: header still says v0.4 and omits `events.parquet`; points 31/32 aren't on the halfway line
 - [ ] `--period-start-s` flag so `timestamp_s` is the period clock, one period per run (F6)
-- [ ] `demo.debug` renders only the processed frame range
+- [ ] `demo.debug` renders only the processed frame range (a hand-typed `--frames` gave smoke04 a 2 s debug video of a 25 s run, see the follow-up review)
 
 **6. Later**
 - [ ] Move off `sv.ByteTrack` before supervision 0.31 (pinned below it)
