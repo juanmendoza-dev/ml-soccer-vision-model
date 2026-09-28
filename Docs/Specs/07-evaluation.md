@@ -73,6 +73,7 @@ An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where
 - **3 misses:** the whole lead-up is an all-ESTIMATED cutaway (3840 ×1, 3845 ×2, see 06), so there's no prediction to alarm on.
 
 **Open:** whether a short opposing possession (< 1–2 s) should end an alarm. Holding through it would remove most of that floor, but a real turnover should still end the alarm. Decide with the first model results, not before.
+- **First evidence (LightGBM, 2026-09-27, H = 5):** of its 980 misses at the chosen τ, 941 never had p above τ in the 5 s before the shot, and only 39 had a crossing that didn't become a covering alarm. So this rule isn't what limits the baseline. Revisit once a model alarms seconds ahead, when the oracle floor's possession-lag misses start to matter.
 
 ## Required comparisons
 1. Distance + angle floor vs. LightGBM baseline vs. frame GNN vs. temporal GNN.
