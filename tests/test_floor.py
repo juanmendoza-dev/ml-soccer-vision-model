@@ -69,3 +69,15 @@ def test_base_rate_counts_rows_without_a_ball():
     )
     m = LogisticFloor().fit(df, "h5")
     assert m.base_rate == pytest.approx(df["label_shot_h5"].mean())
+
+
+def test_heavy_angle_tail_doesnt_diverge():
+    # real data: angle is ~0.13 +- 0.09 with a few rows at pi on the goal line, which
+    # sent plain Newton steps off to overflow
+    df = data(n=50_000).with_columns(ball_angle=pl.col("ball_angle") * 0.1)
+    tail = data(n=40, seed=3).with_columns(
+        ball_angle=pl.lit(np.pi), ball_dist=pl.lit(0.5), label_shot_h5=pl.lit(False)
+    )
+    m = LogisticFloor().fit(pl.concat([df, tail]), "h5")
+    assert np.all(np.isfinite(m.w))
+    assert m.coef["ball_dist"] < 0
