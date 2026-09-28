@@ -57,7 +57,14 @@ The probability rises and falls, so "first crossing τ" is ambiguous. Use alarms
 - **Lead time** = open-play shot time − start of the covering alarm. If two alarms cover a shot, the one active at the shot wins over one in its grace second. A shot with no covering alarm is a **miss**, not a lead time of 0. The same grace applies to misses and to true/false, so a shot is never both covered and missed.
 - One alarm can cover several shots (rebounds); each shot gets its own lead time from the same start.
 - **False alarms per match** divide by every match evaluated, including matches with no alarm.
-- τ is chosen on training matches only (see Splits). Also report the trade-off across τ values: median lead time and miss rate vs. false alarms per match (`tau_sweep`). **Open:** the rule for choosing τ (e.g. most lead time at ≤ N false alarms per match) isn't decided yet; decide it before the first baseline result.
+- τ is chosen on training matches only (see Splits). Also report the trade-off across τ values: median lead time and miss rate vs. false alarms per match (`tau_sweep`).
+- **Choosing τ** (decided 2026-09-27, `evaluation.metrics.choose_tau`): **the lowest miss rate with at most 3 false alarms per match**, on the inner validation matches.
+  - Per outer fold: fit on the fold's training matches minus `inner_split(fold)`, predict the inner matches, pick τ there, then refit on all the fold's training matches and apply that τ to the held-out fold.
+  - Candidates are high quantiles of p over the rows with a non-null p (the rows alarms run on), deep into the tail, since a calibrated model at a ~2% base rate rarely goes high.
+  - Ties go to the higher τ. If no candidate meets the budget, take the one with the fewest false alarms and flag it (`tau_met` in `run.json`, shown in the report).
+  - Why miss rate and not lead time: median lead is only over caught shots, so a τ that catches only the easy shots early can look good. Lead time is reported at the chosen τ, and 00's ≥ 2 s is checked there.
+  - Why 3: even the oracle has 0.95 false alarms per match (below), so 1 is out of reach. With ~18 open-play shots per match, 3 keeps most alarms real. One fixed budget compares models at the same false-alarm level. It's one constant (`MAX_FALSE_PER_MATCH`); the τ sweep shows what other budgets would give.
+  - The `"final"` τ (IDSSE) uses `inner_split(None)`: the same stratified inner split over all CV matches.
 - 00's success criterion (median lead time ≥ 2 s) is measured at the τ chosen on training matches.
 
 #### Floor from the labels (PFF, H = 5, 2026-09-27)

@@ -26,7 +26,8 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 
 **Evaluation harness**
 - [x] Metrics: PR-AUC, ROC-AUC, Brier + calibration, alarms / lead time / misses / false alarms, τ sweep (`evaluation/metrics.py`, 07). Label floor: an oracle still misses 2.4% of shots with 0.95 false alarms per match, from PFF possession flips before shots
-- [ ] Decide the τ selection rule and whether a short opposing possession ends an alarm (07, open)
+- [x] τ selection rule: lowest miss rate at ≤ 3 false alarms per match on the inner split (07)
+- [ ] Decide whether a short opposing possession ends an alarm (07, open)
 - [x] Report generator (`evaluation/report.py`, run format `evaluation/runs.py`, 07): pooled out-of-fold per source, per fold with mean ± std, alarms at each fold's τ, calibration and τ sweep as tables, IDSSE only with `--final`. Checked on the oracle run
 - [ ] Paired comparison of two runs by fold (07: A beats B only if it wins on most folds)
 
