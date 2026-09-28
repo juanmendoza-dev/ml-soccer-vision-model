@@ -100,5 +100,8 @@ Every model run writes one directory, `data/runs/<run_id>/` (gitignored), via `e
 - **IDSSE** is only rendered with `--final` (07: evaluate once per final model). Without it, the report just counts the IDSSE matches present.
 - Calibration and lead time are tables, not plots, until a plotting dependency is added.
 - The report records its own git commit next to the run's.
-- Not yet: paired model comparison across runs, and a per-stage (knockout) breakdown (stage isn't in 02).
+- Not yet: a per-stage (knockout) breakdown (stage isn't in 02).
+
+### Paired comparison
+`python -m evaluation.compare data/runs/<A> data/runs/<B> [--out FILE]` puts two runs side by side per fold: PR-AUC, ROC-AUC, Brier, and miss rate and false alarms per match at each run's own per-fold τ (left out if either run has no τ). Then, per metric, it counts the folds where A is better and gives the mean Δ. **"A wins" means better on most folds** (the rule above). Both runs must cover the same CV matches, or it fails. They're scored on the same rows, since scored rows come from the labels. CV sources only; IDSSE is never used to compare models.
 - **Checked end to end** (2026-09-27) with the oracle from "Floor from the labels" written as a run with τ = 0.5 on every fold: the report gives the same 28 / 1,154 missed and 61 false alarms at H = 5 (75 with the null-hold cap) (H = 3: 28 missed, 28 false alarms, median lead 2.9 s). About 20 s for 64 games and both horizons on the M1.
