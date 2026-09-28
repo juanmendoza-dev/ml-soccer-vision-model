@@ -11,6 +11,8 @@ dependencies = [
 
 [project.optional-dependencies]
 converters = ["kloppy>=3.19"]
+# LightGBM baseline without the torch stack the GNNs need (macOS: brew install libomp)
+models = ["lightgbm>=4.3", "scikit-learn>=1.4"]
 prediction = [
     "scikit-learn>=1.4",
     "lightgbm>=4.3",
