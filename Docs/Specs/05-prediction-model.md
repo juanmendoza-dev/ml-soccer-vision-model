@@ -56,6 +56,7 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 
 ### Leakage
 - Every column not prefixed `label_` uses frames ≤ t only. `tests/test_resample.py` alters frames, objects and events after t and checks those columns don't change.
+- **Open: PFF's ESTIMATED ball.** 25.6% of scored rows have a ball PFF marks as not visible (ESTIMATED). If PFF fills those positions by interpolating between detections, they use later frames, which breaks the ≤ t rule for any feature built on the ball. Not checked yet; models use the ball as-is, and `run.json` records the share (`ball_not_visible_share_scored`). Check before trusting a model that leans on the ball during cutaways.
 - The flip follows `possession_team` at each frame, so coordinates jump 180° when possession changes. A model reading a window of frames (temporal GNN) should re-rotate the whole window using the anchor frame's possession: keep `x`/`y`, or undo with `flipped`.
 
 ## Inference
@@ -68,7 +69,7 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 - Report performance separately for lead times (see 07); a model that only fires 0.2 s before the shot is not useful.
 
 ## Models (build in order)
-0. **Floor:** logistic regression on ball distance + angle to goal. Any model that can't beat this isn't learning anything.
+0. **Floor:** logistic regression on ball distance + angle to goal. Any model that can't beat this isn't learning anything. Done (`prediction/floor.py`, `python -m prediction.cv --model floor`): PFF pooled OOF PR-AUC **0.167** at H = 5 (base rate 0.025, ROC-AUC 0.918, folds 0.167 ± 0.007), 0.149 at H = 3; well calibrated. At 3 false alarms per match it misses 1,151 of 1,154 shots, so the alarm numbers to beat are essentially nothing (`Docs/reviews/floor-2026-09-27.md`). Features: `ball_dist` and `ball_angle` (goal-mouth angle) from `prediction/features.py`; rows with no ball get the training base rate.
 1. **Baseline:** gradient boosting (LightGBM) on hand features — ball distance/angle to goal, defenders in shooting cone, carrier speed, pitch control near the box. This is the bar the GNNs must clear.
 2. **Frame GNN:** one graph per frame. Nodes = players + ball (+ goals); node features = position, velocity, team, dynamic + profile features (04); edges = all pairs or k-nearest, edge features = distance, relative velocity. Built with `unravelsports` SoccerGraphConverter.
 3. **Temporal GNN:** last 2–3 s of frames (at 10 Hz) through a GNN backbone, then a GRU/T-GCN over time. Follows the SoccerAI approach.

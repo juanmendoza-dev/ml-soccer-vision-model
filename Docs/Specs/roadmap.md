@@ -32,7 +32,8 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] Paired comparison of two runs by fold (07: A beats B only if it wins on most folds)
 
 **First models**
-- [ ] Distance + angle floor (logistic regression)
+- [x] Distance + angle floor (logistic regression, `prediction/floor.py` + CV driver `prediction/cv.py`): PR-AUC 0.167 at H = 5 (base rate 0.025), calibrated, no useful alarms at 3 false alarms per match (`Docs/reviews/floor-2026-09-27.md`)
+- [ ] Check whether PFF's ESTIMATED ball positions are interpolated with later frames (05, leakage; 25.6% of scored rows)
 - [ ] LightGBM baseline on hand features
 - [ ] Full vs. broadcast-view training comparison on SkillCorner folds (05, 07 #5)
 - [ ] xG model on StatsBomb 360 without World Cup 2022 (features known before the shot only); Wyscout location-only xG as a check
