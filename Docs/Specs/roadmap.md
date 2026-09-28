@@ -123,6 +123,8 @@ Skipped for now: schema 0.7 for empty runs, shootout (period 5) handling in visi
 - [ ] Feed vision game state into trained predictor
 - [ ] Compare predictor accuracy on vision vs. dataset tracking
 - [ ] Offline overlay renderer, with debug mode (08)
+  - [ ] Ball highlight ring + velocity arrow (08; uses existing ball position/vx,vy, no new inference)
+  - [ ] Possession % and territorial/attacking-third % panels (08; aggregates possession_team + pitch_x over time, no new inference)
 - [ ] Benchmark each vision stage on the 2060 (FP16 / TensorRT) and pick the live config (09)
 - [ ] Live mode on workstation (in `soccer-live-overlay`, 09)
 - [ ] Record a local match for the public demo (see 08)

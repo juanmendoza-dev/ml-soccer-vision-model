@@ -8,6 +8,8 @@ A video that makes the model's output obvious to someone who knows nothing about
 - **Likely shooter:** highlight ring on the player with the highest node-level threat (if node head exists).
 - **Minimap:** top-down pitch with player dots, team colors, ball.
 - **Event markers:** flash when an actual shot/goal happens, so viewers can see the lead time.
+- **Ball marker:** highlight ring/glow on the ball instead of a raw detection box, and a short velocity arrow off `vx, vy` (02). Rendering only, no new inference.
+- **Possession panel:** rolling possession % (time each team has had the ball, from `possession_team`) and territorial/attacking-third % (share of time each team spends with the ball in each pitch third, from `pitch_x`). Aggregation over existing game state, no new inference; not the same signal as the danger meter and shouldn't be framed as a second P(goal)-style metric.
 
 ## Modes
 - **Offline:** render from saved game state + predictions (any machine).
