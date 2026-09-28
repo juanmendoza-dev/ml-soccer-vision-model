@@ -112,7 +112,7 @@ How much the baseline loses when PFF tracking is degraded the way vision fails (
 | `ball_false` | Distractor ball: boots, heads, lines, spare balls (D2) | Episodes, mean 0.5 s: the VISIBLE ball moves by one offset per episode, 5–30 m in a random direction | share of time | 0.05 (ball precision ≥ 95%) | 0.1, 0.2 |
 | `ball_noise` | Ball localization, airborne ball through a ground homography | AR(1), τ = 1 s, on the ball | σ, m | 1 | 2, 4 |
 | `no_ball_z` | Vision has no ball height (02: `z` null) | `z` → null | none | always | none |
-| `camera_drift` | Homography error, shared by the whole frame | AR(1), τ = 3 s: an offset (σ per axis) plus a scale error around the ball (σ / 20 per m, so σ at 20 m) on every object | σ, m | 0.93 | 2, 4 |
+| `camera_drift` | Homography error, shared by the whole frame | AR(1), τ = 3 s: an offset plus a scale error around the ball (offset σ / 20 per m) on every object. The offset σ is severity / 1.3, so the RMS error per axis of visible objects comes out at the severity (1.25–1.32× the offset on 8 games) | error per axis, m | 0.93 | 2, 4 |
 | `geom_loss` | Rejected homography: nothing gets projected | Episodes, mean 1 s: every object goes not visible | share of time | 0.17 (smoke04) | 0.3, 0.5 |
 | `player_miss` | Missed player detections | Per-player episodes, mean 1 s: not visible | share of time | 0.10 | 0.2, 0.4 |
 | `player_noise` | Foot-anchor and box error | Per-player AR(1), τ = 0.5 s | σ, m | 0.93 | 2 |
