@@ -369,6 +369,10 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+models = [
+    { name = "lightgbm" },
+    { name = "scikit-learn" },
+]
 prediction = [
     { name = "lightgbm" },
     { name = "scikit-learn" },
@@ -390,6 +394,7 @@ vision = [
 [package.metadata]
 requires-dist = [
     { name = "kloppy", marker = "extra == 'converters'", specifier = ">=3.19" },
+    { name = "lightgbm", marker = "extra == 'models'", specifier = ">=4.3" },
     { name = "lightgbm", marker = "extra == 'prediction'", specifier = ">=4.3" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python", marker = "extra == 'vision'", specifier = ">=4.9" },
@@ -397,6 +402,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=15" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
+    { name = "scikit-learn", marker = "extra == 'models'", specifier = ">=1.4" },
     { name = "scikit-learn", marker = "extra == 'prediction'", specifier = ">=1.4" },
     { name = "supervision", marker = "extra == 'vision'", specifier = ">=0.21,<0.31" },
     { name = "torch", marker = "sys_platform == 'win32' and extra == 'prediction'", specifier = ">=2.3", index = "https://download.pytorch.org/whl/cu128" },
@@ -409,7 +415,7 @@ requires-dist = [
     { name = "ultralytics", marker = "extra == 'vision'", specifier = ">=8.2" },
     { name = "unravelsports", marker = "extra == 'prediction'" },
 ]
-provides-extras = ["converters", "prediction", "vision", "dev"]
+provides-extras = ["converters", "models", "prediction", "vision", "dev"]
 
 [[package]]
 name = "h11"

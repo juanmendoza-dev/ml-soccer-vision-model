@@ -1,7 +1,9 @@
 import numpy as np
 import polars as pl
+import pytest
 
 from prediction import cv
+from prediction.features import FEATURES
 from prediction.floor import LogisticFloor
 
 N = 300  # 30 s per match
@@ -90,3 +92,23 @@ def test_floor_learns_the_toy_and_meets_the_budget():
     p = preds["p_h5"].to_numpy()
     assert p[y].mean() > p[~y].mean()
     assert meta["folds"]["h5"]["0"]["coef"]["ball_dist"] < 0
+
+
+def test_lgbm_runs_through_cv_and_records_its_fits():
+    pytest.importorskip("lightgbm")
+    folds, data, shots = world()
+    data = data.with_columns(
+        pl.lit(float("nan")).alias(f) for f in FEATURES if f not in data.columns
+    )
+    preds, meta = cv.run_cv("lgbm", ["h5"], folds, data, shots, log=lambda *_: None)
+    y = data["label_shot_h5"].to_numpy()
+    p = preds["p_h5"].to_numpy()
+    assert p[y].mean() > p[~y].mean()
+    f0 = meta["folds"]["h5"]["0"]
+    assert f0["best_iter"] >= 1 and f0["es_matches"]
+    assert max(f0["coef"], key=f0["coef"].get) in {"ball_dist", "ball_angle"}  # angle = 1/dist
+    assert meta["config"]["ball_source"] == "held"
+    # early stopping only ever holds out training matches of that fold
+    fold_of = {m["match_id"]: m["fold"] for m in folds["matches"]}
+    for k, info in meta["folds"]["h5"].items():
+        assert all(fold_of[i] != int(k) for i in info["es_matches"])

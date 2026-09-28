@@ -5,7 +5,7 @@ import polars as pl
 import pytest
 
 from prediction.labels import label_events, shots_without_positive
-from prediction.resample import resample_match
+from prediction.resample import process_game, resample_match
 
 GAMESTATE = Path("data/gamestate")
 
@@ -449,3 +449,19 @@ def test_real_attacking_shots_at_positive_x(real):
     x = cover.join(ball, on=["period", "t_s"], how="inner")["x_att"].to_numpy()
     assert len(x) >= 0.8 * cover.height
     assert np.mean(x > 0) >= 0.98
+
+
+def test_rewriting_a_match_drops_its_cached_features(tmp_path):
+    frames, objects = game(periods=((1, 0.0, 5.0),))
+    src = tmp_path / "gs" / "syn"
+    src.mkdir(parents=True)
+    frames.write_parquet(src / "frames.parquet")
+    objects.write_parquet(src / "objects.parquet")
+    events(frames).write_parquet(src / "events.parquet")
+    pl.DataFrame({"source": ["pff"], "native_fps": [10.0]}).write_parquet(src / "match.parquet")
+    out = tmp_path / "processed"
+    (out / "syn").mkdir(parents=True)
+    (out / "syn" / "features_v1_held.parquet").write_bytes(b"old")
+    process_game("syn", tmp_path / "gs", out)
+    assert not list((out / "syn").glob("features_v*.parquet"))
+    assert (out / "syn" / "frames_10hz.parquet").exists()

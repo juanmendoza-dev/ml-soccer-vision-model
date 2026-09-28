@@ -73,6 +73,7 @@ An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where
 - **3 misses:** the whole lead-up is an all-ESTIMATED cutaway (3840 ×1, 3845 ×2, see 06), so there's no prediction to alarm on.
 
 **Open:** whether a short opposing possession (< 1–2 s) should end an alarm. Holding through it would remove most of that floor, but a real turnover should still end the alarm. Decide with the first model results, not before.
+- **First evidence (LightGBM, 2026-09-27, H = 5):** of its 980 misses at the chosen τ, 941 never had p above τ in the 5 s before the shot, and only 39 had a crossing that didn't become a covering alarm. So this rule isn't what limits the baseline. Revisit once a model alarms seconds ahead, when the oracle floor's possession-lag misses start to matter.
 
 ## Required comparisons
 1. Distance + angle floor vs. LightGBM baseline vs. frame GNN vs. temporal GNN.
@@ -100,5 +101,8 @@ Every model run writes one directory, `data/runs/<run_id>/` (gitignored), via `e
 - **IDSSE** is only rendered with `--final` (07: evaluate once per final model). Without it, the report just counts the IDSSE matches present.
 - Calibration and lead time are tables, not plots, until a plotting dependency is added.
 - The report records its own git commit next to the run's.
-- Not yet: paired model comparison across runs, and a per-stage (knockout) breakdown (stage isn't in 02).
+- Not yet: a per-stage (knockout) breakdown (stage isn't in 02).
+
+### Paired comparison
+`python -m evaluation.compare data/runs/<A> data/runs/<B> [--out FILE]` puts two runs side by side per fold: PR-AUC, ROC-AUC, Brier, and miss rate and false alarms per match at each run's own per-fold τ (left out if either run has no τ). Then, per metric, it counts the folds where A is better and gives the mean Δ. **"A wins" means better on most folds** (the rule above). Both runs must cover the same CV matches, or it fails. They're scored on the same rows, since scored rows come from the labels. CV sources only; IDSSE is never used to compare models.
 - **Checked end to end** (2026-09-27) with the oracle from "Floor from the labels" written as a run with τ = 0.5 on every fold: the report gives the same 28 / 1,154 missed and 61 false alarms at H = 5 (75 with the null-hold cap) (H = 3: 28 missed, 28 false alarms, median lead 2.9 s). About 20 s for 64 games and both horizons on the M1.
