@@ -36,10 +36,33 @@ the pipeline instead. Cost is `homography_ok` on 310 of 375 match frames (83%) i
 smoke03 and smoke04 are identical on every geometry number, as expected: the kit-color
 change touches team assignment only, not projection.
 
+## Kit clusters in smoke04
+The first `smoke04/debug.mp4` was only 61 frames (2 s) — the render was given a short frame
+range, not the processed 0–749. Re-rendered over the full range; the cache itself always
+covered all 750 frames.
+
+Measured straight off the cache instead of by eye: for every tenth frame, take the torso
+band of each detected player box, convert to Lab, and keep the most saturated 40% of pixels.
+
+```
+cluster 0: n=166 a*=+38.6 b*=+39.2 chroma=62.1 | red-ish 89%  blue-ish  1%  hue median 36 deg
+cluster 1: n=175 a*=-0.5  b*=+6.8  chroma=37.7 | red-ish 13%  blue-ish 30%  hue median 119 deg
+```
+Cluster 0 is decisively Spain's red. Cluster 1 reads as grass-dominated in this measurement
+(Japan's navy is dark and low-chroma, so the saturated-pixel filter picks up the pitch behind
+the player) — it is clearly *not* red, but this measurement doesn't prove it is coherently
+Japan rather than a leftovers bucket. The split is even (1,706 vs 1,773 player rows) and
+clustering starts at frame 120 (4 s) with the 3 s warmup.
+
+So **home is cluster 0 in smoke04**. Note smoke03 ran with `--home-cluster 1` under the old
+fit: cluster numbering is only stable across refits *within* a run, not across runs, so the
+number has to be re-checked per run until the live warmup prompt exists.
+
 ## Still open
-- Nobody has watched `smoke04/debug.mp4` yet. Needed: does the chroma fit actually split
-  red Spain from blue Japan from the start of the match segment (warmup is now 3 s), and
-  which cluster number is home?
+- Watching `smoke04/debug.mp4` (now the full 25 s) is still worth it for the things pixels
+  don't answer: whether cluster 1 is really Japan and not a leftovers bucket, and whether
+  ring colors track the kits through the match segment. Only ~12.5 s of the clip is `match`
+  view, so there isn't much to see either way.
 - Thresholds (`min_inliers`, `max_homography_err_m`, `max_homography_jump_m`,
   `homography_max_age_s`, `max_off_pitch_m`) are still the untuned guesses. 83% coverage on
   one 25 s clip isn't enough to tune on — leave them until there are broadcast clips with
