@@ -38,8 +38,8 @@ A fixed 70/15/15 split wastes matches: even PFF's 51 tracked games would give a 
 | PR-AUC | Main metric; positives are rare. Average precision (step sum over thresholds, ties grouped, same as sklearn's `average_precision_score`), not a trapezoid |
 | ROC-AUC | Comparable to papers |
 | Brier score + calibration curve | Probabilities must mean what they say. Calibration uses quantile bins: at a ~2% base rate equal-width bins put almost every row in the first one |
-| Lead time | Seconds from the start of the alarm active at the shot to the shot (see below); report median and distribution |
-| Missed shots | Share of shots with no alarm active at the shot |
+| Lead time | Seconds from the start of the alarm covering the shot to the shot (see below); report median and distribution |
+| Missed shots | Share of shots with no covering alarm (see below) |
 | False alarms per match | Alarms with no shot (see below); keeps lead time honest |
 
 Code: `evaluation/metrics.py`, plain numpy/polars.
@@ -62,7 +62,7 @@ The probability rises and falls, so "first crossing τ" is ambiguous. Use alarms
 
 #### Floor from the labels (PFF, H = 5, 2026-09-27)
 An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where 05 scores null) still gets, at τ = 0.5: **28 of 1,154 shots missed (2.4%)**, **61 false alarms (0.95 per match)**, median lead time 4.9 s. That's the best any model can do under these rules:
-- **25 misses:** PFF gives possession to the other team for the last 1–4 s before the shot (a turnover then an immediate shot, or a deflection). The possession change ends the shooting team's alarm more than 1 s before the shot, so it's a miss, and that alarm is false. This is most of the 61 false alarms.
+- **25 misses:** the shooting team had the ball, then PFF credits the other team for the last 1–4 s before the shot. This is the same PFF possession lag as 06's H = 3 misses (all six of those are among the 25). The possession change ends the shooting team's alarm more than 1 s before the shot, so it's a miss, and that alarm is false. This is most of the 61 false alarms.
 - **3 misses:** the whole lead-up is an all-ESTIMATED cutaway (3840 ×1, 3845 ×2, see 06), so there's no prediction to alarm on.
 
 **Open:** whether a short opposing possession (< 1–2 s) should end an alarm. Holding through it would remove most of that floor, but a real turnover should still end the alarm. Decide with the first model results, not before.
