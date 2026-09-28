@@ -1,11 +1,17 @@
 """Metrics for P(shot) on the 10 Hz grid (07, "Metrics").
 
 Threshold-free: PR-AUC (average precision), ROC-AUC, Brier, calibration table.
+Alarms: hysteresis on P(shot), matched to shots for lead time, misses and false alarms.
 Plain numpy so evaluation doesn't need the prediction extra.
 """
 
 import numpy as np
 import polars as pl
+
+from prediction.labels import label_events
+
+OFF_RATIO = 0.8  # an alarm ends below OFF_RATIO * tau (07)
+GRACE_S = 1.0  # a shot this soon after an alarm ends still counts for it (07)
 
 
 def _check(y, p) -> tuple[np.ndarray, np.ndarray]:
@@ -99,3 +105,145 @@ def threshold_free(pred: pl.DataFrame, h: str) -> dict:
         "brier": brier(y, p),
         "base_rate": float(y.mean()) if len(y) else float("nan"),
     }
+
+
+def alarms(pred: pl.DataFrame, tau: float, off_ratio: float = OFF_RATIO) -> pl.DataFrame:
+    """Alarm intervals from P(shot), per (match_id, period), in t_s order (07).
+
+    Starts when p > tau with a team in possession and the ball not dead. Ends on the
+    first row with p < off_ratio * tau, a different non-null possession_team, or
+    ball_state == "dead"; end_s is that row's t_s, or the period's last t_s. A null p,
+    a null possession_team or a null ball_state neither starts nor ends one (05: vision
+    gaps hold the meter, loose balls before a shot don't split an alarm).
+    Needs match_id, period, t_s, p, possession_team, ball_state.
+    """
+    df = pred.select("match_id", "period", "t_s", "p", "possession_team", "ball_state").sort(
+        "match_id", "period", "t_s"
+    )
+    match, period, t = df["match_id"].to_list(), df["period"].to_list(), df["t_s"].to_list()
+    p, team, state = df["p"].to_list(), df["possession_team"].to_list(), df["ball_state"].to_list()
+    off = off_ratio * tau
+    out: list[tuple] = []
+    active = None  # (match, period, team, start_s)
+    for i in range(len(t)):
+        if active and (match[i], period[i]) != active[:2]:
+            out.append((*active, t[i - 1], "period_end"))
+            active = None
+        if active:
+            if state[i] == "dead":
+                why = "dead"
+            elif team[i] is not None and team[i] != active[2]:
+                why = "possession"
+            elif p[i] is not None and p[i] < off:
+                why = "p"
+            else:
+                why = None
+            if why:
+                out.append((*active, t[i], why))
+                active = None
+        if (
+            not active
+            and p[i] is not None
+            and p[i] > tau
+            and team[i] is not None
+            and state[i] != "dead"
+        ):
+            active = (match[i], period[i], team[i], t[i])
+    if active:
+        out.append((*active, t[-1], "period_end"))
+    return pl.DataFrame(
+        out,
+        schema={
+            "match_id": pl.String,
+            "period": pl.Int64,
+            "team": pl.String,
+            "start_s": pl.Float64,
+            "end_s": pl.Float64,
+            "ended_by": pl.String,
+        },
+        orient="row",
+    ).with_row_index("alarm_id")
+
+
+def shots_table(events: pl.DataFrame, frames: pl.DataFrame, match_id: str) -> pl.DataFrame:
+    """match_id, period, t_s, team, open_play for every shot with a tracked frame.
+
+    Open-play shots are the ones scored for misses and lead time. Set-play shots only
+    stop an alarm from counting as false: the model predicts through set plays live,
+    and warning before a corner header isn't a false alarm.
+    """
+    return (
+        label_events(events, frames)
+        .filter(pl.col("kind") != "goal", pl.col("period").is_not_null())
+        .select(
+            match_id=pl.lit(match_id),
+            period=pl.col("period").cast(pl.Int64),
+            t_s=pl.col("timestamp_s"),
+            team="team",
+            open_play=pl.col("kind") == "shot",
+        )
+    )
+
+
+def _covering(shots: pl.DataFrame, al: pl.DataFrame, grace_s: float) -> pl.DataFrame:
+    """Every (shot, alarm) pair where the alarm covers the shot: same team, started
+    strictly before it, and the shot is no later than end_s + grace_s."""
+    return (
+        shots.join(al, on=["match_id", "period", "team"], how="inner")
+        .filter(pl.col("start_s") < pl.col("t_s"), pl.col("t_s") <= pl.col("end_s") + grace_s)
+        .with_columns(in_grace=pl.col("t_s") > pl.col("end_s"))
+    )
+
+
+def score_alarms(
+    pred: pl.DataFrame, shots: pl.DataFrame, tau: float, grace_s: float = GRACE_S
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """(open-play shots with alarm_id and lead_s, alarms with a `true` flag).
+
+    A shot takes the alarm active at it, else one that ended within grace_s; lead_s is
+    t_s - that alarm's start, null for a miss. One alarm can lead several shots
+    (rebounds). An alarm is true if it covers any shot by its team, set play included.
+    """
+    al = alarms(pred, tau)
+    shots = shots.with_row_index("shot_id")
+    pairs = _covering(shots, al, grace_s)
+    best = (
+        pairs.filter("open_play")
+        .sort("in_grace", pl.col("start_s"), descending=[False, True])
+        .group_by("shot_id", maintain_order=True)
+        .first()
+        .select("shot_id", "alarm_id", lead_s=pl.col("t_s") - pl.col("start_s"))
+    )
+    scored = shots.filter("open_play").join(best, on="shot_id", how="left").drop("shot_id")
+    true_ids = pairs["alarm_id"].unique()
+    return scored, al.with_columns(true=pl.col("alarm_id").is_in(true_ids.implode()))
+
+
+def alarm_summary(
+    pred: pl.DataFrame, shots: pl.DataFrame, tau: float, grace_s: float = GRACE_S
+) -> dict:
+    """Lead time, misses and false alarms at one tau. False alarms are per match in
+    `pred`, including matches that never alarmed."""
+    scored, al = score_alarms(pred, shots, tau, grace_s)
+    n_shots, n_matches = scored.height, pred["match_id"].n_unique()
+    missed = scored["lead_s"].null_count()
+    false = al.filter(~pl.col("true")).height
+    lead = scored["lead_s"].drop_nulls()
+    return {
+        "tau": tau,
+        "shots": n_shots,
+        "missed": missed,
+        "miss_rate": missed / n_shots if n_shots else float("nan"),
+        "lead_s_median": float(lead.median()) if len(lead) else float("nan"),
+        "alarms": al.height,
+        "false_alarms": false,
+        "false_alarms_per_match": false / n_matches if n_matches else float("nan"),
+    }
+
+
+def tau_sweep(
+    pred: pl.DataFrame, shots: pl.DataFrame, taus, grace_s: float = GRACE_S
+) -> pl.DataFrame:
+    """The lead time / miss / false alarm trade-off across tau (07). Picking tau is the
+    caller's job, on training matches only."""
+    return pl.DataFrame([alarm_summary(pred, shots, float(t), grace_s) for t in taus])
