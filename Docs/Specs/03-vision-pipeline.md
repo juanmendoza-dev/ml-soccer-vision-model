@@ -50,7 +50,8 @@ One stateful object, one frame at a time. Offline is a loop over it, so live (so
 - Stages are injected (detector, tracker, team assigner, keypoint model), so tests run with fakes and live mode can swap in smaller models.
 - Live forms of stages that are batch-style in roboflow/sports:
   - **Teams:** fit on a warmup window (the first `team_warmup_s` of `match` frames), then assign. `team = null` until fitted.
-  - **Ball gaps:** extrapolated forward from the last velocity, `interpolated=True`, never filled from later frames.
+  - **Ball gaps:** extrapolated forward from the last velocity, `interpolated=True`, never filled from later frames. History older than `ball_max_gap_s` is dropped before a new detection uses it (no velocity measured across a gap), and the ball isn't extrapolated while the homography is invalid or after a detection that has no pitch position.
+  - **`visible`:** detections are visible. A filled-in box (tracker fill or ball extrapolation) that has drifted entirely out of the frame is written `visible=False` (it's already `interpolated=True`, 02).
   - **Homography:** smoothed over a trailing window only, and only across fits that agree with each other (no averaging across a camera cut).
 
 ## Pitch template

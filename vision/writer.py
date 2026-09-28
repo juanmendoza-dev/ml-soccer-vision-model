@@ -41,6 +41,16 @@ VIEW_SCHEMA = {
 }
 
 
+def on_screen(o) -> bool:
+    """02 visible: a detection is on screen; a filled-in box (tracker fill, ball
+    extrapolation) that has drifted fully out of the frame isn't. box_frac is clipped
+    to 0-1, so a fully off-screen box has no area left."""
+    if not o.interpolated:
+        return True
+    x1, y1, x2, y2 = o.box_frac
+    return x2 > x1 and y2 > y1
+
+
 class GameStateWriter:
     def __init__(
         self,
@@ -127,7 +137,7 @@ class GameStateWriter:
                     "x": o.x,
                     "y": o.y,
                     "z": None,
-                    "visible": True,
+                    "visible": on_screen(o),
                     "interpolated": o.interpolated,
                     "confidence": o.confidence,
                 }

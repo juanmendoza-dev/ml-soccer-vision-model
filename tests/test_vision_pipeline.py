@@ -589,3 +589,35 @@ def test_ball_seen_without_a_pitch_position_resets_the_track():
     # next good fix starts fresh: no velocity carried from before the bad frame
     pipe._ball_object(0.4, ball_det(10, 0), meters, W, H)
     assert pipe._ball_object(0.5, None, meters, W, H).x == pytest.approx(10.0)
+
+
+def test_filled_box_off_screen_is_written_not_visible(tmp_path):
+    # D6: the writer used to mark every object visible
+    config = VisionConfig()
+    writer = GameStateWriter("vis", "a", "b", FPS, config, tmp_path / "gs", tmp_path / "cache")
+
+    def obj(oid, interpolated, box_frac):
+        return VisionObject(
+            oid,
+            PLAYER,
+            0,
+            "home",
+            1.0,
+            2.0,
+            0.9,
+            interpolated,
+            interpolated,
+            (0, 0, 1, 1),
+            box_frac,
+        )
+
+    objects = [
+        obj("0-1", False, (0.1, 0.1, 0.2, 0.3)),  # detected
+        obj("0-2", True, (0.5, 0.5, 0.6, 0.7)),  # filled, still on screen
+        obj("0-3", True, (1.0, 0.2, 1.0, 0.4)),  # filled, drifted off the right edge
+    ]
+    writer.add(VisionFrame(0, 0.0, MATCH, 0.9, 10, True, 0.5, None, objects, None))
+    out = writer.close()
+    got = pl.read_parquet(out / "objects.parquet").sort("object_id")
+    assert got["visible"].to_list() == [True, True, False]
+    assert got.filter(~pl.col("visible"))["interpolated"].all()  # 02: not visible => interpolated
