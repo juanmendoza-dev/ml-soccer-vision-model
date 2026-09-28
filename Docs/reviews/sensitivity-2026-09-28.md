@@ -44,19 +44,20 @@ This measures sensitivity. It doesn't say real vision output looks like this; th
 (`team_*` levels are the realized shares; the crowding term near the ball adds about 20% on top of the nominal level.)
 
 - **Geometry availability is the biggest lever, and it gets worse faster than linearly.** 17% of time without a homography costs −0.018, 30% costs −0.042, 50% costs −0.082, more than every arm at target combined. 17% is the one measured number (smoke04), so this is where vision is today, not a hypothetical.
-- **Rejecting vs accepting a bad homography.** Losing 17% of frames costs the same as 2 m of drift on every frame (both −0.018), and 30% lost (−0.042) is about 4 m of drift (−0.039). So the acceptance thresholds shouldn't be tightened past the point where the frames they reject have errors under ~2 m. Tune them against this trade, not for zero error.
-- **The ball is the second lever.** Misses are about linear, −0.014 per 10% of time. At 2× the target error, ball noise (−0.026) and false balls (−0.029 at 0.2) are each bigger than any team or player arm at the same multiple. Ball position is half the model's gain (lgbm review), and it shows.
-- **"Unknown" beats a wrong team at every level:** −0.007 vs −0.012, −0.010 vs −0.016, −0.022 vs −0.026. When the kit cluster is unsure, emitting no team is cheaper than guessing (W5).
-- **Players matter less.** Missing 40% of player-time costs −0.023, less than 25% of ball-time missing. Player position noise at 2 m (−0.024) is similar. Detector fine-tuning for players is the lowest priority of the measured failures.
+- **Rejecting vs accepting a bad homography.** Losing 17% of frames costs the same as 2 m of drift on *every* frame (both −0.018), and 30% lost (−0.042) about the same as 4 m everywhere (−0.039). Per affected frame, a rejection is much more expensive: one rejected frame costs about as much as 2 m of error on ~6 frames, or 4 m on ~3. So keeping a frame with 2–4 m of error beats rejecting it, and the break-even is above 4 m, which the sweep didn't reach. Acceptance thresholds should lean permissive; set the actual cutoff on the vision benchmark (W0), where real per-frame error can be measured.
+- **The ball is the second lever.** Misses are about linear, −0.014 per 10% of time, and are the second largest loss at target. At 2× target, ball noise (−0.026) is the largest of the ball arms; false balls at 2× (0.1: −0.013) are smaller than player noise at 2 m (−0.024) or team flips at 2× (−0.016). Ball position is half the model's gain (lgbm review).
+- **"Unknown" beats a wrong team at the same share:** −0.007 vs −0.012, −0.010 vs −0.016, −0.022 vs −0.026. But a real unknown option also abstains on some players it would have gotten right, so its unknown share will be higher than the flip share it removes. At 2× the share it roughly breaks even: flip 0.06 (−0.012) vs unknown 0.12 (−0.010) still favors unknown, flip 0.12 (−0.016) vs unknown 0.23 (−0.022) doesn't. So W5 pays off only if abstentions mostly land where the guess would have been wrong; measure that on the benchmark before switching.
+- **Missing players matter least; player position error doesn't.** Missing 40% of player-time costs −0.023, less than 25% of ball-time missing, so player recall is the lowest priority of the measured failures. Player position noise is different: 0.93 m costs −0.013 (third at target), −0.021 if trained clean, and 2 m costs −0.024. That's foot-anchor and box error on the detector side, separate from the homography.
 - **ID fragmentation and ball height don't matter to this baseline.** As 05 says, its features barely read track history (IDs only reach `carrier_speed` and `carrier_vgoal`, about 5% of gain). The attack-building features and the temporal GNN will read a lot more, so rerun `id_fragment` on those before treating tracking as solved.
 
 ## What this means for Phase 2
 In order:
 1. **Homography availability and accuracy where attacks happen (W4).** Keep time without geometry at or under the measured 17%, and tune the acceptance thresholds (03 Homography acceptance, still untuned) on the reject-vs-drift trade above.
 2. **Ball: temporal association and reset on cuts (F8, D2/W2).** The roadmap made this conditional on the ball being the bottleneck. It's the second largest, with geometry the first, so do it. Target recall ≥ 90% and precision ≥ 95% hold the loss near −0.017 and −0.0075.
-3. **Team "unknown" option (W5).** Cheap, and better than a wrong guess at every level.
-4. **Train the vision-deployed model with degradations on.** It recovers about 0.016 of the combined loss. This is a prediction task, not a vision one.
-5. **Later:** player detection fine-tuning (W8), ID/tracking quality once the temporal models exist (rerun `id_fragment` then).
+3. **Player position accuracy.** Foot-anchor point and box quality, measured in meters on the benchmark (W0). Keep it near the 0.93 m target; this is part of W8 (detector) more than W4.
+4. **Team "unknown" option (W5),** if the benchmark shows abstentions land mostly on would-be flips (see above).
+5. **Train the vision-deployed model with degradations on.** It recovers about 0.016 of the combined loss. This is a prediction task, not a vision one.
+6. **Later:** player recall (W8), ID/tracking quality once the temporal models exist (rerun `id_fragment` then).
 
 ## All runs
 

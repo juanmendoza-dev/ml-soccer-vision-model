@@ -135,8 +135,8 @@ How much the baseline loses when PFF tracking is degraded the way vision fails (
 **Results (2026-09-28, `Docs/reviews/sensitivity-2026-09-28.md`)**
 - Every arm at target together: PR-AUC 0.296 → **0.226** (−0.070, 5/5 folds). Fit clean and predict degraded: −0.086. So a model that runs on vision output gets trained with the degradations on.
 - Biggest single losses at target: `geom_loss` −0.018, `ball_miss` −0.017, `player_noise` −0.013, `team_flip` −0.012, `ball_noise` −0.010. `id_fragment` and `no_ball_z` are noise for this baseline.
-- `geom_loss` grows faster than linear (0.3: −0.042, 0.5: −0.082). 17% lost frames cost the same as 2 m of drift on every frame, which is the trade the homography acceptance thresholds get tuned on.
-- `team_unknown` costs less than `team_flip` at every level, so vision emits no team rather than a guess.
+- `geom_loss` grows faster than linear (0.3: −0.042, 0.5: −0.082). Per affected frame, rejecting a homography costs more than keeping it with 2–4 m of error (17% rejected ≈ 2 m on every frame), so acceptance thresholds lean permissive; the cutoff is set on the vision benchmark.
+- `team_unknown` costs less than `team_flip` at the same share, but a real unknown option abstains on some correct teams too. At 2× the share it's about even, so it's only worth it if abstentions land mostly on would-be flips.
 
 ## xG model
 ### Feature rule

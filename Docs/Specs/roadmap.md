@@ -64,7 +64,7 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] Final models on IDSSE, once
 
 ## Phase 2 — Vision pipeline (RTX 2060)
-In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-09-27.md`; F-numbers refer to it). The sensitivity test (`Docs/reviews/sensitivity-2026-09-28.md`) sets the order of the quality work: homography availability and accuracy, then the ball, then an unknown team option, then player detection.
+In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-09-27.md`; F-numbers refer to it). The sensitivity test (`Docs/reviews/sensitivity-2026-09-28.md`) sets the order of the quality work: homography availability, then the ball, then player position accuracy, then an unknown team option (if the benchmark supports it), then player recall.
 
 **Done**
 - [x] Streaming `VisionPipeline` (03): stage 0 gate, detection + ByteTrack with frame skip, kit-color teams after warmup, homography from roboflow's 32 keypoints in 02 coords, ball extrapolation. Tested with fake stages on a synthetic match (output passes the 02 validator)
@@ -91,7 +91,7 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 
 **4. Quality (after real-clip results)**
 - [x] Homography acceptance: inlier count, error threshold, no matrix averaging across camera motion, null positions > 10 m off the pitch (03 Homography acceptance). Code done, thresholds untuned
-- [ ] **Tune the homography acceptance thresholds** (top priority from the sensitivity test): keep frames without geometry at or under smoke04's 17% (30% doubles the loss), and don't reject frames whose error is under ~2 m, since 17% rejected costs the same as 2 m drift everywhere
+- [ ] **Tune the homography acceptance thresholds** (top priority from the sensitivity test): keep frames without geometry at or under smoke04's 17% (30% more than doubles the loss). Lean permissive: per frame, a rejection costs more than keeping 2–4 m of error, so set the actual cutoff on the vision benchmark (W0)
 - [x] Run `vision.offpitch` on smoke01 to see what the 36 off-pitch rows were, then a second smoke run with the new acceptance: 36 off-pitch rows → 0, `homography_ok` 375/375 → 310/375 match frames, 75 projections nulled (`Docs/reviews/smoke-test-2026-09-27-followup.md`). Thresholds still untuned
 - [x] Ball history: expire before a new detection uses it, reset when the ball has no pitch position, no extrapolation without valid geometry (03; detection review D1)
 - [x] `visible=False` for filled boxes that drift fully off screen, instead of everything visible (03; detection review D6)
@@ -109,7 +109,7 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 - [ ] Small vision benchmark: 5–10 labelled clips from different matches (ball, player positions in meters, teams, live vs. replay), scored per clip. Not the review's 30–50 clip set with double annotation; grow it only if results are borderline (W0)
 - [ ] Camera cuts and replays detected separately from the grass/keypoint gate; reset tracks, teams and ball on a confirmed cut, emit nothing prediction-eligible during a replay (W3)
 - [ ] Record why frames and projections were rejected, plus model settings, in the vision cache (W1, the parts that help debugging; not the full replayable cache yet)
-- [ ] From the sensitivity test, in order: geometry accuracy where attacks happen (W4), teams/keepers with an "unknown" option (W5, cheaper than a wrong team at every level), then detector fine-tuning (W8), ball first. Player misses are the smallest measured loss (40% missed: −0.023). ID/tracking quality waits for a rerun on the temporal models
+- [ ] From the sensitivity test, in order: geometry accuracy where attacks happen (W4), detector fine-tuning (W8) for the ball first and then player foot position (0.93 m noise: −0.013, third largest), teams/keepers with an "unknown" option (W5; cheaper than a wrong team at the same share, but only a win if abstentions land on would-be flips, check on the benchmark). Player misses are the smallest measured loss (40% missed: −0.023). ID/tracking quality waits for a rerun on the temporal models
 - Not adopted: goal/market (Polymarket) framing in the specs, six parallel lanes, bootstrap intervals and locked check sets before any labels exist. Before any trading design, measure broadcast delay against market data latency: a 2–5 s warning from a stream that runs 5–30 s behind live may arrive after the market moves
 
 **6. Later**
