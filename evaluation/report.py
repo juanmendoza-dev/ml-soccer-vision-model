@@ -235,7 +235,8 @@ def source_section(
 
     header = ["fold", "matches", *METRIC_HEADER]
     if taus:
-        header += ["miss rate", "false / match"]
+        header += ["τ", "miss rate", "false / match"]
+        met = (meta.get("tau_met") or {}).get(h) or {}
     per_fold, stats = [], []
     for f in folds:
         fr = rows.filter(pl.col("fold") == f)
@@ -243,7 +244,12 @@ def source_section(
         stats.append([m["pr_auc"], m["roc_auc"], m["brier"]])
         r = [f, fr["match_id"].n_unique(), *metric_row(m)]
         if taus:
-            r += [alarm_fold[f]["miss_rate"], alarm_fold[f]["false_per_match"]]
+            flag = " (budget not met)" if met.get(str(f)) is False else ""
+            r += [
+                f"{taus[f]:.4g}{flag}",
+                alarm_fold[f]["miss_rate"],
+                alarm_fold[f]["false_per_match"],
+            ]
         per_fold.append(r)
     s = np.array(stats, dtype=float)
     ddof = 1 if len(s) > 1 else 0
@@ -251,7 +257,7 @@ def source_section(
         f"{np.nanmean(s[:, j]):.3f} ± {np.nanstd(s[:, j], ddof=ddof):.3f}" for j in range(3)
     ]
     if taus:
-        spread += ["", ""]
+        spread += ["", "", ""]
     out += ["", "**Per fold**", "", *table(header, [*per_fold, spread])]
 
     y = rows.filter(pl.col(f"label_mask_{h}"), ~pl.col("all_estimated"))

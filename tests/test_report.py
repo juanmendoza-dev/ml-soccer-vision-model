@@ -201,3 +201,20 @@ def test_header_names_the_resample_commit(world):
         )
     d = run(world, pl.concat([oracle("a"), oracle("b")]))
     assert "- Labels resampled at: `abcdef1`" in report(world, d)
+
+
+def test_per_fold_tau_and_unmet_budget_are_shown(world):
+    preds = pl.concat([oracle("a"), oracle("b")])
+    d = save_run(
+        world / "runs" / "met",
+        preds,
+        {
+            "model": "test",
+            "horizons": ["h5"],
+            "tau": {"h5": {"0": 0.5, "1": 0.5}},
+            "tau_met": {"h5": {"0": True, "1": False}},
+        },
+    )
+    text = report(world, d)
+    assert "| 0 | 1 | 50 |" in text and "| 0.5 | 0.000 | 0.000 |" in text
+    assert "| 0.5 (budget not met) |" in text
