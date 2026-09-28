@@ -22,12 +22,26 @@ from evaluation.folds import FOLDS_PATH, GAMESTATE_DIR, inner_split, load
 from evaluation.metrics import MAX_FALSE_PER_MATCH, choose_tau, shots_table
 from evaluation.report import PROCESSED_DIR, render
 from evaluation.runs import RUNS_DIR, save_run
-from prediction.features import BALL_SOURCES, load_match
-from prediction.floor import FEATURES, LogisticFloor, training_rows
+from prediction import floor, lgbm
+from prediction.features import BALL_SOURCES, FEATURES, FEATURES_VERSION, load_match
+from prediction.floor import training_rows
 
-MODELS = {"floor": (LogisticFloor, {"features": list(FEATURES), "l2": 1e-6})}
+MODELS = {
+    "floor": (floor.LogisticFloor, {"features": list(floor.FEATURES), "l2": 1e-6}),
+    "lgbm": (
+        lgbm.LGBMModel,
+        {
+            "features": list(FEATURES),
+            "features_version": FEATURES_VERSION,
+            "params": lgbm.PARAMS,
+            "max_rounds": 2000,
+            "early_stopping": 100,
+            "es_share": 0.15,
+        },
+    ),
+}
 # config keys about the data, not the model's constructor
-DATA_KEYS = ("features", "ball_source")
+DATA_KEYS = ("features", "features_version", "ball_source")
 
 
 def load_data(
