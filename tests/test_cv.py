@@ -112,3 +112,46 @@ def test_lgbm_runs_through_cv_and_records_its_fits():
     fold_of = {m["match_id"]: m["fold"] for m in folds["matches"]}
     for k, info in meta["folds"]["h5"].items():
         assert all(fold_of[i] != int(k) for i in info["es_matches"])
+
+
+def test_test_arm_fits_on_data_and_predicts_test_data(monkeypatch):
+    """--degrade-arm test: every fit and tau sees the clean data, only the held-out
+    predictions read the degraded copy."""
+    folds, data, shots = world()
+    degraded = data.with_columns(ball_dist=pl.lit(1.0), ball_angle=pl.lit(1.0))
+    seen = []
+
+    class Spy(LogisticFloor):
+        def fit(self, df, h):
+            seen.append(("fit", df["ball_dist"].max()))
+            return super().fit(df, h)
+
+    monkeypatch.setitem(cv.MODELS, "spy", (Spy, {"features": [], "l2": 1e-6}))
+    preds, meta = cv.run_cv(
+        "spy",
+        ["h5"],
+        folds,
+        data,
+        shots,
+        log=lambda *_: None,
+        test_data=degraded,
+        data_config={"degrade": ["ball_noise:1"], "degrade_arm": "test"},
+    )
+    assert all(v > 1 for _, v in seen)
+    # every held-out row saw the same constant features, so one p per fold
+    per_fold = (
+        preds.join(
+            pl.DataFrame(
+                [{"match_id": m["match_id"], "fold": m["fold"]} for m in folds["matches"]]
+            ),
+            on="match_id",
+        )
+        .group_by("fold")
+        .agg(pl.col("p_h5").n_unique())
+    )
+    assert per_fold["p_h5"].max() == 1
+    assert meta["config"]["degrade"] == ["ball_noise:1"]
+    with pytest.raises(ValueError, match="same rows"):
+        cv.run_cv(
+            "spy", ["h5"], folds, data, shots, log=lambda *_: None, test_data=degraded.head(10)
+        )

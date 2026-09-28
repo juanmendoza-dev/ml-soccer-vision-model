@@ -38,7 +38,8 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [x] Check whether PFF's ESTIMATED ball positions are interpolated with later frames (05, leakage; 25.6% of scored rows): **they are**. After ≥ 1 s gaps where the ball moved > 5 m, the estimate lands 0.5 m (median) from the next detection. Models use a causal held ball (`ball_source=held`) and grid velocities from visible positions only. The floor gets rerun on it, since its 0.167 was measured with the leaky ball
 - [x] LightGBM baseline on hand features (`prediction/lgbm.py`, `Docs/reviews/lgbm-2026-09-27.md`): PR-AUC **0.296** at H = 5 vs 0.177 for the floor on the same held ball, better on 5/5 folds, calibrated. It alarms (174 of 1,154 shots at 2.5 false alarms per match), but the median lead is 0.7 s, short of 00's 2 s. Gain: ball position 0.54, carrier 0.19, defenders 0.13
 - [ ] Lead time: features that see an attack building over 3–5 s, then the temporal GNN. Most misses never reach τ (941 of 980), so ranking early in the attack is the gap, not the alarm rules
-- [ ] Vision sensitivity test (**next**): degrade PFF tracking the way vision fails (contiguous ball gaps, correlated camera drift, wrong teams, ID fragmentation, dropped off-camera players) and measure what the baseline loses. Decides which vision work in Phase 2 is worth doing (detection review W9)
+- [x] Vision sensitivity test (`prediction/degrade.py`, `Docs/reviews/sensitivity-2026-09-28.md`, 34 runs): every arm at the detection review targets costs −0.070 PR-AUC (0.296 → 0.226), −0.086 if trained clean. Biggest losses: homography loss (17%: −0.018, 50%: −0.082) and ball misses (10%: −0.017). Unknown team costs less than a wrong one. ID fragmentation and ball height don't matter to this baseline (rerun on the temporal models)
+- [ ] Train the model that runs on vision output with the degradations on (recovers ~0.016 of the combined loss, sensitivity review)
 - [ ] Full vs. broadcast-view training comparison on SkillCorner folds (05, 07 #5)
 - [ ] xG model on StatsBomb 360 without World Cup 2022 (features known before the shot only); Wyscout location-only xG as a check
 - [ ] xG calibration check on PFF shots (129 goals in tracked games) and SkillCorner shots (61 goals)
@@ -63,7 +64,7 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] Final models on IDSSE, once
 
 ## Phase 2 — Vision pipeline (RTX 2060)
-In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-09-27.md`; F-numbers refer to it).
+In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-09-27.md`; F-numbers refer to it). The sensitivity test (`Docs/reviews/sensitivity-2026-09-28.md`) sets the order of the quality work: homography availability and accuracy, then the ball, then an unknown team option, then player detection.
 
 **Done**
 - [x] Streaming `VisionPipeline` (03): stage 0 gate, detection + ByteTrack with frame skip, kit-color teams after warmup, homography from roboflow's 32 keypoints in 02 coords, ball extrapolation. Tested with fake stages on a synthetic match (output passes the 02 validator)
@@ -90,10 +91,11 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 
 **4. Quality (after real-clip results)**
 - [x] Homography acceptance: inlier count, error threshold, no matrix averaging across camera motion, null positions > 10 m off the pitch (03 Homography acceptance). Code done, thresholds untuned
+- [ ] **Tune the homography acceptance thresholds** (top priority from the sensitivity test): keep frames without geometry at or under smoke04's 17% (30% doubles the loss), and don't reject frames whose error is under ~2 m, since 17% rejected costs the same as 2 m drift everywhere
 - [x] Run `vision.offpitch` on smoke01 to see what the 36 off-pitch rows were, then a second smoke run with the new acceptance: 36 off-pitch rows → 0, `homography_ok` 375/375 → 310/375 match frames, 75 projections nulled (`Docs/reviews/smoke-test-2026-09-27-followup.md`). Thresholds still untuned
 - [x] Ball history: expire before a new detection uses it, reset when the ball has no pitch position, no extrapolation without valid geometry (03; detection review D1)
 - [x] `visible=False` for filled boxes that drift fully off screen, instead of everything visible (03; detection review D6)
-- [ ] Ball: reset on camera cuts, temporal candidate association instead of max confidence (F8, detection review D2/W2). Only if the sensitivity test says the ball is the bottleneck
+- [ ] Ball: reset on camera cuts, temporal candidate association instead of max confidence (F8, detection review D2/W2). The sensitivity test puts the ball second after geometry (misses −0.014 per 10% of time), so this is on. Targets: recall ≥ 90%, precision ≥ 95%
 - [ ] Per-stage timings + effective model settings in `run.json` (03)
 - [ ] Run roboflow/sports end to end on a SoccerNet sample clip as a reference
 - [ ] Tune the stage 0 thresholds on broadcast clips with ads and studio cuts (`view.parquet`, 03)
@@ -107,7 +109,7 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 - [ ] Small vision benchmark: 5–10 labelled clips from different matches (ball, player positions in meters, teams, live vs. replay), scored per clip. Not the review's 30–50 clip set with double annotation; grow it only if results are borderline (W0)
 - [ ] Camera cuts and replays detected separately from the grass/keypoint gate; reset tracks, teams and ball on a confirmed cut, emit nothing prediction-eligible during a replay (W3)
 - [ ] Record why frames and projections were rejected, plus model settings, in the vision cache (W1, the parts that help debugging; not the full replayable cache yet)
-- [ ] After the sensitivity test, only where it shows a real loss: geometry accuracy where attacks happen (W4), teams/keepers with an "unknown" option (W5), detector fine-tuning on the measured failure (W8)
+- [ ] From the sensitivity test, in order: geometry accuracy where attacks happen (W4), teams/keepers with an "unknown" option (W5, cheaper than a wrong team at every level), then detector fine-tuning (W8), ball first. Player misses are the smallest measured loss (40% missed: −0.023). ID/tracking quality waits for a rerun on the temporal models
 - Not adopted: goal/market (Polymarket) framing in the specs, six parallel lanes, bootstrap intervals and locked check sets before any labels exist. Before any trading design, measure broadcast delay against market data latency: a 2–5 s warning from a stream that runs 5–30 s behind live may arrive after the market moves
 
 **6. Later**
