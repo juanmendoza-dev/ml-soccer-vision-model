@@ -192,3 +192,12 @@ def test_cli_writes_report_md(world, capsys):
     partial = save_run(world / "runs" / "p", oracle("a"), {"model": "m", "horizons": ["h5"]})
     assert main([str(partial), *args[1:]]) == 1
     assert "1 of 2 matches" in capsys.readouterr().err
+
+
+def test_header_names_the_resample_commit(world):
+    for mid in ("a", "b"):
+        (world / "processed" / mid / "resample_report.json").write_text(
+            json.dumps({"resample_commit": "abcdef1234"})
+        )
+    d = run(world, pl.concat([oracle("a"), oracle("b")]))
+    assert "- Labels resampled at: `abcdef1`" in report(world, d)

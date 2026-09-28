@@ -7,6 +7,7 @@ and source itself, and writes <run_dir>/report.md. IDSSE only renders with --fin
 """
 
 import argparse
+import json
 import sys
 from itertools import pairwise
 from pathlib import Path
@@ -112,6 +113,16 @@ def load_shots(ids: list[str], gamestate_dir: Path) -> pl.DataFrame:
             for i in ids
         ]
     )
+
+
+def resample_commits(ids: list[str], processed_dir: Path) -> list[str]:
+    """Commits the labels were built at, from each match's resample_report.json. The
+    report scores against whatever data/processed holds now, not when the model ran."""
+    commits = set()
+    for i in ids:
+        path = processed_dir / i / "resample_report.json"
+        commits.add(json.loads(path.read_text()).get("resample_commit") if path.exists() else None)
+    return sorted(str(c)[:7] if c else "unknown" for c in commits)
 
 
 def null_scored(rows: pl.DataFrame, h: str) -> list[str]:
@@ -321,6 +332,8 @@ def render(
         f"- Model: `{meta['model']}`",
         f"- Run commit: `{meta.get('git_commit')}`" + (" (dirty)" if meta.get("git_dirty") else ""),
         f"- Report commit: `{commit}`" + (" (dirty)" if dirty else ""),
+        "- Labels resampled at: "
+        + ", ".join(f"`{c}`" for c in resample_commits(cv + ext, processed_dir)),
         f"- Created: {meta.get('created')}",
         f"- Horizons: {', '.join(horizons)}",
         f"- Config: `{meta.get('config', {})}`",
