@@ -1,0 +1,20 @@
+sens-geom_loss-0.3 | --degrade geom_loss:0.3
+sens-geom_loss-0.5 | --degrade geom_loss:0.5
+sens-ball_miss-0.25 | --degrade ball_miss:0.25
+sens-ball_miss-0.5 | --degrade ball_miss:0.5
+sens-camera_drift-2 | --degrade camera_drift:2
+sens-camera_drift-4 | --degrade camera_drift:4
+sens-team_flip-0.1 | --degrade team_flip:0.1
+sens-team_flip-0.2 | --degrade team_flip:0.2
+sens-team_unknown-0.1 | --degrade team_unknown:0.1
+sens-team_unknown-0.2 | --degrade team_unknown:0.2
+sens-player_noise-2 | --degrade player_noise:2
+sens-ball_noise-2 | --degrade ball_noise:2
+sens-ball_noise-4 | --degrade ball_noise:4
+sens-ball_false-0.1 | --degrade ball_false:0.1
+sens-ball_false-0.2 | --degrade ball_false:0.2
+sens-player_miss-0.2 | --degrade player_miss:0.2
+sens-player_miss-0.4 | --degrade player_miss:0.4
+sens-geom_loss-0.17-test | --degrade geom_loss:0.17 --degrade-arm test
+sens-ball_miss-0.1-test | --degrade ball_miss:0.1 --degrade-arm test
+sens-player_noise-0.93-test | --degrade player_noise:0.93 --degrade-arm test
