@@ -35,7 +35,7 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 
 **First models**
 - [x] Distance + angle floor (logistic regression, `prediction/floor.py` + CV driver `prediction/cv.py`): PR-AUC 0.167 at H = 5 (base rate 0.025), calibrated, no useful alarms at 3 false alarms per match (`Docs/reviews/floor-2026-09-27.md`)
-- [ ] Check whether PFF's ESTIMATED ball positions are interpolated with later frames (05, leakage; 25.6% of scored rows)
+- [x] Check whether PFF's ESTIMATED ball positions are interpolated with later frames (05, leakage; 25.6% of scored rows): **they are**. After ≥ 1 s gaps where the ball moved > 5 m, the estimate lands 0.5 m (median) from the next detection. Models use a causal held ball (`ball_source=held`) and grid velocities from visible positions only. The floor gets rerun on it, since its 0.167 was measured with the leaky ball
 - [ ] LightGBM baseline on hand features (**next**)
 - [ ] Vision sensitivity test: degrade PFF tracking the way vision fails (contiguous ball gaps, correlated camera drift, wrong teams, ID fragmentation, dropped off-camera players) and measure what the baseline loses. Decides which vision work in Phase 2 is worth doing (detection review W9)
 - [ ] Full vs. broadcast-view training comparison on SkillCorner folds (05, 07 #5)
