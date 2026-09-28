@@ -39,10 +39,9 @@ class LogisticFloor:
             raise ValueError("no training rows")
         # rows without a ball get the training base rate at predict time
         self.base_rate = float(y_all.mean())
-        has_ball = rows.select(pl.all_horizontal(pl.col(f).is_not_null() for f in FEATURES))
-        rows = rows.filter(has_ball.to_series())
-        x = rows.select(FEATURES).to_numpy().astype(float)
-        y = rows[f"label_shot_{h}"].to_numpy().astype(float)
+        x = rows.select(FEATURES).to_numpy().astype(float)  # null or NaN: no ball
+        has_ball = np.isfinite(x).all(axis=1)
+        x, y = x[has_ball], y_all[has_ball]
         self.mean, self.std = x.mean(axis=0), x.std(axis=0)
         self.std[self.std == 0] = 1.0
         X = np.column_stack([np.ones(len(x)), (x - self.mean) / self.std])

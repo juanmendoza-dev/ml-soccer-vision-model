@@ -72,6 +72,28 @@ def test_base_rate_counts_rows_without_a_ball():
     assert m.base_rate == pytest.approx(df["label_shot_h5"].mean())
 
 
+def test_nan_ball_counts_as_no_ball():
+    # features come as NaN, not null, where the held ball has run out
+    df = data(n=2000)
+    gone = pl.int_range(pl.len()) < 500
+    m_null = LogisticFloor().fit(
+        df.with_columns(ball_dist=pl.when(gone).then(None).otherwise("ball_dist")), "h5"
+    )
+    m_nan = LogisticFloor().fit(
+        df.with_columns(ball_dist=pl.when(gone).then(float("nan")).otherwise("ball_dist")), "h5"
+    )
+    assert m_nan.coef == pytest.approx(m_null.coef)
+    rows = pl.DataFrame(
+        {
+            "ball_dist": [float("nan")],
+            "ball_angle": [0.8],
+            "eligible": [True],
+            "all_estimated": [False],
+        }
+    )
+    assert m_nan.predict(rows).to_list() == pytest.approx([m_nan.base_rate])
+
+
 def test_heavy_angle_tail_doesnt_diverge():
     # the real fold 0 fit: shot rate peaks at mid angles and drops again on the goal line,
     # with a thin tail up to pi. Plain Newton steps blew up by the 4th iteration there,
