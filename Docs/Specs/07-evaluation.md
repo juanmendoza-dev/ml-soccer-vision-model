@@ -35,22 +35,37 @@ A fixed 70/15/15 split wastes matches: even PFF's 51 tracked games would give a 
 ## Metrics
 | Metric | Why |
 |---|---|
-| PR-AUC | Main metric; positives are rare |
+| PR-AUC | Main metric; positives are rare. Average precision (step sum over thresholds, ties grouped, same as sklearn's `average_precision_score`), not a trapezoid |
 | ROC-AUC | Comparable to papers |
-| Brier score + calibration curve | Probabilities must mean what they say |
+| Brier score + calibration curve | Probabilities must mean what they say. Calibration uses quantile bins: at a ~2% base rate equal-width bins put almost every row in the first one |
 | Lead time | Seconds from the start of the alarm active at the shot to the shot (see below); report median and distribution |
 | Missed shots | Share of shots with no alarm active at the shot |
 | False alarms per match | Alarms with no shot (see below); keeps lead time honest |
 
+Code: `evaluation/metrics.py`, plain numpy/polars.
+
+**Scored rows** for PR-AUC, ROC-AUC, Brier and calibration: `label_mask_H` true and not `all_estimated` (05). Picked from the labels, never from p, so every model is scored on the same rows and comparisons stay paired. A null p on a scored row is an error, not a skipped row.
+
 ### Alarms and lead time
 The probability rises and falls, so "first crossing τ" is ambiguous. Use alarms with hysteresis:
-- **Alarm starts** when P(shot) rises above τ.
-- **Alarm ends** when P(shot) drops below 0.8·τ, possession changes, or `ball_state` becomes dead. Dips between 0.8·τ and τ don't end it.
-- **True alarm:** the possessing team shoots while it's active, or within 1 s after it ends (grace for the last-frame drop). Otherwise it's a **false alarm**.
-- **Lead time** = shot time − start of the alarm active at the shot. A shot with no active alarm is a **miss**, not a lead time of 0.
+- **Alarms run over every row** of the match, masked or not: the model predicts through set plays live. Each (match, period) is processed separately; an alarm never crosses a period.
+- **Alarm starts** when P(shot) rises above τ, with a team in possession and `ball_state` not dead. The alarm belongs to that team.
+- **Alarm ends** when P(shot) drops below 0.8·τ, a *different* team is in possession, or `ball_state` is dead. Dips between 0.8·τ and τ don't end it. Its end time is the row that ended it (or the period's last row).
+- **Nulls hold:** a null P(shot) (all-ESTIMATED cutaway, ineligible row), a null `possession_team` (loose ball) or a null `ball_state` (vision gap, 05) neither starts nor ends an alarm.
+- **An alarm covers a shot** by its team if it started strictly before the shot and the shot is no later than 1 s after the alarm ends (grace for the last-frame drop).
+- **True alarm:** it covers a shot, open play or set play. Otherwise it's a **false alarm**. A warning before a corner header isn't false, but set-play shots don't count toward lead time or misses.
+- **Lead time** = open-play shot time − start of the covering alarm. If two alarms cover a shot, the one active at the shot wins over one in its grace second. A shot with no covering alarm is a **miss**, not a lead time of 0. The same grace applies to misses and to true/false, so a shot is never both covered and missed.
 - One alarm can cover several shots (rebounds); each shot gets its own lead time from the same start.
-- τ is chosen on training matches only (see Splits). Also report the trade-off across τ values: median lead time and miss rate vs. false alarms per match.
+- **False alarms per match** divide by every match evaluated, including matches with no alarm.
+- τ is chosen on training matches only (see Splits). Also report the trade-off across τ values: median lead time and miss rate vs. false alarms per match (`tau_sweep`). **Open:** the rule for choosing τ (e.g. most lead time at ≤ N false alarms per match) isn't decided yet; decide it before the first baseline result.
 - 00's success criterion (median lead time ≥ 2 s) is measured at the τ chosen on training matches.
+
+#### Floor from the labels (PFF, H = 5, 2026-09-27)
+An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where 05 scores null) still gets, at τ = 0.5: **28 of 1,154 shots missed (2.4%)**, **61 false alarms (0.95 per match)**, median lead time 4.9 s. That's the best any model can do under these rules:
+- **25 misses:** PFF gives possession to the other team for the last 1–4 s before the shot (a turnover then an immediate shot, or a deflection). The possession change ends the shooting team's alarm more than 1 s before the shot, so it's a miss, and that alarm is false. This is most of the 61 false alarms.
+- **3 misses:** the whole lead-up is an all-ESTIMATED cutaway (3840 ×1, 3845 ×2, see 06), so there's no prediction to alarm on.
+
+**Open:** whether a short opposing possession (< 1–2 s) should end an alarm. Holding through it would remove most of that floor, but a real turnover should still end the alarm. Decide with the first model results, not before.
 
 ## Required comparisons
 1. Distance + angle floor vs. LightGBM baseline vs. frame GNN vs. temporal GNN.

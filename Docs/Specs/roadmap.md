@@ -25,7 +25,8 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [x] Grouped folds → `data/splits/folds.json` (`evaluation/folds.py`, 07): PFF frozen 2026-09-26 (64 games, 206–244 open-play shots per fold), append-only, inner split helper. SkillCorner gets appended when its converter lands
 
 **Evaluation harness**
-- [ ] Metrics: PR-AUC, ROC-AUC, Brier + calibration, alarms / lead time / misses / false alarms (07)
+- [x] Metrics: PR-AUC, ROC-AUC, Brier + calibration, alarms / lead time / misses / false alarms, τ sweep (`evaluation/metrics.py`, 07). Label floor: an oracle still misses 2.4% of shots with 0.95 false alarms per match, from PFF possession flips before shots
+- [ ] Decide the τ selection rule and whether a short opposing possession ends an alarm (07, open)
 - [ ] `evaluation/report.md` generator: pooled out-of-fold (PFF and SkillCorner rows), per-fold, IDSSE section
 
 **First models**
