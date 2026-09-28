@@ -544,3 +544,80 @@ def test_projections_far_off_the_pitch_go_null(tmp_path):
     # the cache keeps the row: homography fine, position thrown away
     assert det.filter(pl.col("homography_ok") & pl.col("pitch_x").is_null()).height > 0
     assert pl.read_parquet(out / "objects.parquet")["x"].abs().max() <= 62.5
+
+
+def ball_pipe():
+    return VisionPipeline(
+        VisionConfig(), Stages(FakeDetector(), FakeTracker(), FakeKeypoints(), ShirtColorTeams())
+    )
+
+
+def ball_det(x, y):
+    return Detection((x - 1, y - 1, x + 1, y + 1), BALL, 0.9)
+
+
+def meters(px):  # the box center in pixels is the pitch position, for these tests
+    return float(px[0]), float(px[1])
+
+
+def test_ball_velocity_isnt_measured_across_an_expired_gap():
+    # D1: seen at x=0, gone for 3 s (> ball_max_gap_s), seen at x=30. The old code kept
+    # vx = 10 m/s and extrapolated to 31 at t = 3.1
+    pipe = ball_pipe()
+    pipe._ball_object(0.0, ball_det(0, 0), meters, W, H)
+    pipe._ball_object(3.0, ball_det(30, 0), meters, W, H)
+    b = pipe._ball_object(3.1, None, meters, W, H)
+    assert b.interpolated and b.x == pytest.approx(30.0)
+
+
+def test_ball_isnt_extrapolated_without_valid_geometry():
+    pipe = ball_pipe()
+    pipe._ball_object(0.0, ball_det(0, 0), meters, W, H)
+    pipe._ball_object(0.1, ball_det(1, 0), meters, W, H)
+    assert pipe._ball_object(0.2, None, meters, W, H, h_ok=False) is None
+    # and the track is gone: geometry back, still nothing to extrapolate from
+    assert pipe._ball_object(0.3, None, meters, W, H) is None
+
+
+def test_ball_seen_without_a_pitch_position_resets_the_track():
+    pipe = ball_pipe()
+    pipe._ball_object(0.0, ball_det(0, 0), meters, W, H)
+    pipe._ball_object(0.1, ball_det(1, 0), meters, W, H)
+    seen = pipe._ball_object(0.2, ball_det(2, 0), lambda px: (None, None), W, H)
+    assert seen.x is None and not seen.interpolated
+    assert pipe._ball_object(0.3, None, meters, W, H) is None
+    # next good fix starts fresh: no velocity carried from before the bad frame
+    pipe._ball_object(0.4, ball_det(10, 0), meters, W, H)
+    assert pipe._ball_object(0.5, None, meters, W, H).x == pytest.approx(10.0)
+
+
+def test_filled_box_off_screen_is_written_not_visible(tmp_path):
+    # D6: the writer used to mark every object visible
+    config = VisionConfig()
+    writer = GameStateWriter("vis", "a", "b", FPS, config, tmp_path / "gs", tmp_path / "cache")
+
+    def obj(oid, interpolated, box_frac):
+        return VisionObject(
+            oid,
+            PLAYER,
+            0,
+            "home",
+            1.0,
+            2.0,
+            0.9,
+            interpolated,
+            interpolated,
+            (0, 0, 1, 1),
+            box_frac,
+        )
+
+    objects = [
+        obj("0-1", False, (0.1, 0.1, 0.2, 0.3)),  # detected
+        obj("0-2", True, (0.5, 0.5, 0.6, 0.7)),  # filled, still on screen
+        obj("0-3", True, (1.0, 0.2, 1.0, 0.4)),  # filled, drifted off the right edge
+    ]
+    writer.add(VisionFrame(0, 0.0, MATCH, 0.9, 10, True, 0.5, None, objects, None))
+    out = writer.close()
+    got = pl.read_parquet(out / "objects.parquet").sort("object_id")
+    assert got["visible"].to_list() == [True, True, False]
+    assert got.filter(~pl.col("visible"))["interpolated"].all()  # 02: not visible => interpolated

@@ -43,7 +43,7 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 ### Resampling
 - The grid is built per period on `timestamp_s`: `t_s = k / 10`, from the first multiple at or after the period's first frame to its last frame. All comparisons are in integer microseconds, so float error can't pull in the wrong frame.
 - Each grid point takes the **latest native frame at or before it**. No interpolation: interpolating uses a later frame.
-- **Gaps:** a grid point is skipped (and counted) if its frame is older than 1.5 native intervals. That decides from the past only, so it doesn't depend on whether the next frame exists. Periods are never bridged because the grid is per period.
+- **Gaps:** a grid point is skipped (and counted) if its frame is older than 1.5 native intervals, from the declared `match.native_fps` (02). That decides from the past only, so it doesn't depend on whether the next frame exists. The interval used to be the median over the whole match, which let later frames change whether an earlier row exists (detection review D8); on all 66 converted games the declared rate gives byte-identical output. Periods are never bridged because the grid is per period.
 - Positions and velocities are the native ones, unsmoothed. `vx`/`vy` are already causal (02).
 
 ### Labels

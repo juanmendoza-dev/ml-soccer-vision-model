@@ -206,7 +206,7 @@ class VisionPipeline:
                 )
             )
         objects = self._goalkeeper_teams(objects)
-        ball = self._ball_object(t, ball_det, to_pitch, w, h)
+        ball = self._ball_object(t, ball_det, to_pitch, w, h, h_ok)
 
         polygon = None
         if h_ok:
@@ -322,9 +322,13 @@ class VisionPipeline:
     # --- ball (stage 5) --------------------------------------------------
 
     def _ball_object(
-        self, t, det: Detection | None, to_pitch, w: int, h: int
+        self, t, det: Detection | None, to_pitch, w: int, h: int, h_ok: bool = True
     ) -> VisionObject | None:
         oid = f"{self._segment}-ball"
+        # expire old history before anything uses it: a ball seen 3 s ago must not give
+        # the next detection a velocity measured across the gap
+        if self._ball is not None and t - self._ball[0] > self.config.ball_max_gap_s:
+            self._ball = None
         if det is not None:
             x1, y1, x2, y2 = det.box
             x, y = to_pitch(((x1 + x2) / 2, (y1 + y2) / 2))
@@ -334,6 +338,10 @@ class VisionPipeline:
                 if self._ball is not None and t > self._ball[0]:
                     v = (xy - self._ball[1]) / (t - self._ball[0])
                 self._ball = (t, xy, v, det.box, det.confidence)
+            else:
+                # seen but no pitch position (bad geometry, off the pitch): the old track
+                # can't bridge this, start over from the next good fix
+                self._ball = None
             return VisionObject(
                 oid,
                 BALL,
@@ -349,10 +357,10 @@ class VisionPipeline:
             )
         if self._ball is None:
             return None
-        t0, xy0, v, box, conf = self._ball
-        if t - t0 > self.config.ball_max_gap_s:
-            self._ball = None
+        if not h_ok:
+            self._ball = None  # no valid geometry now: don't keep guessing in meters
             return None
+        t0, xy0, v, box, conf = self._ball
         # Extrapolate forward only; never filled from later frames (03)
         x, y = xy0 + v * (t - t0)
         if not on_pitch(np.array([x, y]), self.config.max_off_pitch_m):

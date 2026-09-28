@@ -87,7 +87,7 @@ def at(f10, t):
 
 def test_grid_takes_latest_frame_at_or_before():
     frames, objects = game(fps=29.97)
-    f10, _, _ = resample_match(frames, objects, events(frames), "syn")
+    f10, _, _ = resample_match(frames, objects, events(frames), "syn", 29.97)
     ts = frames["timestamp_s"].to_numpy()
     for row in f10.iter_rows(named=True):
         assert row["timestamp_s"] <= row["t_s"] + 1e-12
@@ -100,14 +100,14 @@ def test_grid_exact_hits_despite_float_error():
     # 0.04 s steps: 5 * 0.04 isn't exactly 0.2 in floats, and the frame at 0.2 must still win
     frames, objects = game(fps=25.0)
     frames = frames.with_columns(timestamp_s=pl.col("frame_id") * 0.04)
-    f10, _, _ = resample_match(frames, objects, events(frames), "syn")
+    f10, _, _ = resample_match(frames, objects, events(frames), "syn", 25.0)
     assert at(f10, 0.2)["frame_id"] == 5
     assert at(f10, 0.3)["frame_id"] == 7  # 0.28, not 0.32
 
 
 def test_grid_starts_on_first_multiple_after_period_start():
     frames, objects = game(periods=((1, 0.05, 2.0),))
-    f10, _, _ = resample_match(frames, objects, events(frames), "syn")
+    f10, _, _ = resample_match(frames, objects, events(frames), "syn", 10.0)
     assert f10["t_s"].min() == pytest.approx(0.1)
     assert f10["t_s"].max() == pytest.approx(2.0)
 
@@ -116,7 +116,7 @@ def test_no_bridging_across_periods_or_gaps():
     frames, objects = game(periods=((1, 0.0, 10.0), (2, 0.3, 10.0)))
     gap = (pl.col("period") == 1) & pl.col("timestamp_s").is_between(4.05, 6.0, closed="left")
     frames = frames.filter(~gap)
-    f10, _, stats = resample_match(frames, objects, events(frames), "syn")
+    f10, _, stats = resample_match(frames, objects, events(frames), "syn", 10.0)
     p1 = f10.filter(pl.col("period") == 1)["t_s"].to_list()
     # 4.1 still takes the 4.0 frame (one interval old, within 1.5); from 4.2 it's a gap
     assert pytest.approx(4.1) in p1 and pytest.approx(6.0) in p1
@@ -128,7 +128,7 @@ def test_no_bridging_across_periods_or_gaps():
     assert p2["frame_id"].is_in(p2_ids.implode()).all()
     assert p2["t_s"].min() == pytest.approx(0.3)
     # objects follow the grid rows
-    _, o10, _ = resample_match(frames, objects, events(frames), "syn")
+    _, o10, _ = resample_match(frames, objects, events(frames), "syn", 10.0)
     assert o10.height == 3 * f10.height
 
 
@@ -141,7 +141,7 @@ def test_no_bridging_across_periods_or_gaps():
 )
 def test_flip_is_a_rotation(possession, home_pos, flipped):
     frames, objects = game(possession=possession, home_pos=home_pos)
-    f10, o10, _ = resample_match(frames, objects, events(frames), "syn")
+    f10, o10, _ = resample_match(frames, objects, events(frames), "syn", 10.0)
     assert f10["flipped"].to_list() == [flipped] * f10.height
     s = -1.0 if flipped else 1.0
     for c in ("x", "y", "vx", "vy"):
@@ -152,7 +152,7 @@ def test_flip_is_a_rotation(possession, home_pos, flipped):
 def test_no_possession_means_no_flip_and_not_eligible():
     frames, objects = game(possession=None, home_pos=False)
     ev = events(frames, (10.0, "shot", "home", "saved", "open_play", False))
-    f10, o10, _ = resample_match(frames, objects, ev, "syn")
+    f10, o10, _ = resample_match(frames, objects, ev, "syn", 10.0)
     assert f10["flipped"].null_count() == f10.height
     assert (o10["x_att"] == o10["x"]).all()
     assert not f10["eligible"].any()
@@ -163,7 +163,7 @@ def test_no_possession_means_no_flip_and_not_eligible():
 def test_eligible_needs_alive_ball():
     for state in ("dead", None):
         frames, objects = game(ball_state=state)
-        f10, _, _ = resample_match(frames, objects, events(frames), "syn")
+        f10, _, _ = resample_match(frames, objects, events(frames), "syn", 10.0)
         assert not f10["eligible"].any()
 
 
@@ -172,7 +172,7 @@ def test_all_estimated():
     hidden = pl.col("frame_id") < 50
     is_player = pl.col("object_type") != "ball"
     objects = objects.with_columns(visible=pl.when(hidden & is_player).then(False).otherwise(True))
-    f10, _, _ = resample_match(frames, objects, events(frames), "syn")
+    f10, _, _ = resample_match(frames, objects, events(frames), "syn", 10.0)
     assert f10.filter(pl.col("frame_id") < 50)["all_estimated"].all()
     assert not f10.filter(pl.col("frame_id") >= 50)["all_estimated"].any()
 
@@ -183,7 +183,7 @@ def test_all_estimated():
 def test_label_window_is_open_left_closed_right():
     frames, objects = game()
     ev = events(frames, (10.0, "shot", "home", "saved", "open_play", False))
-    f10, _, _ = resample_match(frames, objects, ev, "syn")
+    f10, _, _ = resample_match(frames, objects, ev, "syn", 10.0)
     assert at(f10, 4.9)["label_shot_h5"] is False
     assert at(f10, 5.0)["label_shot_h5"] is True  # t + H == shot time: in
     assert at(f10, 9.9)["label_shot_h5"] is True
@@ -203,7 +203,7 @@ def test_window_stops_at_period_end():
         schema=EVENT_SCHEMA,
         orient="row",
     )
-    f10, _, _ = resample_match(frames, objects, ev, "syn")
+    f10, _, _ = resample_match(frames, objects, ev, "syn", 10.0)
     assert not f10.filter(pl.col("period") == 1)["label_shot_h5"].any()
     assert f10.filter(pl.col("period") == 2)["label_shot_h5"].sum() == 10
 
@@ -211,7 +211,7 @@ def test_window_stops_at_period_end():
 def test_only_the_team_in_possession_counts():
     frames, objects = game(possession="home")
     ev = events(frames, (10.0, "shot", "away", "saved", "open_play", False))
-    f10, _, _ = resample_match(frames, objects, ev, "syn")
+    f10, _, _ = resample_match(frames, objects, ev, "syn", 10.0)
     assert f10["label_shot_h5"].sum() == 0
     assert f10["label_mask_h5"].all()
 
@@ -225,7 +225,7 @@ def test_goals_and_own_goals():
         (20.0, "goal", "home", "own_goal", "open_play", False),  # credited to home
         (28.0, "shot", "home", "disallowed", "open_play", False),
     )
-    f10, _, _ = resample_match(frames, objects, ev, "syn")
+    f10, _, _ = resample_match(frames, objects, ev, "syn", 10.0)
     assert f10["label_goal_h5"].sum() == 100
     assert at(f10, 17.0)["label_goal_h5"] is True
     assert at(f10, 17.0)["label_shot_h5"] is False  # own goal isn't a shot
@@ -239,7 +239,7 @@ def test_goals_and_own_goals():
 def test_set_play_shots_are_masked_not_labelled(set_piece, phase):
     frames, objects = game()
     ev = events(frames, (10.0, "shot", "home", "saved", set_piece, phase))
-    f10, _, _ = resample_match(frames, objects, ev, "syn")
+    f10, _, _ = resample_match(frames, objects, ev, "syn", 10.0)
     masked = f10.filter(~pl.col("label_mask_h5"))
     assert masked["t_s"].min() == pytest.approx(5.0)
     assert masked["t_s"].max() == pytest.approx(9.9)
@@ -255,7 +255,7 @@ def test_set_play_phase_masks_without_a_shot():
     phase = pl.col("timestamp_s").is_between(10.0, 20.0)
     frames = frames.with_columns(set_play_phase=phase)
     ev = events(frames, (12.0, "shot", "home", "saved", "open_play", False))
-    f10, _, _ = resample_match(frames, objects, ev, "syn")
+    f10, _, _ = resample_match(frames, objects, ev, "syn", 10.0)
     inside = f10.filter(pl.col("t_s").is_between(10.0, 20.0))
     assert inside["label_set_play_phase"].all()
     assert not inside["label_mask_h5"].any() and not inside["label_mask_h3"].any()
@@ -269,7 +269,7 @@ def test_set_play_phase_masks_without_a_shot():
 def test_null_set_play_phase_doesnt_mask():
     frames, objects = game()
     frames = frames.with_columns(set_play_phase=pl.lit(None, pl.Boolean))
-    f10, _, _ = resample_match(frames, objects, events(frames), "syn")
+    f10, _, _ = resample_match(frames, objects, events(frames), "syn", 10.0)
     assert f10["label_mask_h5"].all()
     assert f10["label_set_play_phase"].null_count() == f10.height
 
@@ -277,14 +277,14 @@ def test_null_set_play_phase_doesnt_mask():
 def test_set_play_by_the_other_team_doesnt_mask():
     frames, objects = game(possession="home")
     ev = events(frames, (10.0, "shot", "away", "saved", "penalty", False))
-    f10, _, _ = resample_match(frames, objects, ev, "syn")
+    f10, _, _ = resample_match(frames, objects, ev, "syn", 10.0)
     assert f10["label_mask_h5"].all()
 
 
 def test_shots_without_positive_reasons():
     frames, objects = game(possession="away")
     ev = events(frames, (10.0, "shot", "home", "saved", "open_play", False))
-    f10, _, _ = resample_match(frames, objects, ev, "syn")
+    f10, _, _ = resample_match(frames, objects, ev, "syn", 10.0)
     missing = shots_without_positive(f10, label_events(ev, frames))
     assert [m["reason"] for m in missing["h5"]] == ["possession never with the shooting team"]
 
@@ -301,7 +301,7 @@ def test_non_label_columns_only_use_the_past():
         (frames["timestamp_s"][1000], "shot", "home", "goal", "open_play", False),
     )
     cut = 20.0
-    f_a, o_a, _ = resample_match(frames, objects, ev, "syn")
+    f_a, o_a, _ = resample_match(frames, objects, ev, "syn", 29.97)
 
     after = pl.col("timestamp_s") > cut
     ids_after = frames.filter(after)["frame_id"].implode()
@@ -328,7 +328,7 @@ def test_non_label_columns_only_use_the_past():
         ),  # moved + set play
         (frames["timestamp_s"][700], "goal", "home", "own_goal", "open_play", False),
     )
-    f_b, o_b, _ = resample_match(frames_b, objects_b, ev_b, "syn")
+    f_b, o_b, _ = resample_match(frames_b, objects_b, ev_b, "syn", 29.97)
 
     def upto(df):
         return df.filter(pl.col("t_s") <= cut).sort(
@@ -342,6 +342,38 @@ def test_non_label_columns_only_use_the_past():
     labels = [c for c in f_a.columns if c.startswith("label_")]
     assert not upto(f_a).select(labels).equals(upto(f_b).select(labels))
     assert upto(f_a).height == 201
+
+
+def test_grid_doesnt_depend_on_later_cadence():
+    """D8: [0, .04, .08, .30] then a burst of fast frames. With the cadence estimated from
+    the whole match, the burst shrank the staleness limit and removed the 0.1 s row."""
+
+    def frames_at(ts):
+        frames, objects = game(periods=((1, 0.0, 0.0),))
+        rows = pl.DataFrame(
+            {"frame_id": range(len(ts)), "period": [1] * len(ts), "timestamp_s": ts}
+        )
+        frames = rows.join(frames.drop("frame_id", "period", "timestamp_s"), how="cross")
+        objects = objects.drop("frame_id").join(rows.select("frame_id"), how="cross")
+        return frames, objects
+
+    head = [0.0, 0.04, 0.08, 0.30]
+    tail = [round(0.31 + 0.01 * i, 2) for i in range(20)]
+    fa, oa = frames_at(head)
+    fb, ob = frames_at(head + tail)
+    a, _, _ = resample_match(fa, oa, events(fa), "syn", 25.0)
+    b, _, _ = resample_match(fb, ob, events(fb), "syn", 25.0)
+
+    def grid(df):
+        return [round(v, 1) for v in df.filter(pl.col("t_s") <= 0.3)["t_s"]]
+
+    assert grid(b) == grid(a) == [0.0, 0.1, 0.3]
+
+
+def test_native_fps_must_be_declared():
+    frames, objects = game()
+    with pytest.raises(ValueError, match="native_fps"):
+        resample_match(frames, objects, events(frames), "syn", None)
 
 
 # --- real data ---
@@ -358,7 +390,8 @@ def real(request):
     frames = pl.read_parquet(d / "frames.parquet")
     ev = pl.read_parquet(d / "events.parquet")
     objects = pl.read_parquet(d / "objects.parquet")
-    f10, o10, stats = resample_match(frames, objects, ev, request.param)
+    fps = pl.read_parquet(d / "match.parquet")["native_fps"].item()
+    f10, o10, stats = resample_match(frames, objects, ev, request.param, fps)
     return frames, ev, f10, o10, stats
 
 

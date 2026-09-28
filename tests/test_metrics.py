@@ -295,3 +295,13 @@ def test_choose_tau_default_candidates_come_from_p():
     got = choose_tau(pred, s, max_false_per_match=1)
     assert got["met"] and got["miss_rate"] == 0.0
     assert 0.1 <= got["tau"] < 0.6
+
+
+def test_long_null_stretch_ends_the_alarm():
+    # D10: a cutaway (null p) used to hold an alarm forever. 2 s is fine, more isn't
+    short = frames([0.6] + [None] * 20 + [0.6, 0.1])
+    assert spans(short) == [(0.0, 2.2, "p")]
+    long_ = frames([0.6] + [None] * 30 + [0.6, 0.1])
+    assert spans(long_)[0] == (0.0, 2.1, "stale")
+    # a fresh p after the cutaway can start a new one
+    assert spans(long_)[1] == (3.1, 3.2, "p")

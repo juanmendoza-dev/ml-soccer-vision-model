@@ -51,7 +51,7 @@ The probability rises and falls, so "first crossing τ" is ambiguous. Use alarms
 - **Alarms run over every row** of the match, masked or not: the model predicts through set plays live. Each (match, period) is processed separately; an alarm never crosses a period.
 - **Alarm starts** when P(shot) rises above τ, with a team in possession and `ball_state` not dead. The alarm belongs to that team.
 - **Alarm ends** when P(shot) drops below 0.8·τ, a *different* team is in possession, or `ball_state` is dead. Dips between 0.8·τ and τ don't end it. Its end time is the row that ended it (or the period's last row).
-- **Nulls hold:** a null P(shot) (all-ESTIMATED cutaway, ineligible row), a null `possession_team` (loose ball) or a null `ball_state` (vision gap, 05) neither starts nor ends an alarm.
+- **Nulls hold, for a while:** a null P(shot) (all-ESTIMATED cutaway, ineligible row), a null `possession_team` (loose ball) or a null `ball_state` (vision gap, 05) doesn't start an alarm or end one by itself. But an alarm ends once it has gone more than **2 s without a non-null P(shot)** (`MAX_NULL_HOLD_S`, ended_by `stale`), so a long cutaway or replay can't keep a warning alive (2026-09-27, detection review D10).
 - **An alarm covers a shot** by its team if it started strictly before the shot and the shot is no later than 1 s after the alarm ends (grace for the last-frame drop).
 - **True alarm:** it covers a shot, open play or set play. Otherwise it's a **false alarm**. A warning before a corner header isn't false, but set-play shots don't count toward lead time or misses.
 - **Lead time** = open-play shot time − start of the covering alarm. If two alarms cover a shot, the one active at the shot wins over one in its grace second. A shot with no covering alarm is a **miss**, not a lead time of 0. The same grace applies to misses and to true/false, so a shot is never both covered and missed.
@@ -63,13 +63,13 @@ The probability rises and falls, so "first crossing τ" is ambiguous. Use alarms
   - Candidates are high quantiles of p over the rows with a non-null p (the rows alarms run on), deep into the tail, since a calibrated model at a ~2% base rate rarely goes high.
   - Ties go to the higher τ. If no candidate meets the budget, take the one with the fewest false alarms and flag it (`tau_met` in `run.json`, shown in the report).
   - Why miss rate and not lead time: median lead is only over caught shots, so a τ that catches only the easy shots early can look good. Lead time is reported at the chosen τ, and 00's ≥ 2 s is checked there.
-  - Why 3: even the oracle has 0.95 false alarms per match (below), so 1 is out of reach. With ~18 open-play shots per match, 3 keeps most alarms real. One fixed budget compares models at the same false-alarm level. It's one constant (`MAX_FALSE_PER_MATCH`); the τ sweep shows what other budgets would give.
+  - Why 3: even the oracle has 1.17 false alarms per match (below), so 1 is out of reach. With ~18 open-play shots per match, 3 keeps most alarms real. One fixed budget compares models at the same false-alarm level. It's one constant (`MAX_FALSE_PER_MATCH`); the τ sweep shows what other budgets would give.
   - The `"final"` τ (IDSSE) uses `inner_split(None)`: the same stratified inner split over all CV matches.
 - 00's success criterion (median lead time ≥ 2 s) is measured at the τ chosen on training matches.
 
 #### Floor from the labels (PFF, H = 5, 2026-09-27)
-An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where 05 scores null) still gets, at τ = 0.5: **28 of 1,154 shots missed (2.4%)**, **61 false alarms (0.95 per match)**, median lead time 4.9 s. That's the best any model can do under these rules:
-- **25 misses:** the shooting team had the ball, then PFF credits the other team for the last 1–4 s before the shot. This is the same PFF possession lag as 06's H = 3 misses (all six of those are among the 25). The possession change ends the shooting team's alarm more than 1 s before the shot, so it's a miss, and that alarm is false. This is most of the 61 false alarms.
+An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where 05 scores null) still gets, at τ = 0.5: **28 of 1,154 shots missed (2.4%)**, **75 false alarms (1.17 per match)**, median lead time 4.9 s. That's the best any model can do under these rules (61 / 0.95 before the 2 s null-hold cap; the cap splits ~15 alarms held through long cutaways, and the part before the cutaway counts as false):
+- **25 misses:** the shooting team had the ball, then PFF credits the other team for the last 1–4 s before the shot. This is the same PFF possession lag as 06's H = 3 misses (all six of those are among the 25). The possession change ends the shooting team's alarm more than 1 s before the shot, so it's a miss, and that alarm is false. This is most of the false alarms.
 - **3 misses:** the whole lead-up is an all-ESTIMATED cutaway (3840 ×1, 3845 ×2, see 06), so there's no prediction to alarm on.
 
 **Open:** whether a short opposing possession (< 1–2 s) should end an alarm. Holding through it would remove most of that floor, but a real turnover should still end the alarm. Decide with the first model results, not before.
@@ -101,4 +101,4 @@ Every model run writes one directory, `data/runs/<run_id>/` (gitignored), via `e
 - Calibration and lead time are tables, not plots, until a plotting dependency is added.
 - The report records its own git commit next to the run's.
 - Not yet: paired model comparison across runs, and a per-stage (knockout) breakdown (stage isn't in 02).
-- **Checked end to end** (2026-09-27) with the oracle from "Floor from the labels" written as a run with τ = 0.5 on every fold: the report gives the same 28 / 1,154 missed and 61 false alarms at H = 5 (H = 3: 28 missed, 28 false alarms, median lead 2.9 s). About 20 s for 64 games and both horizons on the M1.
+- **Checked end to end** (2026-09-27) with the oracle from "Floor from the labels" written as a run with τ = 0.5 on every fold: the report gives the same 28 / 1,154 missed and 61 false alarms at H = 5 (75 with the null-hold cap) (H = 3: 28 missed, 28 false alarms, median lead 2.9 s). About 20 s for 64 games and both horizons on the M1.

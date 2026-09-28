@@ -46,21 +46,18 @@ def git_commit() -> str | None:
         return None
 
 
-def native_interval_us(frames: pl.DataFrame) -> int:
-    """Median time between consecutive frames of the same period."""
-    dt = frames.sort("period", "timestamp_s").select(
-        pl.col("timestamp_s").diff().over("period").alias("dt")
-    )["dt"]
-    return round(dt.filter(dt > 0).median() * US)
-
-
-def build_grid(frames: pl.DataFrame) -> tuple[pl.DataFrame, int]:
+def build_grid(frames: pl.DataFrame, native_fps: float) -> tuple[pl.DataFrame, int]:
     """One row per 0.1 s grid point with the latest native frame at or before it.
 
+    The staleness limit comes from the declared native_fps (02 match table), never from
+    the frames themselves: estimating the cadence from the whole match let later frames
+    decide whether an earlier grid row exists (detection review D8).
     Returns the grid and how many grid points were skipped for a gap.
     """
+    if not native_fps or native_fps <= 0:
+        raise ValueError(f"native_fps must be a positive declared rate, got {native_fps!r}")
     frames = frames.with_columns(ts_us=to_us("timestamp_s")).sort("ts_us")
-    tol = round(MAX_STALENESS * native_interval_us(frames))
+    tol = round(MAX_STALENESS * US / native_fps)
     bounds = frames.group_by("period").agg(first=pl.col("ts_us").min(), last=pl.col("ts_us").max())
     grid = (
         bounds.select(
@@ -140,10 +137,14 @@ def resample_objects(objects: pl.DataFrame, frames10: pl.DataFrame) -> pl.DataFr
 
 
 def resample_match(
-    frames: pl.DataFrame, objects: pl.DataFrame, events: pl.DataFrame, match_id: str
+    frames: pl.DataFrame,
+    objects: pl.DataFrame,
+    events: pl.DataFrame,
+    match_id: str,
+    native_fps: float,
 ) -> tuple[pl.DataFrame, pl.DataFrame, dict]:
     """In-memory core: game state tables -> (frames_10hz, objects_10hz, stats)."""
-    grid, skipped = build_grid(frames)
+    grid, skipped = build_grid(frames, native_fps)
     used = objects.filter(pl.col("frame_id").is_in(grid["frame_id"].unique().implode()))
     grid = add_frame_flags(grid, used)
     lev = label_events(events, frames)
@@ -204,14 +205,17 @@ def process_game(
     events = pl.read_parquet(src / "events.parquet")
     objects = pl.read_parquet(src / "objects.parquet")
     objects_in = objects.height
-    frames10, objects10, stats = resample_match(frames, objects, events, match_id)
+    match = pl.read_parquet(src / "match.parquet")
+    frames10, objects10, stats = resample_match(
+        frames, objects, events, match_id, match["native_fps"].item()
+    )
     del objects
     dst = out_dir / match_id
     dst.mkdir(parents=True, exist_ok=True)
     frames10.write_parquet(dst / "frames_10hz.parquet")
     objects10.write_parquet(dst / "objects_10hz.parquet")
     report = build_report(match_id, frames, objects_in, frames10, objects10, stats)
-    report = {"source": pl.read_parquet(src / "match.parquet")["source"].item(), **report}
+    report = {"source": match["source"].item(), **report}
     (dst / "resample_report.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 

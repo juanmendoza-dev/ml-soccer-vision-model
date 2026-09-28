@@ -13,6 +13,7 @@ from prediction.labels import label_events
 OFF_RATIO = 0.8  # an alarm ends below OFF_RATIO * tau (07)
 GRACE_S = 1.0  # a shot this soon after an alarm ends still counts for it (07)
 MAX_FALSE_PER_MATCH = 3.0  # tau budget (07, "Choosing tau")
+MAX_NULL_HOLD_S = 2.0  # an alarm ends after this long with no prediction (07)
 
 
 def _check(y, p) -> tuple[np.ndarray, np.ndarray]:
@@ -112,10 +113,12 @@ def alarms(pred: pl.DataFrame, tau: float, off_ratio: float = OFF_RATIO) -> pl.D
     """Alarm intervals from P(shot), per (match_id, period), in t_s order (07).
 
     Starts when p > tau with a team in possession and the ball not dead. Ends on the
-    first row with p < off_ratio * tau, a different non-null possession_team, or
-    ball_state == "dead"; end_s is that row's t_s, or the period's last t_s. A null p,
-    a null possession_team or a null ball_state neither starts nor ends one (05: vision
-    gaps hold the meter, loose balls before a shot don't split an alarm).
+    first row with p < off_ratio * tau, a different non-null possession_team,
+    ball_state == "dead", or more than MAX_NULL_HOLD_S since the last non-null p; end_s
+    is that row's t_s, or the period's last t_s. A null p, a null possession_team or a
+    null ball_state don't start one, and short stretches of them don't end one (05: vision
+    gaps hold the meter, loose balls before a shot don't split an alarm), but a long
+    cutaway can't keep an alarm alive.
     Needs match_id, period, t_s, p, possession_team, ball_state.
     """
     df = pred.select("match_id", "period", "t_s", "p", "possession_team", "ball_state").sort(
@@ -126,6 +129,7 @@ def alarms(pred: pl.DataFrame, tau: float, off_ratio: float = OFF_RATIO) -> pl.D
     off = off_ratio * tau
     out: list[tuple] = []
     active = None  # (match, period, team, start_s)
+    last_p = 0.0  # t_s of the active alarm's last non-null p
     for i in range(len(t)):
         if active and (match[i], period[i]) != active[:2]:
             out.append((*active, t[i - 1], "period_end"))
@@ -137,11 +141,15 @@ def alarms(pred: pl.DataFrame, tau: float, off_ratio: float = OFF_RATIO) -> pl.D
                 why = "possession"
             elif p[i] is not None and p[i] < off:
                 why = "p"
+            elif p[i] is None and t[i] - last_p > MAX_NULL_HOLD_S:
+                why = "stale"
             else:
                 why = None
             if why:
                 out.append((*active, t[i], why))
                 active = None
+            elif p[i] is not None:
+                last_p = t[i]
         if (
             not active
             and p[i] is not None
@@ -150,6 +158,7 @@ def alarms(pred: pl.DataFrame, tau: float, off_ratio: float = OFF_RATIO) -> pl.D
             and state[i] != "dead"
         ):
             active = (match[i], period[i], team[i], t[i])
+            last_p = t[i]
     if active:
         out.append((*active, t[-1], "period_end"))
     return pl.DataFrame(
