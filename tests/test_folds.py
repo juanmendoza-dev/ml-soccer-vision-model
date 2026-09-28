@@ -132,4 +132,23 @@ def test_real_folds_cover_all_pff_games():
             if pl.read_parquet(d)["source"].item() == "pff"
         }
         assert {m["match_id"] for m in pff} == on_disk
-    assert sum(m["open_play_shots"] for m in pff) == 1154  # 06, proxy open play, final third free kick rule
+    assert (
+        sum(m["open_play_shots"] for m in pff) == 1154
+    )  # 06, proxy open play, final third free kick rule
+
+
+@pytest.mark.skipif(not FOLDS_PATH.exists(), reason="data/splits/folds.json missing")
+def test_real_inner_splits_dont_move():
+    # pinned 2026-09-27 (shot counts after the final-third rule); a change here moves
+    # every model's tau
+    assert inner_split(0) == ["10502", "10504", "3822", "3824", "3835", "3839", "3850", "3858"]
+    assert inner_split(2) == ["3813", "3816", "3819", "3828", "3832", "3836", "3843", "3847"]
+    assert inner_split(4) == ["10503", "10504", "10505", "10507", "3817", "3844", "3855", "3857"]
+
+
+def test_inner_split_none_covers_all_matches():
+    doc = folds_doc(assign([], table("pff", 64), seed=1))
+    got = inner_split(None, doc)
+    assert len(got) == round(0.15 * 64)
+    assert got != inner_split(0, doc)
+    assert got == inner_split(None, doc)

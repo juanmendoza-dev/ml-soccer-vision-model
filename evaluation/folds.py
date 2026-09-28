@@ -117,11 +117,17 @@ def load(path: Path = FOLDS_PATH) -> dict:
     return {"n_folds": N_FOLDS, "seed": SEED, "frozen": {}, "matches": []}
 
 
-def inner_split(fold: int, folds: dict | None = None, share: float = INNER_SHARE) -> list[str]:
+def inner_split(
+    fold: int | None, folds: dict | None = None, share: float = INNER_SHARE
+) -> list[str]:
     """Inner validation matches for an outer fold: ~share of each source's training matches,
-    stratified by shots like the outer folds. Deterministic in (seed, fold)."""
+    stratified by shots like the outer folds. Deterministic in (seed, fold).
+
+    fold=None splits all matches, for the final model's tau (07); it's seeded as fold
+    n_folds so it never collides with a real fold.
+    """
     folds = folds or load()
-    rng = np.random.default_rng([folds["seed"], fold])
+    rng = np.random.default_rng([folds["seed"], folds["n_folds"] if fold is None else fold])
     out = []
     train = [m for m in folds["matches"] if m["fold"] != fold]
     for source in sorted({m["source"] for m in train}):
