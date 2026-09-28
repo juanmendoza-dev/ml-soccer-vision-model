@@ -132,6 +132,12 @@ How much the baseline loses when PFF tracking is degraded the way vision fails (
 - **Seed noise:** `ball_miss` at its target level is also run with a second seed, to show how big a Δ is just noise.
 - **Caveat:** the ranking is for this baseline's features. ID fragmentation can only reach `carrier_speed` and `carrier_vgoal` (about 5% of gain), and ball history is about 7%. The temporal GNN and the planned attack-building features will lean much more on tracks and history. So a small loss here doesn't clear tracking work.
 
+**Results (2026-09-28, `Docs/reviews/sensitivity-2026-09-28.md`)**
+- Every arm at target together: PR-AUC 0.296 → **0.226** (−0.070, 5/5 folds). Fit clean and predict degraded: −0.086. So a model that runs on vision output gets trained with the degradations on.
+- Biggest single losses at target: `geom_loss` −0.018, `ball_miss` −0.017, `player_noise` −0.013, `team_flip` −0.012, `ball_noise` −0.010. `id_fragment` and `no_ball_z` are noise for this baseline.
+- `geom_loss` grows faster than linear (0.3: −0.042, 0.5: −0.082). 17% lost frames cost the same as 2 m of drift on every frame, which is the trade the homography acceptance thresholds get tuned on.
+- `team_unknown` costs less than `team_flip` at every level, so vision emits no team rather than a guess.
+
 ## xG model
 ### Feature rule
 Every xG feature must be (a) computable at frame t from game state (02), before any shot happens, and (b) present in the training source. Anything only known once the shot is taken is out.
