@@ -16,6 +16,8 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from prediction import degrade as degrade_mod
+
 GOAL_X = 52.5
 POST_Y = 3.66  # half of the 7.32 m goal
 BALL_SOURCES = ("held", "raw")
@@ -370,22 +372,47 @@ FRAME_COLS = [
 
 
 def load_match(
-    match_id: str, processed_dir: Path, horizons, ball_source: str = "held", cache: bool = True
+    match_id: str,
+    processed_dir: Path,
+    horizons,
+    ball_source: str = "held",
+    cache: bool = True,
+    degrade=(),
+    degrade_seed: int = degrade_mod.DEFAULT_SEED,
+    degrade_stats: dict | None = None,
 ) -> pl.DataFrame:
     """One match's grid rows with labels and features. Features are cached next to the
-    resampled tables, keyed by FEATURES_VERSION and ball_source."""
+    resampled tables, keyed by FEATURES_VERSION and ball_source.
+
+    With `degrade` (05, "Vision sensitivity test") the objects are degraded in memory
+    first, never cached, and the clean cache is neither read nor written. Frames and
+    labels are untouched, so scored rows stay the same. Realized severity (on the rows
+    horizons[0] scores) is added into degrade_stats."""
     d = processed_dir / match_id
     cols = FRAME_COLS + [f"label_{x}_{h}" for h in horizons for x in ("mask", "shot")]
     frames = pl.read_parquet(d / "frames_10hz.parquet", columns=cols).sort("period", "t_s")
     path = d / f"features_v{FEATURES_VERSION}_{ball_source}.parquet"
     keep = ["period", "t_s", "ball_visible", *FEATURES]
+    objects = pl.scan_parquet(d / "objects_10hz.parquet")
+    if degrade:
+        if ball_source != "held":
+            raise ValueError("degradations need ball_source='held' (05)")
+        cache = False
+        scored = frames.filter(pl.col(f"label_mask_{horizons[0]}"), ~pl.col("all_estimated"))
+        degraded, stats = degrade_mod.apply(
+            objects.collect(), match_id, degrade, degrade_seed, scored
+        )
+        objects = degraded.lazy()
+        if degrade_stats is not None:
+            for arm, (num, den) in stats.items():
+                acc = degrade_stats.setdefault(arm, [0.0, 0.0])
+                acc[0] += num
+                acc[1] += den
     if cache and path.exists():
         feats = pl.read_parquet(path)
     else:
         feats = match_features(
-            frames.select("period", "t_s", "possession_team", "flipped"),
-            pl.scan_parquet(d / "objects_10hz.parquet"),
-            ball_source,
+            frames.select("period", "t_s", "possession_team", "flipped"), objects, ball_source
         ).select(keep)
         if cache:
             feats.write_parquet(path)
