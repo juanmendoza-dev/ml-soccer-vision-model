@@ -67,6 +67,10 @@ def oracle(mid):
 
 @pytest.fixture
 def world(tmp_path):
+    return build_world(tmp_path)
+
+
+def build_world(tmp_path):
     for mid in ("a", "b"):
         make_match(tmp_path, mid, "pff")
     make_match(tmp_path, "met", "metrica")
