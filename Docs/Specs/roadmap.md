@@ -29,15 +29,16 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [x] τ selection rule: lowest miss rate at ≤ 3 false alarms per match on the inner split (07)
 - [ ] Decide whether a short opposing possession ends an alarm (07, open)
 - [x] Report generator (`evaluation/report.py`, run format `evaluation/runs.py`, 07): pooled out-of-fold per source, per fold with mean ± std, alarms at each fold's τ, calibration and τ sweep as tables, IDSSE only with `--final`. Checked on the oracle run
-- [ ] Paired comparison of two runs by fold (07: A beats B only if it wins on most folds)
+- [x] Paired comparison of two runs by fold (`python -m evaluation.compare A B`, 07: A beats B only if it wins on most folds)
 - [x] Alarms end after 2 s with no prediction, so a long cutaway can't hold one (07; detection review D10). Oracle floor 61 → 75 false alarms at H = 5, floor results unchanged
 - [x] Resampler staleness from the declared `native_fps`, not a whole-match median (05; detection review D8). Identical output on all 66 games
 
 **First models**
 - [x] Distance + angle floor (logistic regression, `prediction/floor.py` + CV driver `prediction/cv.py`): PR-AUC 0.167 at H = 5 (base rate 0.025), calibrated, no useful alarms at 3 false alarms per match (`Docs/reviews/floor-2026-09-27.md`)
 - [x] Check whether PFF's ESTIMATED ball positions are interpolated with later frames (05, leakage; 25.6% of scored rows): **they are**. After ≥ 1 s gaps where the ball moved > 5 m, the estimate lands 0.5 m (median) from the next detection. Models use a causal held ball (`ball_source=held`) and grid velocities from visible positions only. The floor gets rerun on it, since its 0.167 was measured with the leaky ball
-- [ ] LightGBM baseline on hand features (**next**)
-- [ ] Vision sensitivity test: degrade PFF tracking the way vision fails (contiguous ball gaps, correlated camera drift, wrong teams, ID fragmentation, dropped off-camera players) and measure what the baseline loses. Decides which vision work in Phase 2 is worth doing (detection review W9)
+- [x] LightGBM baseline on hand features (`prediction/lgbm.py`, `Docs/reviews/lgbm-2026-09-27.md`): PR-AUC **0.296** at H = 5 vs 0.177 for the floor on the same held ball, better on 5/5 folds, calibrated. It alarms (174 of 1,154 shots at 2.5 false alarms per match), but the median lead is 0.7 s, short of 00's 2 s. Gain: ball position 0.54, carrier 0.19, defenders 0.13
+- [ ] Lead time: features that see an attack building over 3–5 s, then the temporal GNN. Most misses never reach τ (941 of 980), so ranking early in the attack is the gap, not the alarm rules
+- [ ] Vision sensitivity test (**next**): degrade PFF tracking the way vision fails (contiguous ball gaps, correlated camera drift, wrong teams, ID fragmentation, dropped off-camera players) and measure what the baseline loses. Decides which vision work in Phase 2 is worth doing (detection review W9)
 - [ ] Full vs. broadcast-view training comparison on SkillCorner folds (05, 07 #5)
 - [ ] xG model on StatsBomb 360 without World Cup 2022 (features known before the shot only); Wyscout location-only xG as a check
 - [ ] xG calibration check on PFF shots (129 goals in tracked games) and SkillCorner shots (61 goals)
