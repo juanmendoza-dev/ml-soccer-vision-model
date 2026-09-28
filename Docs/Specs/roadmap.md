@@ -30,11 +30,14 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] Decide whether a short opposing possession ends an alarm (07, open)
 - [x] Report generator (`evaluation/report.py`, run format `evaluation/runs.py`, 07): pooled out-of-fold per source, per fold with mean ± std, alarms at each fold's τ, calibration and τ sweep as tables, IDSSE only with `--final`. Checked on the oracle run
 - [ ] Paired comparison of two runs by fold (07: A beats B only if it wins on most folds)
+- [x] Alarms end after 2 s with no prediction, so a long cutaway can't hold one (07; detection review D10). Oracle floor 61 → 75 false alarms at H = 5, floor results unchanged
+- [x] Resampler staleness from the declared `native_fps`, not a whole-match median (05; detection review D8). Identical output on all 66 games
 
 **First models**
 - [x] Distance + angle floor (logistic regression, `prediction/floor.py` + CV driver `prediction/cv.py`): PR-AUC 0.167 at H = 5 (base rate 0.025), calibrated, no useful alarms at 3 false alarms per match (`Docs/reviews/floor-2026-09-27.md`)
 - [ ] Check whether PFF's ESTIMATED ball positions are interpolated with later frames (05, leakage; 25.6% of scored rows)
-- [ ] LightGBM baseline on hand features
+- [ ] LightGBM baseline on hand features (**next**)
+- [ ] Vision sensitivity test: degrade PFF tracking the way vision fails (contiguous ball gaps, correlated camera drift, wrong teams, ID fragmentation, dropped off-camera players) and measure what the baseline loses. Decides which vision work in Phase 2 is worth doing (detection review W9)
 - [ ] Full vs. broadcast-view training comparison on SkillCorner folds (05, 07 #5)
 - [ ] xG model on StatsBomb 360 without World Cup 2022 (features known before the shot only); Wyscout location-only xG as a check
 - [ ] xG calibration check on PFF shots (129 goals in tracked games) and SkillCorner shots (61 goals)
@@ -87,15 +90,24 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 **4. Quality (after real-clip results)**
 - [x] Homography acceptance: inlier count, error threshold, no matrix averaging across camera motion, null positions > 10 m off the pitch (03 Homography acceptance). Code done, thresholds untuned
 - [x] Run `vision.offpitch` on smoke01 to see what the 36 off-pitch rows were, then a second smoke run with the new acceptance: 36 off-pitch rows → 0, `homography_ok` 375/375 → 310/375 match frames, 75 projections nulled (`Docs/reviews/smoke-test-2026-09-27-followup.md`). Thresholds still untuned
-- [ ] Ball: reset motion after long gaps and cuts, temporal candidate association, null when homography is invalid (F8)
+- [x] Ball history: expire before a new detection uses it, reset when the ball has no pitch position, no extrapolation without valid geometry (03; detection review D1)
+- [x] `visible=False` for filled boxes that drift fully off screen, instead of everything visible (03; detection review D6)
+- [ ] Ball: reset on camera cuts, temporal candidate association instead of max confidence (F8, detection review D2/W2). Only if the sensitivity test says the ball is the bottleneck
 - [ ] Per-stage timings + effective model settings in `run.json` (03)
 - [ ] Run roboflow/sports end to end on a SoccerNet sample clip as a reference
 - [ ] Tune the stage 0 thresholds on broadcast clips with ads and studio cuts (`view.parquet`, 03)
 
 **5. Small cleanups**
 - [ ] 03: header still says v0.4 and omits `events.parquet`; points 31/32 aren't on the halfway line
-- [ ] `--period-start-s` flag so `timestamp_s` is the period clock, one period per run (F6)
+- [ ] `--period-start-s` flag so `timestamp_s` is the period clock, one period per run (F6), plus explicit per-period attacking direction instead of odd/even periods, which is wrong in extra time (detection review D7)
 - [ ] `demo.debug` renders only the processed frame range (a hand-typed `--frames` gave smoke04 a 2 s debug video of a 25 s run, see the follow-up review)
+
+**Detection review follow-ups** (`Docs/reviews/detection-improvement-spec-2026-09-27.md`, taken in reduced form)
+- [ ] Small vision benchmark: 5–10 labelled clips from different matches (ball, player positions in meters, teams, live vs. replay), scored per clip. Not the review's 30–50 clip set with double annotation; grow it only if results are borderline (W0)
+- [ ] Camera cuts and replays detected separately from the grass/keypoint gate; reset tracks, teams and ball on a confirmed cut, emit nothing prediction-eligible during a replay (W3)
+- [ ] Record why frames and projections were rejected, plus model settings, in the vision cache (W1, the parts that help debugging; not the full replayable cache yet)
+- [ ] After the sensitivity test, only where it shows a real loss: geometry accuracy where attacks happen (W4), teams/keepers with an "unknown" option (W5), detector fine-tuning on the measured failure (W8)
+- Not adopted: goal/market (Polymarket) framing in the specs, six parallel lanes, bootstrap intervals and locked check sets before any labels exist. Before any trading design, measure broadcast delay against market data latency: a 2–5 s warning from a stream that runs 5–30 s behind live may arrive after the market moves
 
 **6. Later**
 - [ ] Move off `sv.ByteTrack` before supervision 0.31 (pinned below it)
