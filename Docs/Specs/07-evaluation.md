@@ -79,7 +79,7 @@ An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where
 
 ### Run format
 Every model run writes one directory, `data/runs/<run_id>/` (gitignored), via `evaluation.runs.save_run`:
-- **`run.json`**: `run_id`, `model`, `horizons` (e.g. `["h5", "h3"]`), `config` (anything the model needs to be rerun), `tau` (per horizon, per outer fold: `{"h5": {"0": 0.41, ...}}`, chosen on that fold's training matches only; optional), plus `git_commit`, `git_dirty` and `created` stamped by `save_run`.
+- **`run.json`**: `run_id`, `model`, `horizons` (e.g. `["h5", "h3"]`), `config` (anything the model needs to be rerun), `tau` (per horizon, per outer fold: `{"h5": {"0": 0.41, ...}}`, chosen on that fold's training matches only, plus `"final"` for the model trained on all CV matches, used for IDSSE; optional), plus `git_commit`, `git_dirty` and `created` stamped by `save_run`.
 - **`predictions.parquet`**: `match_id`, `period`, `t_s` (copied from `frames_10hz`), and `p_h5` / `p_h3` for the horizons in `run.json`. Out-of-fold for CV matches: each match's p comes from the model that didn't train on its fold. Include every grid row the model sees, not just scored rows, since alarms run over all rows. p is null where the model doesn't predict (05).
 - Fold and source are **not** stored in the predictions. The report looks them up (`folds.json`, `match.parquet`) so a run can't mislabel them.
 
@@ -94,3 +94,4 @@ Every model run writes one directory, `data/runs/<run_id>/` (gitignored), via `e
 - Calibration and lead time are tables, not plots, until a plotting dependency is added.
 - The report records its own git commit next to the run's.
 - Not yet: paired model comparison across runs, and a per-stage (knockout) breakdown (stage isn't in 02).
+- **Checked end to end** (2026-09-27) with the oracle from "Floor from the labels" written as a run with τ = 0.5 on every fold: the report gives the same 28 / 1,154 missed and 61 false alarms at H = 5 (H = 3: 28 missed, 28 false alarms, median lead 2.9 s). About 20 s for 64 games and both horizons on the M1.
