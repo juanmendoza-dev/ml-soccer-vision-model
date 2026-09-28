@@ -120,6 +120,8 @@ All 64 tracking files are now on disk; the second 13 all convert and validate. F
 
   **Open question:** over half the mask is build-up after a free kick in the team's own half, which is hardly a set play. Restricting the proxy (e.g. corners plus free kicks in the attacking half) would change `events.set_play_phase`, which changes the 1,127 and the shot counts stored in the frozen folds. Decide before any model result is reported.
 
+  **Decided (02, 2026-09-26):** only corners and final-third free kicks start a set play. Proxy open play went 1,153 → 1,180 over all shots, and the tracked open-play shot count 1,127 → **1,154** (same 26 extra-time drops). Fold counts refreshed with `--refresh-shots`, folds unchanged. The resample/label numbers above are from before this rule and haven't been rerun.
+
 ### Loading PFF with kloppy (3.19.0, latest release)
 - `kloppy.pff.load_tracking(meta_data, roster_meta_data, raw_data)` loads the June 2025 files without errors (~34 s per game, 176,818 frames for 10502). It fills `ball_state` and `ball_owning_team` as described above.
 - It reads **smoothed** positions only and **drops `visibility` and `confidence`**. A converter that only uses kloppy loses the broadcast-view signal, so read `visibility` and the raw ball from the JSONL directly.

@@ -20,8 +20,9 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] IDSSE → game state converter (external test set; don't look at results until the final check)
 - [x] 10 Hz resampling + label generation (`prediction/resample.py`, `prediction/labels.py`, all 64 PFF + Metrica 1–2): causal grid, flip to the attacking team, `shot`/`goal` within 3 s and 5 s, set-play windows masked (05). H = 5: 2.24% shot positives on 2.29M unmasked rows, eligible 58.8%, every one of the 1,127 open-play shots has a positive frame (6 miss at H = 3); numbers in 06
 - [x] Set-play phases masked whether or not they end in a shot: schema 0.5 `frames.set_play_phase`, all 66 games reconverted (events unchanged), 7.6% of eligible rows masked (06)
-- [ ] Decide whether own-half free kicks start a set-play phase (54% of the mask, 06). Changes the proxy counts and the fold shot counts, so settle before reporting results
-- [x] Grouped folds → `data/splits/folds.json` (`evaluation/folds.py`, 07): PFF frozen 2026-09-26 (64 games, 202–238 open-play shots per fold), append-only, inner split helper. SkillCorner gets appended when its converter lands
+- [x] Decide whether own-half free kicks start a set-play phase: no, only final-third free kicks and corners (02). Open-play shots 1,127 → 1,154, fold counts refreshed (06, 07)
+- [ ] Rerun the resampler under the final-third rule and update the label numbers in 06 (they're still the 1,127 run)
+- [x] Grouped folds → `data/splits/folds.json` (`evaluation/folds.py`, 07): PFF frozen 2026-09-26 (64 games, 206–244 open-play shots per fold), append-only, inner split helper. SkillCorner gets appended when its converter lands
 
 **Evaluation harness**
 - [ ] Metrics: PR-AUC, ROC-AUC, Brier + calibration, alarms / lead time / misses / false alarms (07)
