@@ -10,6 +10,13 @@ A video that makes the model's output obvious to someone who knows nothing about
 - **Event markers:** flash when an actual shot/goal happens, so viewers can see the lead time.
 - **Ball marker:** highlight ring/glow on the ball instead of a raw detection box, and a short velocity arrow off `vx, vy` (02). Rendering only, no new inference.
 - **Possession panel:** rolling possession % (time each team has had the ball, from `possession_team`) and territorial/attacking-third % (share of time each team spends with the ball in each pitch third, from `pitch_x`). Aggregation over existing game state, no new inference; not the same signal as the danger meter and shouldn't be framed as a second P(goal)-style metric.
+- **Sprint highlight:** color a player's ring by `vx, vy` magnitude (jogging vs. sprinting). Rendering only.
+- **Ball trail:** short fading line over the ball's last ~1 s of positions, alongside the velocity arrow. Rendering only.
+- **Confidence/uncertainty tint:** dim or dash a player's ring when `confidence` is low or `interpolated=True` (guessed/off-camera position), so viewers can see when the model is working from a guess. Rendering only.
+- **Event ticker:** short text flashes from `events.parquet` (corner, free kick, ...) along the bottom, beyond the existing shot/goal flash. Rendering only.
+- **Shooting-lane cone:** the ball-to-posts triangle used as a LightGBM feature (05: defenders/keeper in the shooting lane), shaded by how open it is. Draws an existing model feature; no new inference.
+- **Offside line:** horizontal line at the second-to-last defender's x-position. Pure geometry off team + x-positions already in `objects.parquet`; no new inference. Needs solid homography accuracy on the defensive line specifically.
+- **Pitch control / space heatmap:** shade the pitch by which team's players are geometrically closer to each patch of grass (Voronoi diagram over player positions). Computational geometry over existing positions, CPU-only, no new inference; extends the possession/territorial work above from a number into a picture.
 
 ## Modes
 - **Offline:** render from saved game state + predictions (any machine).
