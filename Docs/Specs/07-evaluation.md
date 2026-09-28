@@ -76,5 +76,21 @@ An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where
 6. Provider vs. inferred possession/ball state (03 stage 8) on dataset tracking: same model, same folds. Measures how much the inference rules alone cost before vision errors are added.
 
 ## Outputs
-- `evaluation/report.md` generated per run: pooled out-of-fold metrics table (PFF and SkillCorner rows), per-fold table, calibration plot, lead-time histogram. IDSSE results in a separate section.
-- Every run logs config + git commit.
+
+### Run format
+Every model run writes one directory, `data/runs/<run_id>/` (gitignored), via `evaluation.runs.save_run`:
+- **`run.json`**: `run_id`, `model`, `horizons` (e.g. `["h5", "h3"]`), `config` (anything the model needs to be rerun), `tau` (per horizon, per outer fold: `{"h5": {"0": 0.41, ...}}`, chosen on that fold's training matches only; optional), plus `git_commit`, `git_dirty` and `created` stamped by `save_run`.
+- **`predictions.parquet`**: `match_id`, `period`, `t_s` (copied from `frames_10hz`), and `p_h5` / `p_h3` for the horizons in `run.json`. Out-of-fold for CV matches: each match's p comes from the model that didn't train on its fold. Include every grid row the model sees, not just scored rows, since alarms run over all rows. p is null where the model doesn't predict (05).
+- Fold and source are **not** stored in the predictions. The report looks them up (`folds.json`, `match.parquet`) so a run can't mislabel them.
+
+### Report
+`python -m evaluation.report data/runs/<run_id>` writes `data/runs/<run_id>/report.md`. Reports worth keeping get copied into `Docs/reviews/`.
+- **Matches by source** (`match.parquet`): `pff` and `skillcorner` are CV and must be in `folds.json`. `idsse` is external. Anything else (Metrica) is dropped, and the report says how many.
+- **Coverage is checked:** for each CV source in the run, every match `folds.json` lists must have predictions, or the report fails. Otherwise two runs on different matches would look comparable. `--allow-partial` renders anyway under a "PARTIAL RUN" header, for debugging only.
+- **Strict join** on (`match_id`, `period`, `t_s` in whole tenths): duplicate prediction keys, or prediction rows that don't land on a `frames_10hz` row, are errors. A null p on a scored row names the match.
+- **Per horizon, per CV source:** pooled out-of-fold metrics (rows, positives, base rate, PR-AUC, ROC-AUC, Brier), a per-fold table with mean ± std, a calibration table (10 quantile bins), and a τ sweep over pooled OOF. The sweep is descriptive only: it never picks τ.
+- **Alarms at the chosen τ** come only from `run.json`'s per-fold τ: each fold is scored with its own τ on its own matches, then pooled (lead-time median and quartiles, a lead-time table in 1 s bins, misses, false alarms per match). Without τ in `run.json` the report says "τ not chosen" and shows no alarm numbers at a single τ.
+- **IDSSE** is only rendered with `--final` (07: evaluate once per final model). Without it, the report just counts the IDSSE matches present.
+- Calibration and lead time are tables, not plots, until a plotting dependency is added.
+- The report records its own git commit next to the run's.
+- Not yet: paired model comparison across runs, and a per-stage (knockout) breakdown (stage isn't in 02).
