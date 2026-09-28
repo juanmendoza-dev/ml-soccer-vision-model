@@ -12,6 +12,7 @@ from prediction.labels import label_events
 
 OFF_RATIO = 0.8  # an alarm ends below OFF_RATIO * tau (07)
 GRACE_S = 1.0  # a shot this soon after an alarm ends still counts for it (07)
+MAX_FALSE_PER_MATCH = 3.0  # tau budget (07, "Choosing tau")
 
 
 def _check(y, p) -> tuple[np.ndarray, np.ndarray]:
@@ -249,3 +250,40 @@ def tau_sweep(
     """The lead time / miss / false alarm trade-off across tau (07). Picking tau is the
     caller's job, on training matches only."""
     return pl.DataFrame([alarm_summary(pred, shots, float(t), grace_s) for t in taus])
+
+
+def tau_candidates(p: np.ndarray, n: int = 60) -> np.ndarray:
+    """High quantiles of p, from the top 30% down to the top 0.01%: a calibrated model at
+    a ~2% base rate rarely goes high, so a fixed grid would miss where its tau lives."""
+    p = p[~np.isnan(p)]
+    if not len(p):
+        return np.array([])
+    return np.unique(np.quantile(p, 1 - np.geomspace(0.3, 1e-4, n)))
+
+
+def choose_tau(
+    pred: pl.DataFrame,
+    shots: pl.DataFrame,
+    max_false_per_match: float = MAX_FALSE_PER_MATCH,
+    grace_s: float = GRACE_S,
+    candidates=None,
+) -> dict:
+    """07's rule: the lowest miss rate with at most max_false_per_match false alarms per
+    match, ties to the higher tau. If nothing meets the budget, the fewest false alarms
+    (ties to the higher tau) with met = False. Run it on inner validation matches only.
+
+    Returns the chosen row of the sweep plus `met`.
+    """
+    if candidates is None:
+        candidates = tau_candidates(pred["p"].cast(pl.Float64).to_numpy())
+    if not len(candidates):
+        raise ValueError("no non-null p to choose tau from")
+    sweep = tau_sweep(pred, shots, candidates, grace_s)
+    ok = sweep.filter(pl.col("false_alarms_per_match") <= max_false_per_match)
+    if ok.height:
+        best = ok.sort(["miss_rate", "tau"], descending=[False, True]).row(0, named=True)
+        return {**best, "met": True}
+    best = sweep.sort(["false_alarms_per_match", "tau"], descending=[False, True]).row(
+        0, named=True
+    )
+    return {**best, "met": False}

@@ -9,6 +9,7 @@ from evaluation.metrics import (
     alarms,
     brier,
     calibration,
+    choose_tau,
     pr_auc,
     roc_auc,
     score_alarms,
@@ -251,3 +252,46 @@ def test_shots_from_other_matches_are_ignored():
     )
     s = alarm_summary(frames(QUIET), both, TAU)
     assert (s["shots"], s["missed"]) == (1, 0)
+
+
+# two matches, one home shot at 0.9 s each; p climbs to 0.6 before it, and a 0.8
+# blip after it that's a false alarm unless tau is above 0.8
+CHOOSE = [0.1, 0.1, 0.1, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.1, 0.1, 0.8, 0.8, 0.1] + [0.1] * 30
+
+
+def choose_world():
+    pred = pl.concat([frames(CHOOSE, match="m"), frames(CHOOSE, match="n")])
+    s = pl.concat(
+        [shots((0.9, "home", True)), shots((0.9, "home", True)).with_columns(match_id=pl.lit("n"))]
+    )
+    return pred, s
+
+
+def test_choose_tau_lowest_miss_rate_within_budget():
+    pred, s = choose_world()
+    # tau 0.5 catches both shots but the 0.8 blip is a false alarm in each match (1 / match)
+    got = choose_tau(pred, s, max_false_per_match=1, candidates=[0.5, 0.7, 0.9])
+    assert (got["tau"], got["miss_rate"], got["met"]) == (0.5, 0.0, True)
+    # a budget of 0 rules out 0.5 and 0.7; 0.9 misses everything but is the only one left
+    got = choose_tau(pred, s, max_false_per_match=0, candidates=[0.5, 0.7, 0.9])
+    assert (got["tau"], got["miss_rate"], got["met"]) == (0.9, 1.0, True)
+
+
+def test_choose_tau_ties_go_to_the_higher_tau():
+    pred, s = choose_world()
+    got = choose_tau(pred, s, max_false_per_match=1, candidates=[0.2, 0.3, 0.5])
+    assert got["tau"] == 0.5
+
+
+def test_choose_tau_falls_back_to_fewest_false_alarms_and_flags_it():
+    pred, s = choose_world()
+    got = choose_tau(pred, s, max_false_per_match=0, candidates=[0.2, 0.5, 0.7])
+    assert (got["tau"], got["met"]) == (0.7, False)
+    assert got["false_alarms_per_match"] == 1.0
+
+
+def test_choose_tau_default_candidates_come_from_p():
+    pred, s = choose_world()
+    got = choose_tau(pred, s, max_false_per_match=1)
+    assert got["met"] and got["miss_rate"] == 0.0
+    assert 0.1 <= got["tau"] < 0.6
