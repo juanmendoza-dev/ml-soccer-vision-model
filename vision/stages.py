@@ -117,11 +117,15 @@ class YoloKeypoints:
 
 
 class KitColorTeams:
-    """Two teams by shirt color: mean Lab color of the non-grass torso pixels, 2-means.
+    """Two teams by shirt color: mean Lab chroma of the non-grass torso pixels, 2-means.
 
     Much cheaper than roboflow's SigLIP + UMAP + KMeans, which matters live (09).
-    Swap in SigLIP if kits are too alike for color.
+    Swap in SigLIP if kits are too alike for color: chroma can't tell two
+    achromatic kits (white vs black) apart, only hue, and no color feature
+    survives two kits of the same hue.
     """
+
+    N_INIT = 10  # k-means restarts; the best inertia wins
 
     def __init__(self, seed: int = 0):
         self.rng = np.random.default_rng(seed)
@@ -130,12 +134,15 @@ class KitColorTeams:
 
     @staticmethod
     def features(crop: np.ndarray) -> np.ndarray | None:
+        """Mean (a, b) of the non-grass pixels. L is dropped on purpose: it carries
+        lighting, not kit, and its outliers (a sunlit shirt, a white sleeve) are what
+        a 2-means split lands on instead of the two kits (smoke03)."""
         if crop.size == 0:
             return None
         hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
         not_grass = ~((hsv[..., 0] >= 30) & (hsv[..., 0] <= 90) & (hsv[..., 1] >= 40))
         lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float64)
-        pixels = lab[not_grass.ravel()]
+        pixels = lab[not_grass.ravel()][:, 1:]
         return pixels.mean(axis=0) if len(pixels) else None
 
     def add(self, crops: list[np.ndarray]) -> None:
@@ -143,14 +150,22 @@ class KitColorTeams:
         self._samples.extend(feats)
         self.n_crops = len(self._samples)
 
-    def fit(self, iters: int = 20) -> None:
-        x = np.array(self._samples)
+    def _one_fit(self, x: np.ndarray, iters: int) -> tuple[np.ndarray, float]:
         centers = x[self.rng.choice(len(x), 2, replace=False)]
         for _ in range(iters):
             labels = np.linalg.norm(x[:, None] - centers[None], axis=2).argmin(axis=1)
             centers = np.array(
                 [x[labels == k].mean(axis=0) if (labels == k).any() else centers[k] for k in (0, 1)]
             )
+        d = np.linalg.norm(x[:, None] - centers[None], axis=2)
+        return centers, float((d.min(axis=1) ** 2).sum())
+
+    def fit(self, iters: int = 20) -> None:
+        x = np.array(self._samples)
+        # One random init lands on a handful of odd crops vs everything else about as
+        # often as it lands on the two kits, and that split costs about twice the
+        # inertia. Restart and keep the cheapest (smoke03: both kits were one cluster)
+        centers, _ = min((self._one_fit(x, iters) for _ in range(self.N_INIT)), key=lambda r: r[1])
         # Cluster numbers are arbitrary; after a refit keep each kit on the number it had,
         # since home_cluster points at a number (F4)
         old = self._old_centers
