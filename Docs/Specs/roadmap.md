@@ -112,7 +112,6 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 **6. Later**
 - [ ] Move off `sv.ByteTrack` before supervision 0.31 (pinned below it)
 - [ ] Bounded-memory writer before full-match runs
-- [ ] Replay detection
 - [ ] Plug in stage 8 (possession / ball state) from Phase 1
 - [ ] Jersey OCR → player_id
 - [ ] Evaluate on SoccerNet-GSR clips
