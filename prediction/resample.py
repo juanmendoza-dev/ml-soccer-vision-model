@@ -84,6 +84,14 @@ def build_grid(frames: pl.DataFrame, native_fps: float) -> tuple[pl.DataFrame, i
     return grid.filter(fresh), skipped
 
 
+def flipped_expr(team: str = "possession_team") -> pl.Expr:
+    """True where `team` has to be rotated to attack +x, null with no team (05). Also used
+    for stage 8's possession (prediction.possession), so both arms flip the same way."""
+    return pl.when(pl.col(team).is_not_null()).then(
+        (pl.col(team) == "home") != pl.col("home_attacks_positive_x")
+    )
+
+
 def add_frame_flags(grid: pl.DataFrame, objects: pl.DataFrame) -> pl.DataFrame:
     """flipped, eligible, all_estimated: all from the native frame at t."""
     visible = (
@@ -94,9 +102,7 @@ def add_frame_flags(grid: pl.DataFrame, objects: pl.DataFrame) -> pl.DataFrame:
     return (
         grid.join(visible, on="frame_id", how="left")
         .with_columns(
-            flipped=pl.when(pl.col("possession_team").is_not_null()).then(
-                (pl.col("possession_team") == "home") != pl.col("home_attacks_positive_x")
-            ),
+            flipped=flipped_expr(),
             eligible=(pl.col("ball_state") == "alive").fill_null(False)
             & pl.col("possession_team").is_not_null(),
             all_estimated=~pl.col("any_visible").fill_null(False),
@@ -213,8 +219,9 @@ def process_game(
     dst = out_dir / match_id
     dst.mkdir(parents=True, exist_ok=True)
     # cached features and graphs (prediction.features, prediction.graphs) were built from
-    # the old tables
-    for stale in [*dst.glob("features_v*.parquet"), *dst.glob("graphs_v*.npz")]:
+    # the old tables; the inferred state (prediction.possession) from the old game state
+    stale_globs = ("features_v*.parquet", "graphs_v*.npz", "state_inferred_*.parquet")
+    for stale in [p for g in stale_globs for p in dst.glob(g)]:
         stale.unlink()
     frames10.write_parquet(dst / "frames_10hz.parquet")
     objects10.write_parquet(dst / "objects_10hz.parquet")
