@@ -45,12 +45,12 @@ uv run python -m demo.debug --video <demo clip> --cache data/vision_cache/demo1 
 - Keep clips and outputs outside iCloud or other synced folders (08: footage is private).
 
 ## GNN runs (workstation runbook)
-Code and tests come from the M1. The full CV of the frame GNN (05 model 2) runs here on the 2060. `data/` is gitignored, so the data travels as a tar made on the M1 by `scripts/pack_workstation_data.sh`. It holds each match's `frames_10hz`/`objects_10hz` parquet files and `resample_report.json`, its game state `match`/`events`/`frames`, and the baseline run `lgbm-held-2026-09-27`. That's 399 files, 2.4 GB, with a `.sha256` beside it. `folds.json` is in git, and feature and graph caches are rebuilt here. All commands below are PowerShell, run from the repo root.
+Code and tests come from the M1. The full CV of the frame GNN (05 model 2) runs here on the 2060. `data/` is gitignored, so the data travels as a tar made on the M1 by `scripts/pack_workstation_data.sh`. It holds each match's `frames_10hz`/`objects_10hz` parquet files and `resample_report.json`, its game state `match`/`events`/`frames`, the native `objects` of 10502, 10504 and 10505 (the resampler's real-data tests read them), and the baseline run `lgbm-held-2026-09-27`. That's 402 files, 2.5 GB, with a `.sha256` beside it. `folds.json` is in git, and feature and graph caches are rebuilt here. All commands below are PowerShell, run from the repo root.
 
 **Environment (checked 2026-09-28 against `uv.lock`):**
 - Every package in the `prediction` extra has a Windows wheel. On Windows, torch comes from the cu128 index as `2.11.0+cu128`; the Mac gets `2.14.0` from PyPI, so numbers won't match bit for bit across machines.
 - torch-geometric and unravelsports resolved too, but they left the extra because the frame GNN builds its own graphs (05).
-- `uv sync` removes every extra you don't name. Keep `--extra vision` so the vision tools still work on this machine.
+- `uv sync` removes every extra you don't name, so sync `--all-extras`. That keeps the vision tools working on this machine and matches the test command. Every locked package has a Windows wheel.
 - Windows writes redirected output in cp1252, which can't encode the reports' τ, ≥ and Δ. `PYTHONUTF8=1` switches Python to UTF-8. The code also writes its markdown files as UTF-8 explicitly.
 - Idle sleep would kill a multi-hour run. `prediction.cv` asks Windows to stay awake while it runs (`SetThreadExecutionState`), but Update restarts aren't covered by that.
 - On macOS only, torch and LightGBM can't share a process: LightGBM then torch hangs, torch then LightGBM segfaults. That's why the GNN tests run in their own pytest process (`tests/test_gnn.py`). A GNN run never loads LightGBM.
@@ -75,13 +75,14 @@ tar -xf $tar                                     # Windows' built-in bsdtar
 $env:PYTHONUTF8 = "1"; $env:PYTHONUNBUFFERED = "1"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-uv sync --extra dev --extra prediction --extra vision
+uv sync --all-extras
 uv run python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0), 'sm_75' in torch.cuda.get_arch_list())"
 # 2.11.0+cu128 12.8 True NVIDIA GeForce RTX 2060 True
 
-uv run python -m pytest -q                        # all pass; the GNN cases run in their own process
+uv run python -m pytest -q                        # 360 passed, 110 skipped (see below)
 uv run python scripts\gnn_smoke.py --device cuda  # ~2 min: loss goes down, peak GPU memory, rows/s
 ```
+- The tests give 360 passed and 110 skipped, checked on a clean clone with only the tar unpacked. The skips are the converter tests: `data/raw` isn't copied. The M1, which has the raw data, runs all 470. The GNN cases run in their own process, inside `tests/test_gnn.py`.
 - The smoke fit prints training rows/s, including the early-stopping passes. The M1 Pro did about 2,800 on MPS. Peak GPU memory should be well under 6,000 MB.
 - Git Bash works too (it's what Claude Code uses on Windows). The same commands work there with forward slashes and `export PYTHONUTF8=1`.
 
