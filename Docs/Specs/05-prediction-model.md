@@ -320,7 +320,7 @@ Stage 8's possession is the team of the latest confirmed carrier, carried forwar
 - Features: v3 provider is `features_v3_<ball_source>_s8_<key>.parquet`, since it depends on stage 8's config. v3 inferred is `features_v3_<ball_source>_pinf_<key>.parquet`. Arm U adds `_unk<S>` to the inferred name (`features_v1_held_pinf_<key>_unk10.parquet`). The v1/v2 provider names and `features_v1_held_pinf_<key>` stay as they are.
 - `<key>` is `config_key(StateConfig)`. A change to stage 8's rules has to change it too (a new config field for the new rule), or the old state and features would be reused (03 stage 8).
 
-**Run metadata.** An arm U run adds `stale_possession: {"arm": "unknown", "after_s": S}` to the `run.json` config. `possession_scored` also gets `stale_unknown_share`: the share of scored rows made unknown (nulls stage 8 already had are counted in `inferred_null_share`). v3 is recorded as `features_version`, as v2 was.
+**Run metadata.** An arm U run adds `stale_possession: {"arm": "unknown", "after_s": S}` to the `run.json` config. `possession_scored` also gets `stale_unknown_share`: the share of scored rows the arm made unknown. `inferred_null_share` then counts every null the model sees, these included. v3 is recorded as `features_version`, as v2 was.
 
 **Tests** (`tests/test_possession.py`):
 - carrier age by hand: 0 while carried, growing while the ball is loose, reset at the period start
