@@ -297,18 +297,19 @@ def test_a_window_stays_in_its_match_period_and_seg():
     assert n[0].tolist() == [0, 0, 0] and not nodes[0].any()  # h1 is only at 0.0 s
 
 
-def test_a_middle_gap_masks_only_its_own_step():
+def test_a_gap_masks_every_step_before_it():
     f = pl.concat([frames_of(5), frames_of(20, start=0.6)])  # 0.5 s missing
     store = GraphStore.from_parts([("m1", graphs(f, [obj(1, 0.0, "h1", 0.0, 0.0)]))])
-    # anchor 1.5 s (row 14): 1.0 s is row 9, 0.5 s is missing, 0.0 s is across the gap
+    # anchor 1.5 s (row 14): 1.0 s is row 9; 0.5 s doesn't exist and 5 rows before 1.0 s
+    # is 0.4 s, across the gap, so both older steps are masked
     assert store.steps(np.array([14]), 4, 5).tolist() == [[-1, -1, 9, 14]]
-    # anchor 1.9 s (row 18): 0.4 s back is across the gap; lags of 0.5 s only
+    # anchor 2.4 s (row 23): 0.9, 1.4, 1.9 s are all after the gap
     assert store.steps(np.array([23]), 4, 5).tolist() == [[8, 13, 18, 23]]
 
 
 def test_older_steps_are_turned_into_the_anchor_frame():
     # home has the ball for 1 s, nobody for 0.5 s, then away (attacking -x). h1 stands
-    # still at pitch (20, 5), running +x at 2 m/s by the end
+    # still at pitch (20, 5), a1 at (-30, 0)
     poss = ["home"] * 10 + [None] * 5 + ["away"] * 6
     frames = frames_of(21).with_columns(
         possession_team=pl.Series(poss),
