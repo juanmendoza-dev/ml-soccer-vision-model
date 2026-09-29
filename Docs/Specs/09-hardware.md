@@ -79,10 +79,10 @@ uv sync --all-extras
 uv run python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0), 'sm_75' in torch.cuda.get_arch_list())"
 # 2.11.0+cu128 12.8 True NVIDIA GeForce RTX 2060 True
 
-uv run python -m pytest -q                        # 360 passed, 110 skipped (see below)
+uv run python -m pytest -q                        # 364 passed, 110 skipped (see below)
 uv run python scripts\gnn_smoke.py --device cuda  # ~2 min: loss goes down, peak GPU memory, rows/s
 ```
-- The tests give 360 passed and 110 skipped, checked on a clean clone with only the tar unpacked. The skips are the converter tests: `data/raw` isn't copied. The M1, which has the raw data, runs all 470. The GNN cases run in their own process, inside `tests/test_gnn.py`.
+- The tests give 364 passed and 110 skipped (360 on the clean clone check, plus the temporal GNN's 4 window tests, which need no data). The skips are the converter tests: `data/raw` isn't copied. The M1, which has the raw data, runs all 474. The GNN cases run in their own process, inside `tests/test_gnn.py`.
 - The smoke fit prints training rows/s, including the early-stopping passes. The M1 Pro did about 2,800 on MPS. Peak GPU memory should be well under 6,000 MB.
 - Git Bash works too (it's what Claude Code uses on Windows). The same commands work there with forward slashes and `export PYTHONUTF8=1`.
 
@@ -115,6 +115,14 @@ uv run python scripts\lead_time.py $base $h5 | Out-File -Encoding utf8 "$h5\lead
 uv run python scripts\lead_time.py $base $h3 --horizon h3 | Out-File -Encoding utf8 "$h3\lead_time.md"
 ```
 - The lead-time script's gain table shows zeros for the GNN, since it has no gain shares (05).
+
+**Temporal GNN** (05 model 3), after both frame GNN runs. Same steps with `--model tgnn`. Each row reads 6 graphs, so time a fold first. It's about 6× the frame GNN per row, not measured yet:
+```powershell
+uv run python -m prediction.cv --model tgnn --horizons h5 --one-fold 0 --run-id gnn-temporal-timing-h5
+```
+- Watch peak GPU memory in the log and `nvidia-smi`. A batch is 128 windows × 6 graphs. If it's too slow or runs out of memory, shrink it without a code edit: `--gnn-param steps=4` (the last 1.5 s), then `--gnn-param stride=8`, or `--gnn-param batch_size=64` for memory. Record what was used: it goes into `run.json` either way.
+- Full runs as above with `--model tgnn` and ids `gnn-temporal-<date>-h5` / `-h3`.
+- The comparison that matters is temporal vs frame GNN (05): `evaluation.compare` with the temporal run first and the frame run second, then `scripts\lead_time.py <frame run> <temporal run>`. The comparison with LightGBM comes second.
 
 **Afterwards:** `powercfg /change standby-timeout-ac 30` (or whatever it was), and resume Windows Update.
 
