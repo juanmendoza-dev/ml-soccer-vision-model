@@ -11,12 +11,14 @@ ESTIMATED positions are filled using later frames (05, Leakage), so they never r
 feature except through ball_source="raw", kept to measure that leak.
 """
 
+import time
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 
 from prediction import degrade as degrade_mod
+from prediction import possession as possession_mod
 
 GOAL_X = 52.5
 POST_Y = 3.66  # half of the 7.32 m goal
@@ -602,6 +604,10 @@ def load_match(
     degrade_seed: int = degrade_mod.DEFAULT_SEED,
     degrade_stats: dict | None = None,
     features_version: str = FEATURES_VERSION,
+    possession: str = "provider",
+    gamestate_dir: Path | None = None,
+    state_config=None,
+    possession_stats: dict | None = None,
 ) -> pl.DataFrame:
     """One match's grid rows with labels and features. Features are cached next to the
     resampled tables, keyed by features_version and ball_source.
@@ -609,13 +615,42 @@ def load_match(
     With `degrade` (05, "Vision sensitivity test") the objects are degraded in memory
     first, never cached, and the clean cache is neither read nor written. Frames and
     labels are untouched, so scored rows stay the same. Realized severity (on the rows
-    horizons[0] scores) is added into degrade_stats."""
+    horizons[0] scores) is added into degrade_stats.
+
+    With possession="inferred" (05, "Inferred possession") the features are built from
+    stage 8's possession, run on the game state in gamestate_dir, and cached under their
+    own name. The returned table's possession_team, flipped, ball_state, eligible and
+    labels stay the provider's. Counts on the rows horizons[0] scores, and the time spent
+    in stage 8 and on features, are added into possession_stats."""
+    if possession not in possession_mod.POSSESSION:
+        raise ValueError(f"possession must be one of {possession_mod.POSSESSION}")
+    inferred = possession == "inferred"
+    if inferred and degrade:
+        raise ValueError("inferred possession can't be combined with degradations (05)")
+    if inferred and gamestate_dir is None:
+        raise ValueError("inferred possession needs gamestate_dir to run stage 8 on")
     d = processed_dir / match_id
     cols = FRAME_COLS + [f"label_{x}_{h}" for h in horizons for x in ("mask", "shot")]
-    frames = pl.read_parquet(d / "frames_10hz.parquet", columns=cols).sort("period", "t_s")
+    read = cols + ["frame_id", "home_attacks_positive_x"] if inferred else cols
+    frames = pl.read_parquet(d / "frames_10hz.parquet", columns=read).sort("period", "t_s")
     path = d / f"features_v{features_version}_{ball_source}.parquet"
     keep = ["period", "t_s", "ball_visible", *FEATURE_SETS[features_version]]
     objects = pl.scan_parquet(d / "objects_10hz.parquet")
+    inputs = frames.select("period", "t_s", "possession_team", "flipped")
+    if inferred:
+        config = state_config or possession_mod.StateConfig()
+        key = possession_mod.config_key(config)
+        path = d / f"features_v{features_version}_{ball_source}_pinf_{key}.parquet"
+        pstats = possession_stats if possession_stats is not None else {}
+        state = possession_mod.inferred_state(
+            match_id, gamestate_dir, processed_dir, config, cache, pstats
+        )
+        inputs = possession_mod.swap_possession(frames, state).select(inputs.columns)
+        scored = frames.select(
+            pl.col(f"label_mask_{horizons[0]}") & ~pl.col("all_estimated")
+        ).to_series()
+        possession_mod.add_stats(pstats, frames, inputs, scored)
+        frames = frames.select(cols)
     if degrade:
         if ball_source != "held":
             raise ValueError("degradations need ball_source='held' (05)")
@@ -633,12 +668,10 @@ def load_match(
     if cache and path.exists():
         feats = pl.read_parquet(path)
     else:
-        feats = match_features(
-            frames.select("period", "t_s", "possession_team", "flipped"),
-            objects,
-            ball_source,
-            features_version,
-        ).select(keep)
+        t0 = time.perf_counter()
+        feats = match_features(inputs, objects, ball_source, features_version).select(keep)
+        if inferred:
+            pstats["features_s"] = pstats.get("features_s", 0.0) + time.perf_counter() - t0
         if cache:
             feats.write_parquet(path)
     if feats.height != frames.height:
