@@ -28,7 +28,7 @@ import polars as pl
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from evaluation.folds import FOLDS_PATH, GAMESTATE_DIR, load
-from evaluation.metrics import alarm_summary, pr_auc
+from evaluation.metrics import alarm_summary, pr_auc, score_alarms
 from evaluation.report import (
     PROCESSED_DIR,
     alarms_at_tau,
@@ -129,7 +129,12 @@ def matched_budget(rows: pl.DataFrame, shots: pl.DataFrame) -> dict[float, tuple
     out = {}
     for b in BUDGETS:
         ok = [x for x in sweep if x[1]["false_alarms_per_match"] <= b]
-        out[b] = min(ok, key=lambda x: (x[1]["miss_rate"], -x[0])) if ok else None
+        if not ok:
+            out[b] = None
+            continue
+        tau, sm = min(ok, key=lambda x: (x[1]["miss_rate"], -x[0]))
+        lead = score_alarms(rows, shots, tau)[0]["lead_s"].drop_nulls()
+        out[b] = (tau, sm | {"lead_2s": int((lead >= 2).sum())})
     return out
 
 
@@ -228,18 +233,20 @@ def main(argv: list[str]) -> int:
     )
 
     print(f"\n## Alarms at matched false alarms per match ({h}, pooled OOF, descriptive)\n")
-    print("| budget | run | τ | false / match | caught | miss rate | median lead (s) |")
-    print("|---|---|---|---|---|---|---|")
+    print(
+        "| budget | run | τ | false / match | caught | miss rate | median lead (s) | lead ≥ 2 s |"
+    )
+    print("|---|---|---|---|---|---|---|---|")
     for b in BUDGETS:
         for name, res in zip(names, budgets, strict=True):
             if res[b] is None:
-                print(f"| ≤ {b:g} | {name} | – | – | – | – | – |")
+                print(f"| ≤ {b:g} | {name} | – | – | – | – | – | – |")
                 continue
             tau, sm = res[b]
             caught = round((1 - sm["miss_rate"]) * leads[0][1])
             print(
                 f"| ≤ {b:g} | {name} | {tau:.2f} | {sm['false_alarms_per_match']:.2f} | "
-                f"{caught} | {sm['miss_rate']:.3f} | {sm['lead_s_median']:.2f} |"
+                f"{caught} | {sm['miss_rate']:.3f} | {sm['lead_s_median']:.2f} | {sm['lead_2s']} |"
             )
 
     y, fold, tts = base["y"].to_numpy(), base["fold"].to_numpy(), base["tts"].to_numpy()
