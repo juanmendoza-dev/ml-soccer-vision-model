@@ -1,4 +1,6 @@
-"""The frame GNN (05 model 2): message passing over one graph per grid row.
+"""The frame GNN (05 model 2): message passing over one graph per grid row. With
+steps > 1 it's the temporal GNN (05 model 3): a window of those graphs, turned into the
+anchor row's frame, through a GRU.
 
 Same interface as the floor and LightGBM (fit / predict / coef / n_train / fit_info), so
 prediction.cv runs it unchanged. Graphs come from a GraphStore lined up with the data's
@@ -40,8 +42,13 @@ PARAMS = {
     "stride": 4,
     "grad_clip": 1.0,
     "temperature": True,
+    # grid rows in a window (1: the frame GNN) and the rows between its steps
+    "steps": 1,
+    "step_rows": 5,
 }
-PREDICT_BATCH = 2048
+# the temporal GNN: the last 2.5 s, 0.5 s apart. A batch is 128 x 6 graphs (05)
+TEMPORAL_PARAMS = {**PARAMS, "steps": 6, "batch_size": 128}
+PREDICT_BATCH = 2048  # graphs per prediction batch
 # training batches come from runs of this many batches sorted by node count, so a batch is
 # padded to its own largest graph, not to MAX_NODES (2.25x fewer node pairs on PFF rows)
 BUCKET = 64
@@ -147,8 +154,13 @@ class GNNModel:
         a row's output doesn't depend on how much of it there is)."""
         import torch
 
-        nodes, n = self.graphs.take(idx[ii])
-        nodes = nodes[:, : max(int(n.max()), 1)]
+        p = self.params
+        if p["steps"] > 1:
+            nodes, n = self.graphs.window(idx[ii], p["steps"], p["step_rows"])
+            nodes = nodes[:, :, : max(int(n.max()), 1)]
+        else:
+            nodes, n = self.graphs.take(idx[ii])
+            nodes = nodes[:, : max(int(n.max()), 1)]
         dev = self.dev
         return (
             torch.from_numpy(nodes).to(dev).float(),
@@ -167,17 +179,27 @@ class GNNModel:
             out += [run[s : s + size] for s in range(0, len(run), size)]
         return [out[i] for i in rng.permutation(len(out))]
 
+    def _sizes(self, rows: np.ndarray) -> np.ndarray:
+        """Node count per store row, the largest over its window for the temporal GNN:
+        what a batch gets padded to."""
+        p = self.params
+        if p["steps"] == 1:
+            return self.graphs.n[rows]
+        src = self.graphs.steps(rows, p["steps"], p["step_rows"])
+        return np.where(src >= 0, self.graphs.n[np.maximum(src, 0)], 0).max(axis=1)
+
     def _logits(self, net, idx: np.ndarray, glob: np.ndarray, ii: np.ndarray) -> np.ndarray:
         """Logits for positions ii, computed in node-count order and put back."""
         import torch
 
-        order = ii[np.argsort(self.graphs.n[idx[ii]], kind="stable")]
+        order = ii[np.argsort(self._sizes(idx[ii]), kind="stable")]
         out = np.zeros(len(ii))
         got = []
+        size = max(PREDICT_BATCH // self.params["steps"], 1)
         net.eval()
         with torch.no_grad():
-            for s in range(0, len(order), PREDICT_BATCH):
-                got.append(net(*self._inputs(idx, glob, order[s : s + PREDICT_BATCH])).cpu())
+            for s in range(0, len(order), size):
+                got.append(net(*self._inputs(idx, glob, order[s : s + size])).cpu())
         if got:
             where = np.empty(idx.shape[0], np.int64)
             where[ii] = np.arange(len(ii))
@@ -187,7 +209,7 @@ class GNNModel:
     def fit(self, df: pl.DataFrame, h: str) -> "GNNModel":
         import torch
 
-        from prediction.gnn_net import FrameGNN
+        from prediction.gnn_net import FrameGNN, TemporalGNN
 
         if self.graphs is None:
             raise ValueError("the GNN needs graphs: a GraphStore lined up with the data")
@@ -202,7 +224,7 @@ class GNNModel:
             torch.cuda.reset_peak_memory_stats()
         p = self.params
         idx = self.graphs.check(rows)
-        n_nodes = self.graphs.n[idx]
+        n_nodes = self._sizes(idx)
         y = rows[f"label_shot_{h}"].to_numpy().astype(np.float32)
         k = rows.select(tenths())["t_s"].to_numpy()
         raw = self._raw_globals(rows)
@@ -223,7 +245,8 @@ class GNNModel:
         hold = rows["match_id"].is_in(es).to_numpy()
         train_i, es_i = np.flatnonzero(~hold), np.flatnonzero(hold)
 
-        net = FrameGNN(len(NODE_FEATURES), len(self.features), p["d"], p["layers"], p["dropout"])
+        cls = TemporalGNN if p["steps"] > 1 else FrameGNN
+        net = cls(len(NODE_FEATURES), len(self.features), p["d"], p["layers"], p["dropout"])
         net = net.to(dev)
         opt = torch.optim.AdamW(net.parameters(), lr=p["lr"], weight_decay=p["weight_decay"])
         loss_fn = torch.nn.BCEWithLogitsLoss()
