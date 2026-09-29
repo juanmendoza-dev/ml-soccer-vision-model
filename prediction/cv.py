@@ -4,7 +4,7 @@
         [--no-report] [--features-version 1|2] [--degrade ARM:SEVERITY ...]
         [--degrade-arm both|test] [--degrade-seed N] [--device auto|cuda|mps|cpu]
         [--gnn-globals v1|none] [--gnn-layers N] [--gnn-param KEY=VALUE ...] [--one-fold N]
-        [--possession provider|inferred]
+        [--possession provider|inferred] [--stale-possession none|unknown] [--stale-after S]
 
 Per horizon and outer fold: fit on the training matches minus the inner split, pick
 tau on the inner matches, refit on all training matches, predict the held-out fold.
@@ -23,6 +23,10 @@ matches; test fits and picks tau on clean data and predicts degraded held-out fo
 --possession inferred builds the model's inputs from stage 8's possession (vision.state,
 run on the game state) instead of PFF's (05, "Inferred possession"; 07 #6). Labels, scored
 rows, tau and the alarms stay on PFF's. lgbm and floor only, not with --degrade.
+--stale-possession unknown --stale-after S makes stage 8's possession null where its last
+confirmed carrier is more than S seconds old (arm U, 05 "Stale possession").
+--features-version 3 adds stage 8's carrier age as a feature, with either possession, so
+it runs stage 8 too (arm S). lgbm and floor only, not with --degrade.
 
 --model gnn is the frame GNN (05 model 2) on graphs cached per match. --gnn-globals none
 and --gnn-layers 0 are its ablation arms. --one-fold N is a timing run: outer fold N only,
@@ -53,6 +57,7 @@ from prediction.features import (
     FEATURE_SETS,
     FEATURES,
     FEATURES_VERSION,
+    STAGE8_VERSIONS,
     load_match,
 )
 from prediction.floor import training_rows
@@ -97,6 +102,7 @@ DATA_KEYS = (
     "possession",
     "state_config",
     "possession_scored",
+    "stale_possession",
     "globals",
     "graphs_version",
 )
@@ -117,6 +123,7 @@ def load_data(
     features_version: str = FEATURES_VERSION,
     possession_source: str = "provider",
     possession_stats: dict | None = None,
+    stale_after: float | None = None,
 ):
     data = pl.concat(
         [
@@ -132,6 +139,7 @@ def load_data(
                 possession=possession_source,
                 gamestate_dir=gamestate_dir,
                 possession_stats=possession_stats,
+                stale_after=stale_after,
             )
             for i in ids
         ]
@@ -380,6 +388,13 @@ def main(argv: list[str]) -> int:
         help="where the model's inputs get possession from: PFF's, or stage 8's (07 #6)",
     )
     ap.add_argument(
+        "--stale-possession",
+        default="none",
+        choices=possession.STALE,
+        help="unknown: stage 8's possession is null once its carrier is --stale-after s old",
+    )
+    ap.add_argument("--stale-after", type=float, metavar="S", help="seconds, with unknown")
+    ap.add_argument(
         "--one-fold",
         type=int,
         metavar="N",
@@ -398,6 +413,18 @@ def main(argv: list[str]) -> int:
             ap.error("--possession inferred is lgbm/floor only: graphs use PFF's possession (05)")
         if specs:
             ap.error("--possession inferred can't be combined with --degrade (05)")
+    if args.stale_possession == "unknown":
+        if args.possession != "inferred":
+            ap.error("--stale-possession unknown needs --possession inferred (05)")
+        if args.stale_after is None or not args.stale_after > 0:
+            ap.error("--stale-possession unknown needs a positive --stale-after")
+    elif args.stale_after is not None:
+        ap.error("--stale-after needs --stale-possession unknown")
+    if args.features_version in STAGE8_VERSIONS:
+        if args.model in GNNS:
+            ap.error(f"--features-version {args.features_version} is lgbm/floor only (05)")
+        if specs:
+            ap.error(f"--features-version {args.features_version} can't be combined with --degrade")
     if args.model == "tgnn" and args.gnn_layers == 0:
         ap.error("--gnn-layers 0 has no graph, so no temporal model: use --model gnn")
     folds = load(args.folds)
@@ -436,16 +463,20 @@ def run(args, specs, folds: dict) -> int:
         version,
         args.possession,
         pstats,
+        args.stale_after,
     )
     test_data, data_config, model_kwargs, test_attrs = None, {}, {}, None
     if args.model in VERSIONED:
         data_config = {"features": list(FEATURE_SETS[version]), "features_version": version}
+    if args.possession == "inferred" or version in STAGE8_VERSIONS:
+        data_config["state_config"] = possession.StateConfig().to_dict()
     if args.possession == "inferred":
         data_config |= {
             "possession": "inferred",
-            "state_config": possession.StateConfig().to_dict(),
             "possession_scored": possession.summarize(pstats),
         }
+        if args.stale_after is not None:
+            data_config["stale_possession"] = {"arm": "unknown", "after_s": args.stale_after}
         log(
             f"inferred possession: {data_config['possession_scored']}, stage 8 "
             f"{pstats.get('stage8_s', 0):.0f} s, features {pstats.get('features_s', 0):.0f} s "
