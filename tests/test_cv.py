@@ -157,6 +157,35 @@ def test_test_arm_fits_on_data_and_predicts_test_data(monkeypatch):
         )
 
 
+def test_test_attrs_reach_only_the_held_out_predictions(monkeypatch):
+    """--degrade-arm test for the GNN: the degraded graph store is set on each outer
+    model just before it predicts its held-out fold, never before a fit or a tau."""
+    folds, data, shots = world()
+    seen = []
+
+    class Spy(LogisticFloor):
+        store = "clean"
+
+        def fit(self, df, h):
+            assert self.store == "clean"
+            return super().fit(df, h)
+
+        def predict(self, df):
+            seen.append((self.store, set(df["match_id"].unique())))
+            return super().predict(df)
+
+    monkeypatch.setitem(cv.MODELS, "spy", (Spy, {"features": [], "l2": 1e-6}))
+    _, meta = cv.run_cv(
+        "spy", ["h5"], folds, data, shots, log=lambda *_: None, test_attrs={"store": "degraded"}
+    )
+    _, clean = cv.run_cv("spy", ["h5"], folds, data, shots, log=lambda *_: None)
+    assert meta["tau"] == clean["tau"]  # every tau came from clean predictions
+    fold_of = {m["match_id"]: m["fold"] for m in folds["matches"]}
+    degraded = [ids for store, ids in seen if store == "degraded"]
+    assert len(degraded) == folds["n_folds"]
+    assert [{fold_of[i] for i in ids} for ids in degraded] == [{k} for k in range(len(degraded))]
+
+
 def test_lgbm_takes_its_features_from_the_versioned_config():
     pytest.importorskip("lightgbm")
     folds, data, shots = world()

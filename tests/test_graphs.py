@@ -374,3 +374,32 @@ def test_windows_are_the_same_in_a_mirrored_match():
     assert np.allclose(ca[..., goal], cb[..., goal], rtol=0, atol=5e-3)
     # every anchor step is its own frame graph
     assert np.array_equal(xa[:, -1], a.nodes[rows].astype(np.float32))
+
+
+# --- degraded graphs for the sensitivity test (05) ---
+
+
+def test_degraded_graphs_are_built_in_memory_and_never_cached(tmp_path):
+    frames, objects = synth(4, n=80)
+    objects = objects.with_columns(interpolated=~pl.col("visible"))
+    d = write_match(tmp_path, frames, objects)
+    clean, built = load_graphs("m1", tmp_path)
+    assert built
+    cache = d / "graphs_v2_held.npz"
+    stamp = cache.stat().st_mtime_ns
+    bad, built = load_graphs("m1", tmp_path, degrade=["player_noise:2", "id_fragment:0.5"])
+    assert not built and cache.stat().st_mtime_ns == stamp
+    assert [p.name for p in d.iterdir() if p.name.startswith("graphs")] == ["graphs_v2_held.npz"]
+    assert np.array_equal(bad["n"], clean["n"])  # noise and new IDs hide nobody
+    assert not np.array_equal(bad["nodes"], clean["nodes"])
+    # tracks break every 0.5 s on average: far fewer players have a velocity
+    vel = lambda g: g["nodes"][..., IDX["has_vel"]][:, 1:].sum()
+    assert vel(bad) < 0.6 * vel(clean)
+    again, _ = load_graphs("m1", tmp_path, degrade=["player_noise:2", "id_fragment:0.5"])
+    assert np.array_equal(again["nodes"], bad["nodes"])  # deterministic per seed
+    other, _ = load_graphs("m1", tmp_path, degrade=["player_noise:2"], degrade_seed=1)
+    assert not np.array_equal(other["nodes"], bad["nodes"])
+    with pytest.raises(ValueError, match="held"):
+        load_graphs("m1", tmp_path, "raw", degrade=["ball_miss:0.1"])
+    # the clean cache is still the clean graphs
+    assert np.array_equal(load_graphs("m1", tmp_path)[0]["nodes"], clean["nodes"])
