@@ -47,8 +47,9 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] P(goal) v1: P(shot) × xG at carrier position
 
 **Possession inference (03 stage 8, runs on dataset tracking)**
-- [ ] Ball carrier / possession / ball state rules on pitch coordinates
-- [ ] Check against PFF, SkillCorner and IDSSE provider values (≥ 90% targets)
+- [x] Ball carrier / possession / ball state rules on pitch coordinates (`vision/state.py`, 2026-09-29): one causal state machine on visible objects, thresholds in seconds
+- [x] Check against PFF (`python -m vision.state_check`, `Docs/reviews/stage8-2026-09-29.md`): possession 77.9% (82.9% alive), under 90%. A confirmed carrier matches PFF 97.9%, but only 26% of alive frames have one. Dead → dead or null 89.9%, nearly all null
+- [ ] Same check on SkillCorner and IDSSE when their converters land (SkillCorner also checks the carrier)
 - [ ] Provider vs. inferred possession comparison (07 #6)
 
 **GNNs** (code and tests on the M1, full CV runs on the workstation's RTX 2060, decided 2026-09-28)

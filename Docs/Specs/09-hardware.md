@@ -79,10 +79,10 @@ uv sync --all-extras
 uv run python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0), 'sm_75' in torch.cuda.get_arch_list())"
 # 2.11.0+cu128 12.8 True NVIDIA GeForce RTX 2060 True
 
-uv run python -m pytest -q                        # 366 passed, 110 skipped (see below)
+uv run python -m pytest -q                        # 379 passed, 110 skipped (see below)
 uv run python scripts\gnn_smoke.py --device cuda  # ~2 min: loss goes down, peak GPU memory, rows/s
 ```
-- The tests give 366 passed and 110 skipped (360 on the clean clone check, plus 6 data-free tests added with the temporal GNN and the degraded graphs). The skips are the converter tests: `data/raw` isn't copied. The M1, which has the raw data, runs all 476. The GNN cases run in their own process, inside `tests/test_gnn.py`.
+- The tests give 379 passed and 110 skipped (360 on the clean clone check, plus 19 data-free tests added with the temporal GNN, the degraded graphs and stage 8). The skips are the converter tests: `data/raw` isn't copied. The M1, which has the raw data, runs all 489. The GNN cases run in their own process, inside `tests/test_gnn.py`.
 - The smoke fit prints training rows/s, including the early-stopping passes. The M1 Pro did about 2,800 on MPS. Peak GPU memory should be well under 6,000 MB.
 - Git Bash works too (it's what Claude Code uses on Windows). The same commands work there with forward slashes and `export PYTHONUTF8=1`.
 
