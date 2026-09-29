@@ -166,11 +166,14 @@ def run_cv(
     data_config: dict | None = None,
     model_kwargs: dict | None = None,
     only_folds: list[int] | None = None,
+    test_attrs: dict | None = None,
 ) -> tuple[pl.DataFrame, dict]:
     """test_data (same rows as data, e.g. degraded) replaces data for the held-out
-    predictions only; every fit and tau choice uses data. model_kwargs go to the model
-    but not into run.json (the GNN's graph store). only_folds runs just those outer folds
-    and skips the final tau: a partial run, for timing."""
+    predictions only; every fit and tau choice uses data. test_attrs are set on each
+    outer model just before it predicts the held-out fold (the GNN's degraded graph
+    store, with --degrade-arm test). model_kwargs go to the model but not into run.json
+    (the GNN's graph store). only_folds runs just those outer folds and skips the final
+    tau: a partial run, for timing."""
     cls, config = MODELS[model]
     config = {**config, "ball_source": ball_source, **(data_config or {})}
     if test_data is None:
@@ -204,6 +207,8 @@ def run_cv(
             m = make().fit(of(data, train), h)
             t2 = time.perf_counter()
             rows = of(test_data, test)
+            for name, value in (test_attrs or {}).items():
+                setattr(m, name, value)
             p_cols[h][rows["row"].to_numpy()] = m.predict(rows).fill_null(np.nan).to_numpy()
             t3 = time.perf_counter()
             timing[h][str(fold)] = {
@@ -365,8 +370,6 @@ def main(argv: list[str]) -> int:
     specs = degrade.canonical(args.degrade)
     if specs and args.ball_source != "held":
         ap.error("--degrade needs --ball-source held")
-    if specs and args.model in GNNS:
-        ap.error("--degrade isn't wired into the GNN's graphs yet")
     try:
         args.gnn_overrides = gnn_overrides(args.gnn_param)
     except ValueError as e:
@@ -408,7 +411,7 @@ def run(args, specs, folds: dict) -> int:
         stats,
         version,
     )
-    test_data, data_config, model_kwargs = None, {}, {}
+    test_data, data_config, model_kwargs, test_attrs = None, {}, {}, None
     if args.model in VERSIONED:
         data_config = {"features": list(FEATURE_SETS[version]), "features_version": version}
     if specs:
@@ -433,7 +436,11 @@ def run(args, specs, folds: dict) -> int:
     graphs_s = build_s = 0.0
     if args.model in GNNS:
         t0 = time.perf_counter()
-        store = graphs.GraphStore.load(ids, args.processed, args.ball_source, log=log)
+        # degraded graphs come from the same degraded objects as the features (05)
+        fit_specs = specs if args.degrade_arm == "both" else []
+        store = graphs.GraphStore.load(
+            ids, args.processed, args.ball_source, log, fit_specs, args.degrade_seed
+        )
         graphs_s = time.perf_counter() - t0
         build_s = graphs_s if store.built else 0.0
         log(
@@ -441,6 +448,15 @@ def run(args, specs, folds: dict) -> int:
             f"{store.nodes.nbytes / 2**30:.2f} GB, {graphs_s:.0f} s"
         )
         model_kwargs = {"graphs": store, "log": log}
+        if specs and args.degrade_arm == "test":
+            t0 = time.perf_counter()
+            test_attrs = {
+                "graphs": graphs.GraphStore.load(
+                    ids, args.processed, args.ball_source, log, specs, args.degrade_seed
+                )
+            }
+            graphs_s += time.perf_counter() - t0
+            log(f"degraded graphs for the held-out folds: {time.perf_counter() - t0:.0f} s")
         if args.gnn_globals == "none":
             data_config["features"] = []
         data_config |= {"globals": args.gnn_globals, "device": args.device}
@@ -463,6 +479,7 @@ def run(args, specs, folds: dict) -> int:
         data_config=data_config,
         model_kwargs=model_kwargs,
         only_folds=only,
+        test_attrs=test_attrs,
     )
     meta["config"]["timing"] |= {
         "load_s": round(load_s, 1),
