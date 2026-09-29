@@ -1,7 +1,8 @@
 """Out-of-fold predictions with 07's tau rule, written as a run (07, "Run format").
 
     python -m prediction.cv [--model floor|lgbm] [--ball-source held|raw] [--run-id ID] [--no-report]
-        [--degrade ARM:SEVERITY ...] [--degrade-arm both|test] [--degrade-seed N]
+        [--features-version 1|2] [--degrade ARM:SEVERITY ...] [--degrade-arm both|test]
+        [--degrade-seed N]
 
 Per horizon and outer fold: fit on the training matches minus the inner split, pick
 tau on the inner matches, refit on all training matches, predict the held-out fold.
@@ -9,6 +10,9 @@ The "final" tau does the same over all CV matches with inner_split(None).
 
 --ball-source raw feeds PFF's ESTIMATED ball, which uses later frames (05, Leakage). It's
 only there to measure how much that leak inflates a result; held is the real number.
+
+--features-version picks the lgbm's feature set (05): 1 is the baseline, 2 adds the
+lead-time features. Each version has its own feature cache.
 
 --degrade runs the vision sensitivity test (05): objects are degraded the way vision
 fails before features are built. --degrade-arm both (default) degrades training and test
@@ -28,7 +32,13 @@ from evaluation.metrics import MAX_FALSE_PER_MATCH, choose_tau, shots_table
 from evaluation.report import PROCESSED_DIR, render
 from evaluation.runs import RUNS_DIR, save_run
 from prediction import degrade, floor, lgbm
-from prediction.features import BALL_SOURCES, FEATURES, FEATURES_VERSION, load_match
+from prediction.features import (
+    BALL_SOURCES,
+    FEATURE_SETS,
+    FEATURES,
+    FEATURES_VERSION,
+    load_match,
+)
 from prediction.floor import training_rows
 
 MODELS = {
@@ -55,6 +65,8 @@ DATA_KEYS = (
     "degrade_seed",
     "degrade_realized",
 )
+# models whose feature list follows features_version (the floor's is fixed)
+VERSIONED = {"lgbm"}
 KEYS = ["match_id", "period", "t_s"]
 
 
@@ -67,6 +79,7 @@ def load_data(
     degrade_specs=(),
     degrade_seed: int = degrade.DEFAULT_SEED,
     degrade_stats: dict | None = None,
+    features_version: str = FEATURES_VERSION,
 ):
     data = pl.concat(
         [
@@ -78,6 +91,7 @@ def load_data(
                 degrade=degrade_specs,
                 degrade_seed=degrade_seed,
                 degrade_stats=degrade_stats,
+                features_version=features_version,
             )
             for i in ids
         ]
@@ -134,7 +148,10 @@ def run_cv(
         raise ValueError("test_data must have the same rows as data")
 
     def make():
-        return cls(**{k: v for k, v in config.items() if k not in DATA_KEYS})
+        kw = {k: v for k, v in config.items() if k not in DATA_KEYS}
+        if model in VERSIONED:
+            kw["features"] = config["features"]
+        return cls(**kw)
 
     ids = sorted({m["match_id"] for m in folds["matches"]})
     fold_of = {m["match_id"]: m["fold"] for m in folds["matches"]}
@@ -215,6 +232,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--folds", type=Path, default=FOLDS_PATH)
     ap.add_argument("--runs", type=Path, default=RUNS_DIR)
     ap.add_argument("--no-report", action="store_true")
+    ap.add_argument("--features-version", default=FEATURES_VERSION, choices=sorted(FEATURE_SETS))
     ap.add_argument(
         "--degrade",
         action="append",
@@ -232,6 +250,7 @@ def main(argv: list[str]) -> int:
     folds = load(args.folds)
     ids = sorted({m["match_id"] for m in folds["matches"]})
     stats = {}
+    version = args.features_version
     data, shots = load_data(
         ids,
         args.processed,
@@ -241,10 +260,13 @@ def main(argv: list[str]) -> int:
         specs,
         args.degrade_seed,
         stats,
+        version,
     )
     test_data, data_config = None, {}
+    if args.model in VERSIONED:
+        data_config = {"features": list(FEATURE_SETS[version]), "features_version": version}
     if specs:
-        data_config = {
+        data_config |= {
             "degrade": specs,
             "degrade_arm": args.degrade_arm,
             "degrade_seed": args.degrade_seed,
@@ -254,7 +276,12 @@ def main(argv: list[str]) -> int:
         if args.degrade_arm == "test":
             test_data = data
             data, _ = load_data(
-                ids, args.processed, args.gamestate, args.horizons, args.ball_source
+                ids,
+                args.processed,
+                args.gamestate,
+                args.horizons,
+                args.ball_source,
+                features_version=version,
             )
     print(f"{len(ids)} matches, {data.height:,} rows, {shots.height} shots", flush=True)
     preds, meta = run_cv(

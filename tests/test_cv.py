@@ -155,3 +155,15 @@ def test_test_arm_fits_on_data_and_predicts_test_data(monkeypatch):
         cv.run_cv(
             "spy", ["h5"], folds, data, shots, log=lambda *_: None, test_data=degraded.head(10)
         )
+
+
+def test_lgbm_takes_its_features_from_the_versioned_config():
+    pytest.importorskip("lightgbm")
+    folds, data, shots = world()
+    config = {"features": ["ball_dist"], "features_version": "test"}
+    preds, meta = cv.run_cv(
+        "lgbm", ["h5"], folds, data, shots, log=lambda *_: None, data_config=config
+    )
+    assert meta["config"]["features"] == ["ball_dist"]
+    assert meta["config"]["features_version"] == "test"
+    assert list(meta["folds"]["h5"]["0"]["coef"]) == ["ball_dist"]
