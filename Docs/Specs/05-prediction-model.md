@@ -315,6 +315,8 @@ Stage 8's possession is the team of the latest confirmed carrier, carried forwar
 - `--stale-possession unknown` needs `--possession inferred` and a positive `--stale-after`. `--stale-after` needs `--stale-possession unknown`. Anything else is an error, and `none` (the default) is the old inferred path.
 - **S+U** (both at once) is run only if S and U each help on their own.
 
+**Result (2026-09-29, `Docs/reviews/possession-stale-2026-09-29.md`).** Neither arm helps. H = 5 PR-AUC: arm S 0.259 (−0.037 vs provider, 0/5 folds), arm U 0.255 (−0.040, 0/5), against 0.258 for inferred v1. Provider + v3 is 0.296 (−0.0006, 3/5 folds), so the feature doesn't help on its own either, and S+U isn't run. Carrier age can't turn a wrongly rotated frame around. Arm U's unknown rows rank as badly as wrong ones (PR-AUC 0.024 vs 0.159 for the provider), because the ball features still point at the +x goal, as expected above. 85% of the disagreeing rows are PFF changing possession while stage 8 hasn't followed, so the fix goes in stage 8's rules (03).
+
 **Caches.**
 - Stage 8's state per match: `data/processed/<match>/state_inferred_age_<key>.parquet` (`frame_id`, `possession_team`, `carrier_age_s`). The old `state_inferred_<key>.parquet` holds possession only. It's never read again, and a resample deletes both (the `state_inferred_*` glob).
 - Features: v3 provider is `features_v3_<ball_source>_s8_<key>.parquet`, since it depends on stage 8's config. v3 inferred is `features_v3_<ball_source>_pinf_<key>.parquet`. Arm U adds `_unk<S>` to the inferred name (`features_v1_held_pinf_<key>_unk10.parquet`). The v1/v2 provider names and `features_v1_held_pinf_<key>` stay as they are.

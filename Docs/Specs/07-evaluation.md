@@ -95,6 +95,7 @@ An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where
      - **The feature might help on its own.** If provider + v3 beats provider v1 on at least 4 of 5 folds (ΔPR-AUC at H = 5), a v3 arm's cost is read against provider + v3 instead: inferred + v3 − provider + v3. That Δ decides whether it's "small". Otherwise a feature gain would be credited to stage 8.
      - Each arm is also compared with `lgbm-pinf-2026-09-29`, to show how much of the −0.038 it recovers.
      - If no arm reaches "small", stage 8's rules change next (03 stage 8), and 07 #6 is rerun on the new rules.
+   - **Result (2026-09-29, `Docs/reviews/possession-stale-2026-09-29.md`):** no arm reaches "small". H = 5 mean Δ vs `lgbm-held-2026-09-27`: arm S −0.037 (0/5 folds), arm U −0.040 (0/5). Provider + v3 beats provider v1 on only 3/5 folds (−0.0006), so arm S is read against provider v1. Against `lgbm-pinf-2026-09-29` they recover +0.001 (S) and −0.002 (U) of the −0.038. H = 3 agrees (S −0.034, U −0.037, 0/5 each). **Stage 8's rules change next.**
 
 ## Outputs
 
