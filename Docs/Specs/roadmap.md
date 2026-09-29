@@ -52,9 +52,9 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] Provider vs. inferred possession comparison (07 #6)
 
 **GNNs** (code and tests on the M1, full CV runs on the workstation's RTX 2060, decided 2026-09-28)
-- [ ] Frame GNN spec in 05: graph per 10 Hz row (visible players + held ball, attacking frame), node/edge features, model size, frame subsampling for training. Same leakage rules as the hand features (causal, no ESTIMATED positions, history rotated with the anchor row)
-- [ ] Frame GNN code (`prediction/gnn.py` or similar) behind the same fit / predict / coef interface, registered in `prediction.cv`, tests, and a tiny smoke fit on 2–3 matches on the M1. No full CV on the M1
-- [ ] Move the data to the workstation (`data/` is gitignored): `data/processed/*/{frames,objects}_10hz.parquet`, `data/gamestate/*/{match,events,frames}.parquet`, and the baseline run `data/runs/lgbm-held-2026-09-27`. Set up `uv sync` with the `prediction` extra on CUDA (09) and write the runbook into 09
+- [x] Frame GNN spec in 05 (2026-09-28): a graph per 10 Hz row (visible players + held ball, attacking frame), fully connected with edges in meters, v1 hand features as a global vector, plain log loss, early stopping on whole matches without a refit, stride-4 epochs. Built in-house, not with unravelsports (its velocities use later frames). Ablation arms `--gnn-layers 0` and `--gnn-globals none` say which claim a win supports
+- [x] Frame GNN code (`prediction/graphs.py`, `prediction/gnn.py`, `prediction/gnn_net.py`, `--model gnn` in `prediction.cv`, `--one-fold` timing run), tests (causal, ESTIMATED-free, mirror, batch-independent, out of fold, learns through `run_cv`), and a smoke fit on 3 matches on the M1 (`scripts/gnn_smoke.py`; loss goes down, held-out PR-AUC 0.34 at a 0.020 base rate). No full CV on the M1
+- [ ] Move the data to the workstation (`data/` is gitignored). Packed on the M1 (`scripts/pack_workstation_data.sh`: `data/workstation-data-2026-09-29.tar`, 2.4 GB, 399 files) and the runbook is in 09. Left: copy it over, unpack, `uv sync` with the `prediction` extra on CUDA, run the tests and the smoke check
 - [ ] Frame GNN full CV on the 2060 (H = 5 first, then H = 3): time one fold first, then compare with `lgbm-held-2026-09-27` using `evaluation.compare` and `scripts/lead_time.py`
 - [ ] Temporal GNN (last 2–3 s through the frame GNN + GRU), same path: code on the M1, runs on the 2060. Then rerun `id_fragment` from the sensitivity test on it
 - [ ] Node-level "who will shoot" head → P(goal) v2
