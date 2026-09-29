@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Pack what the CV runs and their reports need on the workstation (09). data/ is gitignored
-# and folds.json is already in git. Feature and graph caches are left out: the workstation
-# builds its own on the first run.
+# Pack what the CV runs and their reports need on the workstation (09), plus the three games'
+# objects the resampler tests read. data/ is gitignored and folds.json is already in git.
+# Feature and graph caches are left out: the workstation builds its own on the first run.
 #
 #   scripts/pack_workstation_data.sh [OUT.tar]
 #
@@ -30,6 +30,9 @@ done
 for d in data/gamestate/*/; do
   for f in match.parquet events.parquet frames.parquet; do add "$d$f"; done
 done
+# the resampler's real-data tests read these games' native objects (tests/test_resample.py),
+# so the test suite passes there too
+for g in 10502 10504 10505; do add "data/gamestate/$g/objects.parquet"; done
 run=data/runs/lgbm-held-2026-09-27
 if [ ! -d "$run" ]; then
   echo "missing: $run" >&2
