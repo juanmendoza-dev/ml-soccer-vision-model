@@ -1,4 +1,5 @@
-"""The frame GNN's network (05 model 2): dense message passing over padded graphs.
+"""The GNNs' networks: dense message passing over padded graphs, one graph per grid row
+(FrameGNN, 05 model 2) or a window of them through a GRU (TemporalGNN, 05 model 3).
 
 Kept apart from prediction/gnn.py so that importing the model wrapper (and so
 prediction.cv) doesn't need torch.
@@ -66,6 +67,18 @@ class MessageLayer(nn.Module):
         return h * mask.unsqueeze(-1)
 
 
+def readout(h: torch.Tensor, x: torch.Tensor, mask: torch.Tensor) -> list[torch.Tensor]:
+    """Mean, max and sum over the real nodes, and the ball node's embedding (slot 0)."""
+    valid = mask.unsqueeze(-1).to(h.dtype)
+    count = valid.sum(1).clamp(min=1.0)
+    mean = (h * valid).sum(1) / count
+    top = h.masked_fill(~mask.unsqueeze(-1), torch.finfo(h.dtype).min).amax(1)
+    top = torch.where(mask.any(1, keepdim=True), top, torch.zeros_like(top))
+    total = (h * valid).sum(1) / MAX_NODES
+    ball = h[:, 0] * x[:, 0, IDX["is_ball"]].unsqueeze(-1)
+    return [mean, top, total, ball]
+
+
 class FrameGNN(nn.Module):
     """Graph readout (mean, max and sum over the nodes, plus the ball node) and the
     global vector, then an MLP to one logit. layers=0 switches the graph off: the same
@@ -102,14 +115,59 @@ class FrameGNN(nn.Module):
             h = self.encode(x) * mask.unsqueeze(-1)
             for layer in self.layers:
                 h = layer(h, e, mask)
-            valid = mask.unsqueeze(-1).to(h.dtype)
-            count = valid.sum(1).clamp(min=1.0)
-            mean = (h * valid).sum(1) / count
-            top = h.masked_fill(~mask.unsqueeze(-1), torch.finfo(h.dtype).min).amax(1)
-            top = torch.where(mask.any(1, keepdim=True), top, torch.zeros_like(top))
-            total = (h * valid).sum(1) / MAX_NODES
-            ball = h[:, 0] * x[:, 0, IDX["is_ball"]].unsqueeze(-1)  # the ball is slot 0
-            parts += [mean, top, total, ball]
+            parts += readout(h, x, mask)
+        if self.glob is not None:
+            parts.append(self.glob(g))
+        return self.head(torch.cat(parts, dim=-1)).squeeze(-1)
+
+
+class TemporalGNN(nn.Module):
+    """05 model 3: every step of a window through the same message passing and readout
+    as the frame GNN, a GRU over the steps (oldest first), then a head on the GRU's last
+    state, the anchor step's readout and the global vector. A step with no nodes (no row,
+    or nothing visible) keeps the previous state. Written apart from FrameGNN so the
+    frame GNN's modules, and so its init and results, stay as they were."""
+
+    def __init__(
+        self, n_node: int, n_glob: int, d: int = 64, layers: int = 3, dropout: float = 0.1
+    ):
+        super().__init__()
+        if not layers:
+            raise ValueError("the temporal GNN needs message passing (layers >= 1)")
+        self.encode = nn.Sequential(nn.Linear(n_node, d), nn.GELU(), nn.Linear(d, d))
+        self.layers = nn.ModuleList(
+            MessageLayer(d, len(EDGE_FEATURES), dropout) for _ in range(layers)
+        )
+        self.step = nn.Sequential(nn.Linear(4 * d, d), nn.GELU())
+        self.gru = nn.GRUCell(d, d)
+        width = d + 4 * d
+        self.glob = None
+        if n_glob:
+            self.glob = nn.Sequential(nn.Linear(2 * n_glob, d), nn.GELU(), nn.Linear(d, d))
+            width += d
+        self.head = nn.Sequential(
+            nn.Linear(width, d), nn.GELU(), nn.Dropout(dropout), nn.Linear(d, 1)
+        )
+
+    def graphs(self, x: torch.Tensor, n: torch.Tensor) -> torch.Tensor:
+        """(M, N, F) nodes, (M,) counts -> (M, 4d) readouts."""
+        mask = torch.arange(x.shape[1], device=x.device)[None, :] < n[:, None]
+        e = edge_features(x)
+        h = self.encode(x) * mask.unsqueeze(-1)
+        for layer in self.layers:
+            h = layer(h, e, mask)
+        return torch.cat(readout(h, x, mask), dim=-1)
+
+    def forward(self, x: torch.Tensor, n: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
+        """x (B, T, N, F) windows, anchor last, n (B, T) node counts (0: no step), g (B,
+        2G) the anchor's globals -> (B,) logits."""
+        b, t = n.shape
+        r = self.graphs(x.flatten(0, 1), n.flatten()).view(b, t, -1)
+        z = self.step(r)
+        h = z.new_zeros(b, z.shape[-1])
+        for s in range(t):
+            h = torch.where((n[:, s] > 0).unsqueeze(-1), self.gru(z[:, s], h), h)
+        parts = [h, r[:, -1]]
         if self.glob is not None:
             parts.append(self.glob(g))
         return self.head(torch.cat(parts, dim=-1)).squeeze(-1)
