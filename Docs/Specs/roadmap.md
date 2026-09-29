@@ -24,7 +24,11 @@ Code for all of this is written and pushed. What's left is running and checking 
 - [ ] Write the results up in `Docs/reviews/` (frame GNN, temporal GNN, degraded runs) and tick the GNN items below
 
 **M1 (code, next build)**
-- [ ] Spec, then build, provider vs inferred possession (07 #6): the same LightGBM trained on stage 8's possession instead of PFF's. The labels and the attack direction key off provider possession today, so the spec has to say how. This decides whether stage 8's 77.9% is good enough (`Docs/reviews/stage8-2026-09-29.md`)
+- [ ] Provider vs inferred possession (07 #6): the same LightGBM trained on stage 8's possession instead of PFF's. It decides whether stage 8's 77.9% is good enough (`Docs/reviews/stage8-2026-09-29.md`). Half code, half a run, M1 only
+  - [ ] Spec in 05/07 first. Possession sets the attacking team, the flip, which rows are eligible and the labels. Proposal: the model's inputs use inferred possession, while labels and scored rows stay on PFF's (the shots really happened, so what gets scored shouldn't change)
+  - [ ] Code: a flag like `--possession inferred` that runs stage 8 (`vision.state.infer`) per match and feeds it through the resampler and features, with its own caches, plus tests (past only, provider run unchanged)
+  - [ ] Run: `--model lgbm` with the flag, H = 5 first (about 5–8 min), H = 3 if there's time (about 10–15 min for both; estimated from the earlier LightGBM runs, not measured). Stage 8 itself is about 15 s for 64 games; the resampler part is untimed
+  - [ ] Compare with `lgbm-held-2026-09-27` (`evaluation.compare`, `scripts/lead_time.py`) and write a short review. A small drop: stage 8 is good enough, move on. A big one: stage 8 needs work (see the review's "what it means")
 - [ ] Later: spec the node-level "who will shoot" head in 05 (labels from the shot's `player_id`, per-node team is already cached, the shooter is off camera in about a third of shot frames)
 
 ## Phase 1 — Predictor on tracking data (M1)
