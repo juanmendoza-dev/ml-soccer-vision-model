@@ -10,6 +10,12 @@ Per run, at each fold's own tau (07), over PFF open-play shots:
   shot counts at an offset only if every run has a non-null p on that row, so all runs
   are read on the same shots and rows. Diagnostic only; the test is the paired compare.
 - gain share by feature group, mean over folds (not an ablation)
+- alarms at matched false-alarm levels: one tau grid over pooled OOF for every run, and at
+  each budget the lowest miss rate within it. Descriptive (tau isn't picked on the
+  evaluation folds, 07), but it compares runs at the same false alarms, which the per-fold
+  tau doesn't when a run's budget transfers badly
+- PR-AUC with only the positives whose shot is 0-1, 1-2, 2-3, 3-5 s away (every negative
+  kept), pooled and per fold: how well each run ranks rows early in an attack
 """
 
 import argparse
@@ -22,6 +28,7 @@ import polars as pl
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from evaluation.folds import FOLDS_PATH, GAMESTATE_DIR, load
+from evaluation.metrics import alarm_summary, pr_auc
 from evaluation.report import (
     PROCESSED_DIR,
     alarms_at_tau,
@@ -32,6 +39,10 @@ from evaluation.report import (
 from evaluation.runs import load_run
 
 OFFSETS = (5.0, 2.0, 1.0, 0.2)
+SWEEP = np.round(np.arange(0.40, 0.755, 0.01), 2)
+BUDGETS = (2.0, 3.0, 5.0, 12.0)
+TTS_BINS = ((0, 1), (1, 2), (2, 3), (3, 5))
+KEYS = ["match_id", "period", "t_s"]
 GROUPS = {
     "ball position": [
         "ball_x",
@@ -111,6 +122,39 @@ def p_before(rows: pl.DataFrame, shots: pl.DataFrame, off: float) -> pl.DataFram
     return k.join(grid, on=["match_id", "period", "k"], how="left").sort("shot")
 
 
+def matched_budget(rows: pl.DataFrame, shots: pl.DataFrame) -> dict[float, tuple]:
+    """Per budget: (tau, summary) with the lowest miss rate at or under it; ties go to the
+    higher tau, as in 07."""
+    sweep = [(float(t), alarm_summary(rows, shots, float(t))) for t in SWEEP]
+    out = {}
+    for b in BUDGETS:
+        ok = [x for x in sweep if x[1]["false_alarms_per_match"] <= b]
+        out[b] = min(ok, key=lambda x: (x[1]["miss_rate"], -x[0])) if ok else None
+    return out
+
+
+def time_to_shot(rows: pl.DataFrame, shots: pl.DataFrame, h: str) -> pl.DataFrame:
+    """Scored rows (07) with tts: seconds to the next open-play shot by possession_team."""
+    op = (
+        shots.filter("open_play")
+        .select("match_id", "period", possession_team="team", shot_t="t_s")
+        .sort("shot_t")
+    )
+    scored = rows.filter(pl.col(f"label_mask_{h}"), ~pl.col("all_estimated")).sort("t_s")
+    return (
+        scored.join_asof(
+            op,
+            left_on="t_s",
+            right_on="shot_t",
+            by=["match_id", "period", "possession_team"],
+            strategy="forward",
+            check_sortedness=False,
+        )
+        .with_columns(tts=pl.col("shot_t") - pl.col("t_s"))
+        .sort(KEYS)
+    )
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("runs", nargs="+", type=Path)
@@ -121,7 +165,10 @@ def main(argv: list[str]) -> int:
     ids = sorted(m["match_id"] for m in folds["matches"] if m["source"] == "pff")
     shots = load_shots(ids, GAMESTATE_DIR)
     open_shots = shots.filter("open_play")
-    names, leads, ps, gains = [], [], {}, []
+    names, leads, ps, gains, budgets, early = [], [], {}, [], [], []
+    horizon_s = float(h[1:])
+    bins = [(lo, hi) for lo, hi in TTS_BINS if lo < horizon_s]
+    base = None
     for run in args.runs:
         meta, preds = load_run(run)
         names.append(meta["run_id"])
@@ -150,6 +197,13 @@ def main(argv: list[str]) -> int:
         if unknown:
             raise SystemExit(f"features in no group: {sorted(unknown)}")
         gains.append({g: sum(mean.get(f, 0.0) for f in fs) for g, fs in GROUPS.items()})
+        budgets.append(matched_budget(rows, shots))
+        tts = time_to_shot(rows, shots, h)
+        if base is None:
+            base = tts.select(*KEYS, "fold", "tts", y=pl.col(f"label_shot_{h}"))
+        elif not tts.select(KEYS).equals(base.select(KEYS)):
+            raise SystemExit("runs don't share scored rows")
+        early.append(tts["p"].to_numpy())
 
     print(f"## Lead time at each fold's tau ({h}, PFF open-play shots)\n")
     print("| run | shots | caught | median lead (s) | lead ≥ 1 s | lead ≥ 2 s | ≥ 2 s share |")
@@ -172,6 +226,40 @@ def main(argv: list[str]) -> int:
         )
         + ")"
     )
+
+    print(f"\n## Alarms at matched false alarms per match ({h}, pooled OOF, descriptive)\n")
+    print("| budget | run | τ | false / match | caught | miss rate | median lead (s) |")
+    print("|---|---|---|---|---|---|---|")
+    for b in BUDGETS:
+        for name, res in zip(names, budgets, strict=True):
+            if res[b] is None:
+                print(f"| ≤ {b:g} | {name} | – | – | – | – | – |")
+                continue
+            tau, sm = res[b]
+            caught = round((1 - sm["miss_rate"]) * leads[0][1])
+            print(
+                f"| ≤ {b:g} | {name} | {tau:.2f} | {sm['false_alarms_per_match']:.2f} | "
+                f"{caught} | {sm['miss_rate']:.3f} | {sm['lead_s_median']:.2f} |"
+            )
+
+    y, fold, tts = base["y"].to_numpy(), base["fold"].to_numpy(), base["tts"].to_numpy()
+    print(f"\n## PR-AUC by the positives' time to shot ({h}; every negative kept)\n")
+    head = " | ".join(names)
+    last = f" | folds {names[-1]} better" if len(names) > 1 else ""
+    print(f"| time to shot | positives | base rate | {head}{last} |")
+    print("|---|---|---|" + "---|" * len(names) + ("---|" if last else ""))
+    for lo, hi in bins:
+        keep = ~y | ((tts > lo) & (tts <= hi))
+        vals = [pr_auc(y[keep], p[keep]) for p in early]
+        cells = " | ".join(f"{v:.4f}" for v in vals)
+        if last:
+            wins = sum(
+                pr_auc(y[keep & (fold == f)], early[-1][keep & (fold == f)])
+                > pr_auc(y[keep & (fold == f)], early[0][keep & (fold == f)])
+                for f in np.unique(fold)
+            )
+            cells += f" | {wins}/{len(np.unique(fold))}"
+        print(f"| {lo}–{hi} s | {int(y[keep].sum()):,} | {y[keep].mean():.4f} | {cells} |")
 
     print(f"\n## Gain share by group ({h}, mean over folds)\n")
     print("| group | " + " | ".join(names) + " |")
