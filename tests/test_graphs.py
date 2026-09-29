@@ -5,6 +5,7 @@ import polars as pl
 import pytest
 from test_features import frames_of, mirror, obj, synth
 
+from prediction.features import goal_distance
 from prediction.graphs import (
     IDX,
     MAX_NODES,
@@ -205,7 +206,7 @@ def test_cache_round_trip_under_its_own_name(tmp_path):
     d = write_match(tmp_path, frames.reverse(), objects)  # load sorts by (period, t_s)
     first, built = load_graphs("m1", tmp_path)
     assert built and [p.name for p in d.iterdir() if p.name.startswith(("graphs", "feat"))] == [
-        "graphs_v1_held.npz"
+        "graphs_v2_held.npz"
     ]
     again, built = load_graphs("m1", tmp_path)
     assert not built
@@ -265,3 +266,110 @@ def test_velocity_never_crosses_a_period_or_a_grid_gap():
     has_vel = [node(g, i, 0, "has_vel") for i in range(frames.height)]
     # 5 rows back is always another seg, except period 2's last two rows
     assert has_vel == [0] * 15 + [1, 1]
+
+
+# --- windows for the temporal GNN (05 model 3) ---
+
+
+def test_a_window_stays_in_its_match_period_and_seg():
+    # m1: period 1 at 0.0-0.9 and 1.5-2.4 (1.0-1.4 missing), period 2 at 0.0-0.9; then m2
+    f1 = pl.concat([frames_of(10), frames_of(10, start=1.5), frames_of(10, period=2)])
+    f2 = frames_of(10)
+    parts = [
+        (mid, graphs(f, [obj(1, 0.0, "h1", 0.0, 0.0, team="home")]))
+        for mid, f in (("m1", f1), ("m2", f2))
+    ]
+    store = GraphStore.from_parts(parts)
+    src = store.steps(np.arange(40), 3, 5)  # lags of 1.0 s, 0.5 s, 0
+    assert src[:, 2].tolist() == list(range(40))  # the anchor is always there
+    # period 1's first stretch: rows 0-9, 1.0 s back only from row 10 on (none here)
+    assert src[9].tolist() == [-1, 4, 9]
+    # 1.5 s is 5 rows after 0.9 s but 0.6 s later: the gap masks the 0.5 s step, the
+    # 1.0 s step lands on 1.0 s, which is missing too
+    assert src[10].tolist() == [-1, -1, 10]
+    # 2.5 s back from 2.4 s would be the first stretch, 1.0 s back is 1.4 s: missing,
+    # 0.5 s back is 1.9 s: row 14
+    assert src[19].tolist() == [-1, 14, 19]
+    assert src[20].tolist() == [-1, -1, 20]  # period 2 never reads period 1
+    assert src[29].tolist() == [-1, 24, 29]  # 0.9 s: nothing 1.0 s back
+    assert src[30].tolist() == [-1, -1, 30]  # m2 never reads m1
+    nodes, n = store.window(np.array([10, 29]), 3, 5)
+    assert n[0].tolist() == [0, 0, 0] and not nodes[0].any()  # h1 is only at 0.0 s
+
+
+def test_a_middle_gap_masks_only_its_own_step():
+    f = pl.concat([frames_of(5), frames_of(20, start=0.6)])  # 0.5 s missing
+    store = GraphStore.from_parts([("m1", graphs(f, [obj(1, 0.0, "h1", 0.0, 0.0)]))])
+    # anchor 1.5 s (row 14): 1.0 s is row 9, 0.5 s is missing, 0.0 s is across the gap
+    assert store.steps(np.array([14]), 4, 5).tolist() == [[-1, -1, 9, 14]]
+    # anchor 1.9 s (row 18): 0.4 s back is across the gap; lags of 0.5 s only
+    assert store.steps(np.array([23]), 4, 5).tolist() == [[8, 13, 18, 23]]
+
+
+def test_older_steps_are_turned_into_the_anchor_frame():
+    # home has the ball for 1 s, nobody for 0.5 s, then away (attacking -x). h1 stands
+    # still at pitch (20, 5), running +x at 2 m/s by the end
+    poss = ["home"] * 10 + [None] * 5 + ["away"] * 6
+    frames = frames_of(21).with_columns(
+        possession_team=pl.Series(poss),
+        flipped=pl.Series([False] * 10 + [None] * 5 + [True] * 6),
+    )
+    rows = [obj(1, round(i * 0.1, 1), "h1", 20.0, 5.0, team="home") for i in range(21)]
+    rows += [obj(1, round(i * 0.1, 1), "a1", -30.0, 0.0, team="away") for i in range(21)]
+    g = graphs(frames, rows)
+    store = GraphStore.from_parts([("m1", g)])
+    x, n = store.window(np.array([20]), 5, 5)  # rows 0, 5, 10, 15, 20
+    assert n[0].tolist() == [2] * 5
+    for step in range(5):
+        slot = {round(float(x[0, step, j, IDX["x"]]) * 52.5): j for j in range(2)}
+        h1, a1 = slot[-20.0], slot[30.0]  # away attacks -x: pitch x is negated everywhere
+        assert x[0, step, h1, IDX["y"]] * 34 == pytest.approx(-5.0, abs=0.02)
+        assert x[0, step, h1, IDX["is_def"]] == 1 and x[0, step, h1, IDX["is_att"]] == 0
+        assert x[0, step, a1, IDX["is_att"]] == 1 and x[0, step, a1, IDX["is_def"]] == 0
+        assert x[0, step, h1, IDX["goal_dist"]] * 52.5 == pytest.approx(
+            float(goal_distance(-20.0, -5.0)), abs=0.05
+        )
+    # the anchor step is the frame graph as stored
+    assert np.array_equal(x[0, 4], g["nodes"][20].astype(np.float32))
+
+
+def canon(x: np.ndarray, n: np.ndarray) -> np.ndarray:
+    """Nodes of every step sorted, so windows compare without depending on node order."""
+    out = x.copy()
+    for i in np.ndindex(n.shape):
+        v = out[i][: n[i]]
+        out[i][: n[i]] = v[np.lexsort(v.T[::-1])]
+    return out
+
+
+def test_windows_are_the_same_in_a_mirrored_match():
+    frames, objects = synth(5, n=160)
+    loose = (pl.col("t_s") * 10).round().cast(pl.Int64).is_in(list(range(40, 48)) + [95])
+    frames = frames.with_columns(
+        possession_team=pl.when(loose).then(None).otherwise("possession_team"),
+        flipped=pl.when(loose).then(None).otherwise("flipped"),
+    )
+    a = GraphStore.from_parts([("m", match_graphs(frames, objects.lazy()))])
+    b = GraphStore.from_parts(
+        [
+            (
+                "m",
+                match_graphs(
+                    *[f.lazy() if i else f for i, f in enumerate(mirror(frames, objects))]
+                ),
+            )
+        ]
+    )
+    rows = np.flatnonzero(frames["possession_team"].is_not_null().to_numpy())
+    xa, na = a.window(rows, 6, 5)
+    xb, nb = b.window(rows, 6, 5)
+    assert np.array_equal(na, nb)
+    ca, cb = canon(xa, na), canon(xb, nb)
+    goal = [IDX["goal_dist"], IDX["goal_angle"]]
+    rest = [i for i in range(len(IDX)) if i not in goal]
+    assert np.allclose(ca[..., rest], cb[..., rest], rtol=0, atol=1e-6)
+    # a no-team step is flipped in one world only, so its goal columns are recomputed
+    # there from float16 positions and stored as float16 in the other: ~5 cm apart
+    assert np.allclose(ca[..., goal], cb[..., goal], rtol=0, atol=5e-3)
+    # every anchor step is its own frame graph
+    assert np.array_equal(xa[:, -1], a.nodes[rows].astype(np.float32))
