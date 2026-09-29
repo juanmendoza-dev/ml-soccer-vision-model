@@ -42,6 +42,9 @@ PARAMS = {
     "temperature": True,
 }
 PREDICT_BATCH = 2048
+# training batches come from runs of this many batches sorted by node count, so a batch is
+# padded to its own largest graph, not to MAX_NODES (2.25x fewer node pairs on PFF rows)
+BUCKET = 64
 DEVICES = ("auto", "cuda", "mps", "cpu")
 CLIP = 5.0  # standardized global features are clipped to +-5
 
@@ -140,9 +143,12 @@ class GNNModel:
         return np.concatenate([z, miss], axis=1).astype(np.float32)
 
     def _inputs(self, idx: np.ndarray, glob: np.ndarray, ii: np.ndarray):
+        """A batch on the device, padded to its own largest graph (padding is masked, so
+        a row's output doesn't depend on how much of it there is)."""
         import torch
 
         nodes, n = self.graphs.take(idx[ii])
+        nodes = nodes[:, : max(int(n.max()), 1)]
         dev = self.dev
         return (
             torch.from_numpy(nodes).to(dev).float(),
@@ -150,15 +156,33 @@ class GNNModel:
             torch.from_numpy(glob[ii]).to(dev),
         )
 
+    def _batches(self, pick: np.ndarray, n: np.ndarray, rng) -> list[np.ndarray]:
+        """pick (already shuffled) cut into batches of similar node counts: each run of
+        BUCKET batches is sorted by node count and cut, then the batches are shuffled."""
+        size = self.params["batch_size"]
+        out = []
+        for c in range(0, len(pick), size * BUCKET):
+            run = pick[c : c + size * BUCKET]
+            run = run[np.argsort(n[run], kind="stable")]
+            out += [run[s : s + size] for s in range(0, len(run), size)]
+        return [out[i] for i in rng.permutation(len(out))]
+
     def _logits(self, net, idx: np.ndarray, glob: np.ndarray, ii: np.ndarray) -> np.ndarray:
+        """Logits for positions ii, computed in node-count order and put back."""
         import torch
 
-        out = []
+        order = ii[np.argsort(self.graphs.n[idx[ii]], kind="stable")]
+        out = np.zeros(len(ii))
+        got = []
         net.eval()
         with torch.no_grad():
-            for s in range(0, len(ii), PREDICT_BATCH):
-                out.append(net(*self._inputs(idx, glob, ii[s : s + PREDICT_BATCH])).cpu())
-        return torch.cat(out).double().numpy() if out else np.zeros(0)
+            for s in range(0, len(order), PREDICT_BATCH):
+                got.append(net(*self._inputs(idx, glob, order[s : s + PREDICT_BATCH])).cpu())
+        if got:
+            where = np.empty(idx.shape[0], np.int64)
+            where[ii] = np.arange(len(ii))
+            out[where[order]] = torch.cat(got).double().numpy()
+        return out
 
     def fit(self, df: pl.DataFrame, h: str) -> "GNNModel":
         import torch
@@ -178,6 +202,7 @@ class GNNModel:
             torch.cuda.reset_peak_memory_stats()
         p = self.params
         idx = self.graphs.check(rows)
+        n_nodes = self.graphs.n[idx]
         y = rows[f"label_shot_{h}"].to_numpy().astype(np.float32)
         k = rows.select(tenths())["t_s"].to_numpy()
         raw = self._raw_globals(rows)
@@ -203,13 +228,12 @@ class GNNModel:
         opt = torch.optim.AdamW(net.parameters(), lr=p["lr"], weight_decay=p["weight_decay"])
         loss_fn = torch.nn.BCEWithLogitsLoss()
         best, best_loss, best_epoch, best_logits = None, np.inf, -1, None
-        curve, stopped = [], "max_epochs"
+        curve, stopped, seen = [], "max_epochs", 0
         for epoch in range(p["max_epochs"]):
             net.train()
             pick = rng.permutation(train_i[(k[train_i] + epoch) % p["stride"] == 0])
             total = torch.zeros((), device=dev)
-            for s in range(0, len(pick), p["batch_size"]):
-                ii = pick[s : s + p["batch_size"]]
+            for ii in self._batches(pick, n_nodes, rng):
                 loss = loss_fn(net(*self._inputs(idx, glob, ii)), torch.from_numpy(y[ii]).to(dev))
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
@@ -217,6 +241,7 @@ class GNNModel:
                 opt.step()
                 total += loss.detach() * len(ii)
             train_loss = float(total) / max(len(pick), 1)
+            seen += len(pick)
             es_loss, note = float("nan"), ""
             if len(es_i):
                 logits = self._logits(net, idx, glob, es_i)
@@ -257,6 +282,7 @@ class GNNModel:
             "es_loss": None if best is None else round(float(best_loss), 6),
             "temperature": round(self.temperature, 4),
             "grad_rows": len(train_i),
+            "rows_seen": seen,  # training rows passed over all epochs, for throughput
             "fit_s": round(time.perf_counter() - start, 1),
             "device": dev,
             "device_name": device_name(dev),
