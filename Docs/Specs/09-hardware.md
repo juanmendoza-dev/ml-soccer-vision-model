@@ -44,6 +44,79 @@ uv run python -m demo.debug --video <demo clip> --cache data/vision_cache/demo1 
 - The progress lines print fps. That's the first real number for the live budget below.
 - Keep clips and outputs outside iCloud or other synced folders (08: footage is private).
 
+## GNN runs (workstation runbook)
+Code and tests come from the M1. The full CV of the frame GNN (05 model 2) runs here on the 2060. `data/` is gitignored, so the data travels as a tar made on the M1 by `scripts/pack_workstation_data.sh`. It holds each match's `frames_10hz`/`objects_10hz` parquet files and `resample_report.json`, its game state `match`/`events`/`frames`, and the baseline run `lgbm-held-2026-09-27`. That's 399 files, 2.4 GB, with a `.sha256` beside it. `folds.json` is in git, and feature and graph caches are rebuilt here. All commands below are PowerShell, run from the repo root.
+
+**Environment (checked 2026-09-28 against `uv.lock`):**
+- Every package in the `prediction` extra has a Windows wheel. On Windows, torch comes from the cu128 index as `2.11.0+cu128`; the Mac gets `2.14.0` from PyPI, so numbers won't match bit for bit across machines.
+- torch-geometric and unravelsports resolved too, but they left the extra because the frame GNN builds its own graphs (05).
+- `uv sync` removes every extra you don't name. Keep `--extra vision` so the vision tools still work on this machine.
+- Windows writes redirected output in cp1252, which can't encode the reports' τ, ≥ and Δ. `PYTHONUTF8=1` switches Python to UTF-8. The code also writes its markdown files as UTF-8 explicitly.
+- Idle sleep would kill a multi-hour run. `prediction.cv` asks Windows to stay awake while it runs (`SetThreadExecutionState`), but Update restarts aren't covered by that.
+- On macOS only, torch and LightGBM can't share a process: LightGBM then torch hangs, torch then LightGBM segfaults. That's why the GNN tests run in their own pytest process (`tests/test_gnn.py`). A GNN run never loads LightGBM.
+
+**Once, before the runs**
+```powershell
+# keep the machine up: no sleep or hibernation on AC power, and pause Windows Update
+# (Settings > Windows Update > Pause updates for 1 week). Undo afterwards (last step).
+powercfg /change standby-timeout-ac 0
+powercfg /change hibernate-timeout-ac 0
+
+cd <repo>
+git pull
+
+# data from the USB drive (E: here): check the copy, then unpack at the repo root
+$tar = "E:\workstation-data-2026-09-29.tar"
+(Get-FileHash $tar -Algorithm SHA256).Hash -eq (Get-Content "$tar.sha256").Split(" ")[0]   # True
+tar -xf $tar                                     # Windows' built-in bsdtar
+(Get-ChildItem data\processed -Directory).Count  # 66 (64 PFF + 2 Metrica)
+
+# every new PowerShell session
+$env:PYTHONUTF8 = "1"; $env:PYTHONUNBUFFERED = "1"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+uv sync --extra dev --extra prediction --extra vision
+uv run python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0), 'sm_75' in torch.cuda.get_arch_list())"
+# 2.11.0+cu128 12.8 True NVIDIA GeForce RTX 2060 True
+
+uv run python -m pytest -q                        # all pass; the GNN cases run in their own process
+uv run python scripts\gnn_smoke.py --device cuda  # ~2 min: loss goes down, peak GPU memory, rows/s
+```
+- The smoke fit prints training rows/s, including the early-stopping passes. The M1 Pro did about 2,800 on MPS. Peak GPU memory should be well under 6,000 MB.
+- Git Bash works too (it's what Claude Code uses on Windows). The same commands work there with forward slashes and `export PYTHONUTF8=1`.
+
+**Time one fold, then decide.** The first run on a machine also builds the graph caches (about 0.3 s a match) and reports that time separately.
+```powershell
+uv run python -m prediction.cv --model gnn --horizons h5 --one-fold 0 --run-id gnn-frame-timing-h5
+```
+- It prints the estimated full run for H = 5 (5 folds plus the final τ) and saves a run marked partial, with a "PARTIAL RUN" report.
+- Its fold 0 PR-AUC may be put next to LightGBM's fold 0 (0.330 at H = 5) as a sanity check. It's one fold, not a result.
+- H = 3 costs about the same as H = 5.
+
+**Full runs, one horizon at a time** (the GPU can't share: start H = 3 once H = 5 has finished)
+```powershell
+$id = "gnn-frame-2026-09-29-h5"
+Start-Process uv -ArgumentList "run","python","-m","prediction.cv","--model","gnn","--horizons","h5","--run-id",$id `
+  -RedirectStandardOutput "data\runs\$id.log" -RedirectStandardError "data\runs\$id.err" -WindowStyle Hidden
+Get-Content "data\runs\$id.log" -Wait -Tail 20   # follow; Ctrl+C stops following, not the run
+nvidia-smi                                         # GPU busy, memory in use
+```
+- The log gets one line per epoch and per fold. The last line is `wrote data\runs\<id>\report.md`.
+- The run is hidden and survives closing the window. To stop it: `Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object CommandLine -like "*prediction.cv*" | ForEach-Object { Stop-Process -Id $_.ProcessId }`.
+- Then the same with `h3` and `gnn-frame-2026-09-29-h3`.
+
+**Compare,** pairing runs by horizon (each GNN run has one horizon; the baseline has both):
+```powershell
+$h5 = "data\runs\gnn-frame-2026-09-29-h5"; $h3 = "data\runs\gnn-frame-2026-09-29-h3"; $base = "data\runs\lgbm-held-2026-09-27"
+uv run python -m evaluation.compare $h5 $base --out "$h5\compare.md"
+uv run python -m evaluation.compare $h3 $base --out "$h3\compare.md"
+uv run python scripts\lead_time.py $base $h5 | Out-File -Encoding utf8 "$h5\lead_time.md"
+uv run python scripts\lead_time.py $base $h3 --horizon h3 | Out-File -Encoding utf8 "$h3\lead_time.md"
+```
+- The lead-time script's gain table shows zeros for the GNN, since it has no gain shares (05).
+
+**Afterwards:** `powercfg /change standby-timeout-ac 30` (or whatever it was), and resume Windows Update.
+
 ## Live feasibility
 
 ### Frame budget
