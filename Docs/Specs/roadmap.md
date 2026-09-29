@@ -56,7 +56,9 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [x] Frame GNN code (`prediction/graphs.py`, `prediction/gnn.py`, `prediction/gnn_net.py`, `--model gnn` in `prediction.cv`, `--one-fold` timing run), tests (causal, ESTIMATED-free, mirror, batch-independent, out of fold, learns through `run_cv`), and a smoke fit on 3 matches on the M1 (`scripts/gnn_smoke.py`; loss goes down, held-out PR-AUC 0.34 at a 0.020 base rate). No full CV on the M1
 - [ ] Move the data to the workstation (`data/` is gitignored). Packed on the M1 (`scripts/pack_workstation_data.sh`: `data/workstation-data-2026-09-29.tar`, 2.5 GB, 402 files) and the runbook is in 09. Left: copy it over, unpack, `uv sync` with the `prediction` extra on CUDA, run the tests and the smoke check
 - [ ] Frame GNN full CV on the 2060 (H = 5 first, then H = 3): time one fold first, then compare with `lgbm-held-2026-09-27` using `evaluation.compare` and `scripts/lead_time.py`
-- [ ] Temporal GNN (last 2–3 s through the frame GNN + GRU), same path: code on the M1, runs on the 2060. Then rerun `id_fragment` from the sensitivity test on it
+- [x] Temporal GNN spec and code (2026-09-29, 05 model 3): 6 steps 0.5 s apart (last 2.5 s) turned into the anchor row's frame, the frame GNN's message passing on each, a GRU over them, batch 128. Graphs cache v2 keeps node teams (frame GNN inputs unchanged). `--model tgnn`, `--gnn-param` for timing tweaks. Tests on the M1 (window edges, turnover, mirror, causal, out of fold; learns a history-only toy at PR-AUC 0.64 vs 0.37 for the frame GNN). No real-data fit yet
+- [ ] Temporal GNN runs on the 2060 after the frame GNN: one-fold timing, then H = 5 and H = 3. Compare with the frame GNN first (09 runbook)
+- [ ] Rerun `id_fragment` on the temporal GNN: needs `--degrade` wired into the graphs first. Tracks aren't linked across steps, so it only reaches the model through `has_vel` (05)
 - [ ] Node-level "who will shoot" head → P(goal) v2
 
 **Player profiles**
