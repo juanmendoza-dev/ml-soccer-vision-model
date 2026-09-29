@@ -34,7 +34,7 @@ from evaluation.report import PROCESSED_DIR
 from evaluation.runs import load_run
 from prediction.features import tenths
 from prediction.labels import HORIZONS
-from prediction.possession import OBJECT_COLS, config_key
+from prediction.possession import OBJECT_COLS, config_key, inferred_state
 from vision.state import StateConfig, infer
 
 H = "h5"
@@ -165,11 +165,13 @@ def main(argv: list[str]) -> int:
         d = args.processed / m
         f = pl.read_parquet(d / "frames_10hz.parquet", columns=cols)
         st = staleness(args.gamestate / m, config)
-        # the same stage 8 the inferred run read
-        cached = pl.read_parquet(d / f"state_inferred_{key}.parquet")
+        # the same stage 8 the model arms read (its cache), and the same carrier age
+        cached = inferred_state(m, args.gamestate, args.processed, config)
         chk = cached.join(st, on="frame_id", how="left")
         if chk["possession_team"].ne_missing(chk["inf"]).any():
-            raise AssertionError(f"{m}: stage 8 differs from the run's cached state")
+            raise AssertionError(f"{m}: stage 8 differs from the cached state")
+        if not chk["carrier_age_s"].equals(chk["carrier_age_s_right"], check_names=False):
+            raise AssertionError(f"{m}: carrier age differs from prediction.possession's")
         ball = (
             pl.scan_parquet(d / "objects_10hz.parquet")
             .filter(pl.col("object_type") == "ball", pl.col("visible").fill_null(False))

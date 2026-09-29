@@ -3,7 +3,8 @@
     python scripts/possession_split.py data/runs/<provider> data/runs/<inferred>
 
 Pooled PR-AUC of both runs on the scored rows (07), split by whether stage 8's
-possession (the inferred run's cached state) agrees with PFF's on the row. Descriptive:
+possession (stage 8's cached state, made null past the run's stale_after for arm U)
+agrees with PFF's on the row. Descriptive:
 the split is picked from stage 8's output, not from the labels, so it's a diagnosis of
 the paired compare, not a replacement for it.
 
@@ -27,7 +28,7 @@ from evaluation.report import PROCESSED_DIR
 from evaluation.runs import load_run
 from prediction.features import tenths
 from prediction.labels import HORIZONS
-from prediction.possession import config_key
+from prediction.possession import inferred_state, stale_rows
 from vision.state import StateConfig
 
 
@@ -40,7 +41,8 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
     runs = {"provider": load_run(args.provider), "inferred": load_run(args.inferred)}
     config = StateConfig(**runs["inferred"][0]["config"]["state_config"])
-    key = config_key(config)
+    # arm U (05, Stale possession): the possession the run saw is null past after_s
+    stale = runs["inferred"][0]["config"].get("stale_possession")
     horizons = runs["inferred"][0]["horizons"]
     ids = sorted(m["match_id"] for m in json.loads(FOLDS_PATH.read_text())["matches"])
     cols = ["match_id", "period", "t_s", "frame_id", "possession_team", "all_estimated"]
@@ -49,7 +51,14 @@ def main(argv: list[str]) -> int:
     for m in ids:
         d = args.processed / m
         f = pl.read_parquet(d / "frames_10hz.parquet", columns=cols)
-        s = pl.read_parquet(d / f"state_inferred_{key}.parquet").rename({"possession_team": "inf"})
+        s = inferred_state(m, args.gamestate, args.processed, config)
+        if stale:
+            s = s.with_columns(
+                possession_team=pl.when(stale_rows(s, stale["after_s"]))
+                .then(None)
+                .otherwise(pl.col("possession_team"))
+            )
+        s = s.select("frame_id", inf="possession_team")
         rows.append(f.join(s, on="frame_id", how="left"))
         g = args.gamestate / m
         shots.append(
@@ -104,6 +113,8 @@ def main(argv: list[str]) -> int:
             ("all scored", sc),
             ("stage 8 agrees", sc.filter(pl.col("agree"))),
             ("stage 8 disagrees", sc.filter(~pl.col("agree"))),
+            ("  names the other team", sc.filter(~pl.col("agree"), pl.col("inf").is_not_null())),
+            ("  unknown (null)", sc.filter(pl.col("inf").is_null())),
         ):
             y = sub[f"label_shot_{h}"].to_numpy().astype(float)
             a = pr_auc(y, sub[f"provider_{h}"].to_numpy())
