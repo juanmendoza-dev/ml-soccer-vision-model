@@ -1,9 +1,9 @@
 """Out-of-fold predictions with 07's tau rule, written as a run (07, "Run format").
 
-    python -m prediction.cv [--model floor|lgbm|gnn] [--ball-source held|raw] [--run-id ID]
+    python -m prediction.cv [--model floor|lgbm|gnn|tgnn] [--ball-source held|raw] [--run-id ID]
         [--no-report] [--features-version 1|2] [--degrade ARM:SEVERITY ...]
         [--degrade-arm both|test] [--degrade-seed N] [--device auto|cuda|mps|cpu]
-        [--gnn-globals v1|none] [--gnn-layers N] [--one-fold N]
+        [--gnn-globals v1|none] [--gnn-layers N] [--gnn-param KEY=VALUE ...] [--one-fold N]
 
 Per horizon and outer fold: fit on the training matches minus the inner split, pick
 tau on the inner matches, refit on all training matches, predict the held-out fold.
@@ -22,6 +22,10 @@ matches; test fits and picks tau on clean data and predicts degraded held-out fo
 --model gnn is the frame GNN (05 model 2) on graphs cached per match. --gnn-globals none
 and --gnn-layers 0 are its ablation arms. --one-fold N is a timing run: outer fold N only,
 no final tau, saved as a partial run with an estimate of the full run's time.
+
+--model tgnn is the temporal GNN (05 model 3): the same graphs, a 2.5 s window of them per
+row. --gnn-param overrides one of gnn.PARAMS (steps, step_rows, batch_size, stride, ...),
+so a timing run can shrink the window or the batch without a code edit.
 """
 
 import argparse
@@ -74,6 +78,8 @@ MODELS = {
         },
     ),
 }
+MODELS["tgnn"] = (gnn.GNNModel, {**MODELS["gnn"][1], "params": gnn.TEMPORAL_PARAMS})
+GNNS = {"gnn", "tgnn"}
 # config keys about the data, not the model's constructor
 DATA_KEYS = (
     "features",
@@ -87,7 +93,7 @@ DATA_KEYS = (
     "graphs_version",
 )
 # models whose feature list follows features_version (the floor's is fixed)
-VERSIONED = {"lgbm", "gnn"}
+VERSIONED = {"lgbm", "gnn", "tgnn"}
 KEYS = ["match_id", "period", "t_s"]
 
 
@@ -343,6 +349,13 @@ def main(argv: list[str]) -> int:
         "--gnn-layers", type=int, help="gnn: message-passing layers, 0 = globals only (05)"
     )
     ap.add_argument(
+        "--gnn-param",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="gnn/tgnn: override one of gnn.PARAMS, repeatable (e.g. steps=4, batch_size=64)",
+    )
+    ap.add_argument(
         "--one-fold",
         type=int,
         metavar="N",
@@ -352,13 +365,31 @@ def main(argv: list[str]) -> int:
     specs = degrade.canonical(args.degrade)
     if specs and args.ball_source != "held":
         ap.error("--degrade needs --ball-source held")
-    if specs and args.model == "gnn":
+    if specs and args.model in GNNS:
         ap.error("--degrade isn't wired into the GNN's graphs yet")
+    try:
+        args.gnn_overrides = gnn_overrides(args.gnn_param)
+    except ValueError as e:
+        ap.error(str(e))
+    if args.model == "tgnn" and args.gnn_layers == 0:
+        ap.error("--gnn-layers 0 has no graph, so no temporal model: use --model gnn")
     folds = load(args.folds)
     if args.one_fold is not None and not 0 <= args.one_fold < folds["n_folds"]:
         ap.error(f"--one-fold must be 0..{folds['n_folds'] - 1}")
     with keep_awake():
         return run(args, specs, folds)
+
+
+def gnn_overrides(pairs: list[str]) -> dict:
+    """KEY=VALUE strings into gnn.PARAMS overrides, typed like the defaults."""
+    out = {}
+    for pair in pairs:
+        key, sep, value = pair.partition("=")
+        if not sep or key not in gnn.PARAMS:
+            raise ValueError(f"--gnn-param {pair!r}: expected KEY=VALUE, KEY one of gnn.PARAMS")
+        kind = type(gnn.PARAMS[key])
+        out[key] = value.lower() in ("1", "true", "yes") if kind is bool else kind(value)
+    return out
 
 
 def run(args, specs, folds: dict) -> int:
@@ -400,7 +431,7 @@ def run(args, specs, folds: dict) -> int:
             )
     load_s = time.perf_counter() - started
     graphs_s = build_s = 0.0
-    if args.model == "gnn":
+    if args.model in GNNS:
         t0 = time.perf_counter()
         store = graphs.GraphStore.load(ids, args.processed, args.ball_source, log=log)
         graphs_s = time.perf_counter() - t0
@@ -413,8 +444,10 @@ def run(args, specs, folds: dict) -> int:
         if args.gnn_globals == "none":
             data_config["features"] = []
         data_config |= {"globals": args.gnn_globals, "device": args.device}
+        params = {**MODELS[args.model][1]["params"], **args.gnn_overrides}
         if args.gnn_layers is not None:
-            data_config["params"] = {**gnn.PARAMS, "layers": args.gnn_layers}
+            params["layers"] = args.gnn_layers
+        data_config["params"] = params
     log(f"{len(ids)} matches, {data.height:,} rows, {shots.height} shots")
     only = None if args.one_fold is None else [args.one_fold]
     t0 = time.perf_counter()
