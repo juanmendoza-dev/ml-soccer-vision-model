@@ -147,6 +147,7 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
      - Network: 3 message-passing layers, width 64, about 120k parameters. Each pair gets a message from both nodes and the edge. Messages are combined by an attention-weighted mean plus a plain sum (counts matter: defenders in the box), then a residual update with LayerNorm.
      - Readout: mean, max and sum over the nodes, the ball node's embedding and the global vector, then an MLP to one logit.
      - LayerNorm, never BatchNorm: a row's p must not depend on the other rows in its batch.
+     - Batches of similar node counts: each run of 64 batches is sorted by node count, and every batch is padded only to its own largest graph. Padding is masked, so a row's p doesn't change. PFF's scored rows average 14.6 nodes (median 15), so this cuts the node pairs 2.25× compared with padding to 23, and ran about 2× faster on the M1.
    - **Training:**
      - Plain log loss, no class weights, as LightGBM: p has to stay calibrated for the alarms and for P(goal) = P(shot) × xG (this replaces the old weighted/focal loss line, see Class imbalance).
      - The training rows are LightGBM's (label mask true, not `all_estimated`), subsampled: epoch e takes the rows whose grid tenth k has (k + e) mod 4 = 0. An epoch is a quarter of the rows, and every 4 epochs cover all of them (10 Hz rows are near duplicates). **Prediction covers every grid row** (alarms run over all rows, 07), null where 05 says not to predict.
@@ -154,7 +155,7 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
      - Then one temperature T is fitted on the early-stopping matches' rows (1 parameter, log loss), and p = sigmoid(logit / T). It changes calibration only, never the ranking. T is recorded per fold.
      - AdamW, learning rate 1e-3, weight decay 1e-4, batch 512, gradient clipping at 1, dropout 0.1. Fixed parameters, not tuned (as LightGBM).
    - **Leakage** (the hand features' rules): VISIBLE players only, the held VISIBLE ball, velocities only between VISIBLE sightings, and no history past that 0.5 s, rotated with the anchor row's sign. The globals are the v1 features, already tested causal. The standardization and T come from training matches only.
-   - **Tests** (`tests/test_graphs.py`, `tests/test_gnn.py`):
+   - **Tests** (`tests/test_graphs.py`; the GNN cases are in `tests/gnn_cases.py`, and `tests/test_gnn.py` runs them in their own pytest process, since on macOS torch and LightGBM can't share one, 09):
      - graphs and p don't change when frames after t change;
      - scrambling every ESTIMATED position changes nothing;
      - a mirrored match with the teams swapped gives the same graphs and p;
@@ -166,6 +167,11 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
      - All 64 games in float16 take about 2.7 GB of RAM, and about 4 GB with the frames and v1 features. That's well under the workstation's 32 GB (and fine for the M1's tests).
      - VRAM: the per-pair tensors are about 2 GB at batch 512, under the 2060's 6 GB. The peak is recorded.
      - Run time on the 2060 isn't measured yet. The one-fold timing run measures it before a full run.
+   - **Smoke check** (M1, MPS, 2026-09-29; `scripts/gnn_smoke.py`). Fitted on 10503 and 10504, with 10502 for early stopping, and predicted 10505. Not a result: three matches can't be compared with LightGBM.
+     - Training loss went from 0.127 to 0.052. Early-stopping loss was best at epoch 5 (0.111 → 0.098), then rose until patience stopped the fit at epoch 9.
+     - On 10505: PR-AUC 0.34 (base rate 0.020), ROC-AUC 0.95. Median p before its 15 open-play shots was 0.03 at 5 s, 0.29 at 2 s and 0.42 at 0.2 s.
+     - Mean p was 0.028 against a 0.020 base rate, and the top decile predicted 0.24 but saw 0.16 (T = 1.14). So it's a bit overconfident on this one match. Watch calibration in the full run.
+     - Speed: 2,800 training rows/s on MPS (early-stopping passes included), and 58,572 rows predicted in 2 s.
    - **Device and determinism:** `--device auto|cuda|mps|cpu`, where auto means cuda, then mps, then cpu. Every random draw is seeded: torch, the early-stopping matches and the shuffling. CUDA runs with deterministic algorithms where it has them. CPU is bitwise reproducible; CUDA and MPS come out close, not bitwise. The device, its name, the peak GPU memory and the timings go into `run.json`.
    - **Timing run:** `--one-fold N` runs outer fold N only (its inner fit, τ and outer fit) and skips the final τ. It saves that fold's matches only and marks the run partial (`partial` in `run.json`, a "PARTIAL RUN" report). Then it prints an estimate of the full run: about 5.5 × one fold per horizon, plus the one-off data loading. The first run on a machine also builds the graph caches; that time is reported separately and left out of the estimate. It's a timing and a sanity check, not a result.
    - **Protocol:** `python -m prediction.cv --model gnn --horizons h5 --run-id gnn-frame-<date>-h5`, then the same with `h3`. Compared with `lgbm-held-2026-09-27` by `evaluation.compare` (per fold, "wins" means most folds) and `scripts/lead_time.py` (lead time, matched false alarms, ranking by time to shot). The GNN has no gain shares (`coef` is empty), so lead_time.py's gain table shows zeros for it.
