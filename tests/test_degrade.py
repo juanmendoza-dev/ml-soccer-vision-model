@@ -303,3 +303,14 @@ def test_degraded_features_keep_the_scored_rows(tmp_path):
     cols = ["period", "t_s", "eligible", "all_estimated", "label_mask_h5", "label_shot_h5"]
     assert got.select(cols).equals(clean.select(cols))
     assert not np.allclose(got["ball_x"].to_numpy(), clean["ball_x"].to_numpy(), equal_nan=True)
+
+
+def test_scored_rows_change_the_stats_not_the_objects():
+    """The GNN's graphs degrade a match without `scored` and its features with it (05):
+    both must see the same degraded objects."""
+    objects = synth()
+    scored = objects.select("period", "t_s").unique().filter(pl.col("t_s") < 20)
+    a, stats_a = degrade.apply(objects, "m1", ["target"], scored=scored)
+    b, stats_b = degrade.apply(objects, "m1", ["target"])
+    equal(a, b)
+    assert stats_a != stats_b
