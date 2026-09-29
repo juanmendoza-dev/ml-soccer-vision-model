@@ -113,7 +113,62 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
        - Median p before shots is unchanged (5 s: 0.048 vs 0.051, 2 s: 0.158 vs 0.158, same shots and rows). Ranking of positives 2–5 s before the shot isn't better either (1/5 folds).
        - Alarms: at matched false alarms (pooled, descriptive) v2 catches fewer shots (127 vs 172 at ≤ 3 per match). Its inner τ went over budget on the held-out folds (4.6 false alarms per match). Lead ≥ 2 s: 1 of 1,154 vs 3.
        - The v2 features take 0.24 of the gain, mostly from the carrier and defence groups, without better ranking. So the last 5 s summarized this way adds no ranking that v1 doesn't already have. Lead time goes to the temporal GNN next.
-2. **Frame GNN:** one graph per frame. Nodes = players + ball (+ goals); node features = position, velocity, team, dynamic + profile features (04); edges = all pairs or k-nearest, edge features = distance, relative velocity. Built with `unravelsports` SoccerGraphConverter.
+2. **Frame GNN** (designed 2026-09-28; `prediction/graphs.py` builds the graphs, `prediction/gnn.py` is the model, `python -m prediction.cv --model gnn`). One graph per 10 Hz grid row and a small message-passing network. Same folds, τ rule and run format as LightGBM, so `evaluation.compare` and `scripts/lead_time.py` read it unchanged. Code and tests on the M1, full CV on the workstation (roadmap, 09).
+   - **Not unravelsports.** Its converter smooths each track's velocity with a centered Savitzky–Golay filter over the whole period (7 frames for players, 3 for the ball), so the velocity at t reads frames after t. It takes a kloppy dataset, which has no `visible` flag, so it would read PFF's ESTIMATED positions, and it orients every frame by its own ball-owning team. The graphs have to follow the leakage rules below, so they're built from `objects_10hz` the way the hand features are. unravelsports and torch-geometric leave the `prediction` extra (both resolved on Windows, so they can come back if a later model needs them).
+   - **Nodes,** in the attacking frame (pitch x, y and velocities times the row's sign, −1 where `flipped`; a row with no team isn't rotated and has no attackers):
+     - every VISIBLE player and goalkeeper on the row (referees are left out), and
+     - the held VISIBLE ball (`ball_source = held`: the last visible ball, carried forward up to 1 s within the seg), when there is one.
+     - At most 23 nodes: the ball plus 22 players. PFF never has more than 22 visible players on a row (Metrica has 23 on 3 rows). Past 22, the players nearest the held ball are kept.
+     - Order: the ball first, then players by distance to the ball (no ball: by goal distance). The network doesn't depend on node order; a fixed order just makes the tensors comparable in tests (a mirrored scene gives the same tensor).
+     - No goal nodes: the goal is at (52.5, 0) in the attacking frame, so each node carries its distance and angle to it.
+     - No separate `visible` feature (Off-camera players): every player node is visible, and the ball's freshness is `ball_age_s`.
+     - No profile features (04) yet. They come with the profiles ablation.
+
+     | node feature | players | ball |
+     |---|---|---|
+     | `x`, `y` (÷ 52.5, ÷ 34) | position | held position |
+     | `vx`, `vy` (÷ 10), `has_vel` | same `object_id` VISIBLE on this row and 0.5 s earlier in the same seg, as the hand features; else 0 with `has_vel` = 0 | between two fresh sightings 0.5 s apart, as `ball_speed` |
+     | `is_ball`, `is_att`, `is_def`, `is_gk` | team vs `possession_team` (no team or no possession: neither); keeper flag | `is_ball` |
+     | `goal_dist` (÷ 52.5), `goal_angle` (÷ π) | to (52.5, 0), the goal-mouth angle of the hand features | same |
+     | `ball_dist` (÷ 52.5), `has_ball` | distance to the held ball; 0 and `has_ball` = 0 without one | 0, 1 |
+     | `ball_age_s` | 0 | seconds since the ball was seen (0–1) |
+     | `ball_z` (÷ 3) | 0 | held height; 0 when null (vision) |
+
+   - **Edges:** fully connected, with self-loops. With ≤ 23 nodes a dense 23 × 23 is cheaper than building kNN lists. Edge features are computed on the device from the node features: dx, dy, distance, relative velocity (dvx, dvy) and a flag for both nodes having a velocity.
+   - **Graph-level extras: used.** The row's 29 v1 hand features go in as one global vector: standardized on the fit's training rows, clipped to ±5, NaN → 0 plus a missing flag per feature. The GNN then starts from what LightGBM has (possession age and ball history included), and the question is whether the graph adds to it. A neural net on tabular features often trails gradient boosting, so this doesn't guarantee a match.
+   - **Arms, and which claim each one supports.** The hybrid is the default and the one run first. The other two are optional follow-ups, same folds and horizons:
+
+     | run | flags | compared with | supports the claim |
+     |---|---|---|---|
+     | hybrid (graph + v1 globals) | default | LightGBM | "the GNN beats the baseline" |
+     | globals-only net | `--gnn-layers 0` (same net and globals, no message passing or node readout) | hybrid | "**the graph** adds something". Without this arm a hybrid win could just be a neural net reading the v1 features differently |
+     | graph-only | `--gnn-globals none` | LightGBM, hybrid | "the graph alone learns what the hand features know" / what the globals add |
+   - **Implementation: dense and padded, in plain PyTorch.** A match's graphs are one `(rows, 23, 15)` float16 array plus a node count, and a batch is a slice of it. There are no PyG `Data` objects (3.9M of them would be slow) and no DataLoader workers (Windows spawns processes).
+     - Network: 3 message-passing layers, width 64, about 120k parameters. Each pair gets a message from both nodes and the edge. Messages are combined by an attention-weighted mean plus a plain sum (counts matter: defenders in the box), then a residual update with LayerNorm.
+     - Readout: mean, max and sum over the nodes, the ball node's embedding and the global vector, then an MLP to one logit.
+     - LayerNorm, never BatchNorm: a row's p must not depend on the other rows in its batch.
+   - **Training:**
+     - Plain log loss, no class weights, as LightGBM: p has to stay calibrated for the alarms and for P(goal) = P(shot) × xG (this replaces the old weighted/focal loss line, see Class imbalance).
+     - The training rows are LightGBM's (label mask true, not `all_estimated`), subsampled: epoch e takes the rows whose grid tenth k has (k + e) mod 4 = 0. An epoch is a quarter of the rows, and every 4 epochs cover all of them (10 Hz rows are near duplicates). **Prediction covers every grid row** (alarms run over all rows, 07), null where 05 says not to predict.
+     - Early stopping holds out 15% of the fit's training matches (whole matches, seeded, like LightGBM's `es_share`). After every epoch it takes the log loss on all their training rows, with patience 4 and at most 40 epochs (10 passes). The best epoch's weights are kept, and **there is no refit** on all the matches. A refit would double the cost, and training on 85% of the matches handicaps the GNN, not LightGBM.
+     - Then one temperature T is fitted on the early-stopping matches' rows (1 parameter, log loss), and p = sigmoid(logit / T). It changes calibration only, never the ranking. T is recorded per fold.
+     - AdamW, learning rate 1e-3, weight decay 1e-4, batch 512, gradient clipping at 1, dropout 0.1. Fixed parameters, not tuned (as LightGBM).
+   - **Leakage** (the hand features' rules): VISIBLE players only, the held VISIBLE ball, velocities only between VISIBLE sightings, and no history past that 0.5 s, rotated with the anchor row's sign. The globals are the v1 features, already tested causal. The standardization and T come from training matches only.
+   - **Tests** (`tests/test_graphs.py`, `tests/test_gnn.py`):
+     - graphs and p don't change when frames after t change;
+     - scrambling every ESTIMATED position changes nothing;
+     - a mirrored match with the teams swapped gives the same graphs and p;
+     - a row's p doesn't depend on the other rows in its batch;
+     - the GNN learns a toy signal through `run_cv`;
+     - every prediction is out of fold, including against the early-stopping matches.
+   - **Scale:** about 3.9M grid rows over 64 games.
+     - Graphs are cached per match as `graphs_v1_held.npz` next to the feature caches. The key is separate, so `features_v1/v2` are never touched, and the resampler deletes both when it rewrites a match.
+     - All 64 games in float16 take about 2.7 GB of RAM, and about 4 GB with the frames and v1 features. That's well under the workstation's 32 GB (and fine for the M1's tests).
+     - VRAM: the per-pair tensors are about 2 GB at batch 512, under the 2060's 6 GB. The peak is recorded.
+     - Run time on the 2060 isn't measured yet. The one-fold timing run measures it before a full run.
+   - **Device and determinism:** `--device auto|cuda|mps|cpu`, where auto means cuda, then mps, then cpu. Every random draw is seeded: torch, the early-stopping matches and the shuffling. CUDA runs with deterministic algorithms where it has them. CPU is bitwise reproducible; CUDA and MPS come out close, not bitwise. The device, its name, the peak GPU memory and the timings go into `run.json`.
+   - **Timing run:** `--one-fold N` runs outer fold N only (its inner fit, τ and outer fit) and skips the final τ. It saves that fold's matches only and marks the run partial (`partial` in `run.json`, a "PARTIAL RUN" report). Then it prints an estimate of the full run: about 5.5 × one fold per horizon, plus the one-off data loading. The first run on a machine also builds the graph caches; that time is reported separately and left out of the estimate. It's a timing and a sanity check, not a result.
+   - **Protocol:** `python -m prediction.cv --model gnn --horizons h5 --run-id gnn-frame-<date>-h5`, then the same with `h3`. Compared with `lgbm-held-2026-09-27` by `evaluation.compare` (per fold, "wins" means most folds) and `scripts/lead_time.py` (lead time, matched false alarms, ranking by time to shot). The GNN has no gain shares (`coef` is empty), so lead_time.py's gain table shows zeros for it.
 3. **Temporal GNN:** last 2–3 s of frames (at 10 Hz) through a GNN backbone, then a GRU/T-GCN over time. Follows the SoccerAI approach.
 
 ## Off-camera players
@@ -200,7 +255,8 @@ xG at the carrier's current position is an approximation. The shot usually happe
 - A direct P(goal within H) model is out: even PFF + SkillCorner give ~200 goals with tracking, far too few to train it.
 
 ## Class imbalance
-- Weighted loss or focal loss; evaluate with PR-AUC, not accuracy.
+- **No class weights and no focal loss** (decided 2026-09-28; this replaces "weighted or focal loss"). Plain log loss keeps p calibrated, which the alarms and P(goal) = P(shot) × xG both need. LightGBM showed it works at a ~2.5% base rate: the top decile predicts 0.186 and sees 0.185. Reweighting inflates p, and undoing that is another calibration step to get right. The GNNs use the same loss.
+- Evaluate with PR-AUC, not accuracy.
 
 ## Acceptance criteria
 - LightGBM baseline beats the distance + angle floor.
