@@ -90,6 +90,11 @@ An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where
      - **Big, stage 8 needs work before vision's own quality work:** mean Δ at or below −0.018 (the size of the worst single vision arm, `geom_loss`) and worse on at least 4 of 5 folds.
      - **In between:** stage 8 goes on the vision quality list, ranked by its Δ next to the sensitivity arms, not ahead of them.
    - **Result (2026-09-29, `lgbm-pinf-2026-09-29`, `Docs/reviews/possession-inferred-2026-09-29.md`):** H = 5 PR-AUC 0.296 → 0.258, mean Δ −0.038 (per fold −0.033 to −0.043), worse on 5/5 folds; H = 3 −0.036, 5/5. **Big:** stage 8 needs work. The model collapses on the 14.2% of scored rows where stage 8 names the other team (PR-AUC there 0.026 vs 0.237), and is worse where they agree too (−0.014). On the disagreeing rows PFF's team shoots about 3× as often as stage 8's, so PFF's lag is the smaller part.
+   - **Stale possession follow-up (set 2026-09-29, before the runs; 05 "Stale possession").** Stage 8's disagreement with PFF climbs with the seconds since it last confirmed a carrier (2% at 0 s, 51.5% past 10 s). Three runs, each H = 5 and H = 3: inferred + `poss_carrier_age_s` (v3, arm S), inferred with possession unknown past S = 10 s (arm U), and provider + v3.
+     - **The verdict uses the same rule as above,** against `lgbm-held-2026-09-27`. An arm that lands above −0.010 makes stage 8 plus that arm good enough.
+     - **The feature might help on its own.** If provider + v3 beats provider v1 on at least 4 of 5 folds (ΔPR-AUC at H = 5), a v3 arm's cost is read against provider + v3 instead: inferred + v3 − provider + v3. That Δ decides whether it's "small". Otherwise a feature gain would be credited to stage 8.
+     - Each arm is also compared with `lgbm-pinf-2026-09-29`, to show how much of the −0.038 it recovers.
+     - If no arm reaches "small", stage 8's rules change next (03 stage 8), and 07 #6 is rerun on the new rules.
 
 ## Outputs
 

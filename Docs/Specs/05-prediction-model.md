@@ -296,6 +296,40 @@ The model trains and scores on PFF's `possession_team`, but live it would get st
 
 **Result (2026-09-29, `Docs/reviews/possession-inferred-2026-09-29.md`).** PR-AUC 0.296 → **0.258** at H = 5 (−0.038, 5/5 folds), 0.298 → 0.260 at H = 3. Stage 8 disagrees with PFF on 14.2% of scored rows, and there the model can't rank at all (0.026 vs 0.237). There, PFF's team goes on to shoot about 3× as often as stage 8's, so stage 8 is mostly the one that's wrong. Where they agree the model is still worse (−0.014), since it trained with the frame reversed on 14% of rows. Stage 8 needs work before a model runs on it (07 #6).
 
+### Stale possession (07 #6 follow-up, 2026-09-29)
+Stage 8's possession is the team of the latest confirmed carrier, carried forward until the other team gets one. How long ago that carrier was seen says how far to trust it. `scripts/possession_staleness.py` measured it on the scored rows of all 64 matches (`Docs/reviews/possession-stale-2026-09-29.md`). **Carrier age** is the seconds since the last native frame of the same period with a non-null `ball_carrier_id` from stage 8. It's 0 on a carrier frame and null before the period's first carrier. Disagreement with PFF climbs steeply with it: 2.1% at 0 s, 4–5% up to 1 s, 7% at 1–2 s, 15% at 2–3 s, 25% at 3–5 s, 37% at 5–10 s, and 51.5% past 10 s. So the model side gets two cheap arms before stage 8's rules change.
+
+**Carrier age as an input.** It reads only 02's `ball_carrier_id` as stage 8 fills it, from native frames at or before the row's frame, so it's causal and something vision produces live. Stage 8's state cache now holds it too (Caches below).
+
+**Arm S: `poss_carrier_age_s` (features v3).**
+- `features_version = "3"` is v1's 29 columns unchanged plus `poss_carrier_age_s`: the carrier age at the row's native frame, NaN before the period's first carrier. v1 and v2 and their caches stay byte-identical.
+- It always comes from stage 8's carrier (default `StateConfig`), whichever possession the other inputs use. PFF has no carrier (02), and the feature describes the tracking, not whose ball it is. So v3 needs `gamestate_dir` and runs stage 8 in both arms.
+- Runs: `--possession inferred --features-version 3` (does it fix stage 8?) and `--possession provider --features-version 3` (does the feature help anyway?).
+
+**Arm U: unknown when stale (`--stale-possession unknown --stale-after S`).**
+- On the inferred path only, stage 8's possession is set to null on every grid row whose carrier age is over **S = 10 s**. Then there's no flip, nobody is an attacker or defender, and `possession_s` is NaN, as for any null possession (Nulls above). When a carrier is confirmed again, age drops to 0 and possession comes back. `possession_s` then restarts at 0 even if it's the same team: after an unknown stretch, how long the team has had it isn't known.
+- **S is fixed before any run.** It's where disagreement crosses about 50% (51.5% past 10 s, 37% at 5–10 s), which is where "unknown" stops losing to a guess. It was picked from the disagreement column only, which is stage 8 against PFF's possession on every match. The shot-rate and PR-AUC columns of the same table weren't used. This is the same mild use of all 64 matches as stage 8's own tuning, not tuning on 07 #6 results. S isn't changed after the run.
+- Rows past 10 s are 11.3% of scored rows, 5.5% of positives and 41% of the disagreeing rows.
+- **Not neutral on the ball.** Null possession means no rotation (sign +1), so the ball features (`ball_x`, `ball_dist`, `ball_angle`, `ball_vgoal`, about half the gain) are measured toward the +x goal. On a stale row that's close to a coin flip about direction, not "unknown". Only the player features and `possession_s` really become unknown. The arm is kept as defined: it's what a null possession does in `match_features` today, and the sensitivity test's `team_unknown` worked the same way.
+- Labels, `eligible`, `all_estimated` and the scored rows stay PFF's, so these rows are still trained on and scored, just with the "unknown" inputs.
+- `--stale-possession unknown` needs `--possession inferred` and a positive `--stale-after`. `--stale-after` needs `--stale-possession unknown`. Anything else is an error, and `none` (the default) is the old inferred path.
+- **S+U** (both at once) is run only if S and U each help on their own.
+
+**Caches.**
+- Stage 8's state per match: `data/processed/<match>/state_inferred_age_<key>.parquet` (`frame_id`, `possession_team`, `carrier_age_s`). The old `state_inferred_<key>.parquet` holds possession only. It's never read again, and a resample deletes both (the `state_inferred_*` glob).
+- Features: v3 provider is `features_v3_<ball_source>_s8_<key>.parquet`, since it depends on stage 8's config. v3 inferred is `features_v3_<ball_source>_pinf_<key>.parquet`. Arm U adds `_unk<S>` to the inferred name (`features_v1_held_pinf_<key>_unk10.parquet`). The v1/v2 provider names and `features_v1_held_pinf_<key>` stay as they are.
+- `<key>` is `config_key(StateConfig)`. A change to stage 8's rules has to change it too (a new config field for the new rule), or the old state and features would be reused (03 stage 8).
+
+**Run metadata.** An arm U run adds `stale_possession: {"arm": "unknown", "after_s": S}` to the `run.json` config. `possession_scored` also gets `stale_unknown_share`: the share of scored rows made unknown (nulls stage 8 already had are counted in `inferred_null_share`). v3 is recorded as `features_version`, as v2 was.
+
+**Tests** (`tests/test_possession.py`):
+- carrier age by hand: 0 while carried, growing while the ball is loose, reset at the period start
+- v1 provider and v1 inferred unchanged by the new code, and v3's first 29 columns equal v1's
+- past-only: objects after t change nothing at rows ≤ t, carrier age included
+- arm U nulls exactly where age > S, with labels, `eligible` and scored rows equal to the provider's
+- every new cache is separate from the old ones
+- refused flag combinations
+
 ## xG model
 ### Feature rule
 Every xG feature must be (a) computable at frame t from game state (02), before any shot happens, and (b) present in the training source. Anything only known once the shot is taken is out.
