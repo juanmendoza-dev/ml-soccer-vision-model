@@ -36,7 +36,8 @@ Turn broadcast video into game state (02) for each frame.
      - **Possession:** the team of the latest carrier. A carrier with no team (vision's unknown) doesn't change it. Reset to null at each period's start.
      - **Ball state,** in order: null until the first visible ball of the period, or once the ball has been unseen for more than `ball_lost_s` (2); **dead** once the ball is out (more than `out_margin_m` (0.5) past a touchline or goal line); **dead** once the ball has been still (speed under `still_speed` 0.5 m/s) for `still_spot_s` (1) at a restart spot (within 2 m of a corner, the center spot or a penalty spot, or inside a goal area), or for `still_any_s` (2) anywhere outside the penalty areas (free kicks; inside them it's usually a keeper holding the ball, which is alive). Dead holds until the ball is in and moving at `kick_speed` (4 m/s) or more, which starts play again. Otherwise alive.
      - Ball speed is over the last `speed_window_s` (0.2) of visible sightings.
-     - The defaults are starting values, tuned on PFF with `python -m vision.state_check` (next bullet); the chosen values and the result go in a review.
+     - Defaults tuned on 8 PFF games (`Docs/reviews/stage8-2026-09-29.md`): out margin 0 m, still 1 s anywhere outside the penalty areas, kick 3 m/s; the rest as above. Two dead-ball possession rules (out → the other team, possession frozen while dead) were tried and dropped: both made agreement with PFF worse.
+     - **Result on all 64 PFF games:** possession agrees on 77.9% of frames (82.9% alive), under the 90% target; a confirmed carrier's team agrees 97.9% of the time, but only 26% of alive frames have one. Dead frames come out dead or null 89.9% of the time, but only 6.7% dead (most have no ball in the data); alive frames come out alive 81.0%. Whether that's good enough is decided by 07 #6, not the target.
    - **Check against providers** (`python -m vision.state_check [--games ...]`, 07 #6): per match and pooled, on the provider's frames: possession team agreement where the provider has one, on all frames and on alive frames; provider dead frames labeled dead or null (target ≥ 90%); provider alive frames labeled alive (not a target, but a rule that calls everything dead would pass the dead one); inferred possession changes per match against the provider's; and how often each output is null. PFF has no ball carrier, so the carrier isn't checked there. SkillCorner and IDSSE join when their converters land.
 
 ## Requirements
@@ -122,7 +123,7 @@ Plus `run.json` next to it: config, git commit, model weights hash, video file h
 - Output passes the schema validator in `tests/`.
 - On SoccerNet-GSR validation clips: positions within ~2 m for most visible players (measure with sn-trackeval GS-HOTA as a secondary metric).
 - Team assignment correct on > 95% of player-frames on sample clips.
-- Stage 8, run on PFF, SkillCorner and IDSSE tracking and compared to provider values: possession team matches on ≥ 90% of frames where the provider has a value; frames the provider marks dead are labeled dead or null ≥ 90% of the time. Starting targets; revisit after the first run.
+- Stage 8, run on PFF, SkillCorner and IDSSE tracking and compared to provider values: possession team matches on ≥ 90% of frames where the provider has a value; frames the provider marks dead are labeled dead or null ≥ 90% of the time. Starting targets; revisit after the first run. First run (PFF, 2026-09-29): 77.9% and 89.9%, and the dead-or-null share is nearly all null, so it's read with dead → dead and alive → alive beside it (Stage 8 above).
 
 ## Open questions
 - Is Roboflow's pretrained ball detector good enough, or is ball fine-tuning needed?
