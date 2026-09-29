@@ -17,8 +17,6 @@ prediction = [
     "scikit-learn>=1.4",
     "lightgbm>=4.3",
     "torch>=2.3",
-    "torch-geometric>=2.5",
-    "unravelsports",
 ]
 vision = [
     "torch>=2.3",
