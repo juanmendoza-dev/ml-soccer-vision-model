@@ -89,6 +89,7 @@ An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where
      - **Small, stage 8 is good enough, move on:** mean Δ above −0.010 (under half the fold spread, and less than any vision arm that was worth acting on).
      - **Big, stage 8 needs work before vision's own quality work:** mean Δ at or below −0.018 (the size of the worst single vision arm, `geom_loss`) and worse on at least 4 of 5 folds.
      - **In between:** stage 8 goes on the vision quality list, ranked by its Δ next to the sensitivity arms, not ahead of them.
+   - **Result (2026-09-29, `lgbm-pinf-2026-09-29`, `Docs/reviews/possession-inferred-2026-09-29.md`):** H = 5 PR-AUC 0.296 → 0.258, mean Δ −0.038 (per fold −0.033 to −0.043), worse on 5/5 folds; H = 3 −0.036, 5/5. **Big:** stage 8 needs work. The loss is on the 14.2% of scored rows where stage 8 names the other team (PR-AUC there 0.026 vs 0.237).
 
 ## Outputs
 

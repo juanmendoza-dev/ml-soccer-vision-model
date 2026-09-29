@@ -24,11 +24,11 @@ Code for all of this is written and pushed. What's left is running and checking 
 - [ ] Write the results up in `Docs/reviews/` (frame GNN, temporal GNN, degraded runs) and tick the GNN items below
 
 **M1 (code, next build)**
-- [ ] Provider vs inferred possession (07 #6): the same LightGBM trained on stage 8's possession instead of PFF's. It decides whether stage 8's 77.9% is good enough (`Docs/reviews/stage8-2026-09-29.md`). Half code, half a run, M1 only
-  - [ ] Spec in 05/07 first. Possession sets the attacking team, the flip, which rows are eligible and the labels. Proposal: the model's inputs use inferred possession, while labels and scored rows stay on PFF's (the shots really happened, so what gets scored shouldn't change)
-  - [ ] Code: a flag like `--possession inferred` that runs stage 8 (`vision.state.infer`) per match and feeds it through the resampler and features, with its own caches, plus tests (past only, provider run unchanged)
-  - [ ] Run: `--model lgbm` with the flag, H = 5 first (about 5–8 min), H = 3 if there's time (about 10–15 min for both; estimated from the earlier LightGBM runs, not measured). Stage 8 itself is about 15 s for 64 games; the resampler part is untimed
-  - [ ] Compare with `lgbm-held-2026-09-27` (`evaluation.compare`, `scripts/lead_time.py`) and write a short review. A small drop: stage 8 is good enough, move on. A big one: stage 8 needs work (see the review's "what it means")
+- [x] Provider vs inferred possession (07 #6): the same LightGBM trained on stage 8's possession instead of PFF's. It decides whether stage 8's 77.9% is good enough (`Docs/reviews/stage8-2026-09-29.md`). **Done 2026-09-29: −0.038 PR-AUC at H = 5, 5/5 folds, so stage 8 needs work** (`Docs/reviews/possession-inferred-2026-09-29.md`)
+  - [x] Spec in 05/07 first. Possession sets the attacking team, the flip, which rows are eligible and the labels. Proposal: the model's inputs use inferred possession, while labels and scored rows stay on PFF's (the shots really happened, so what gets scored shouldn't change)
+  - [x] Code: a flag like `--possession inferred` that runs stage 8 (`vision.state.infer`) per match and feeds it through the resampler and features, with its own caches, plus tests (past only, provider run unchanged)
+  - [x] Run: `--model lgbm` with the flag, H = 5 first (about 5–8 min), H = 3 if there's time (about 10–15 min for both; estimated from the earlier LightGBM runs, not measured). Stage 8 itself is about 15 s for 64 games; the resampler part is untimed. Measured: both horizons in one run, 7 min 22 s (stage 8 12 s, features 7 s, CV 400 s)
+  - [x] Compare with `lgbm-held-2026-09-27` (`evaluation.compare`, `scripts/lead_time.py`) and write a short review. A small drop: stage 8 is good enough, move on. A big one: stage 8 needs work (see the review's "what it means")
 - [ ] Later: spec the node-level "who will shoot" head in 05 (labels from the shot's `player_id`, per-node team is already cached, the shooter is off camera in about a third of shot frames)
 
 ## Phase 1 — Predictor on tracking data (M1)
@@ -73,7 +73,8 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [x] Ball carrier / possession / ball state rules on pitch coordinates (`vision/state.py`, 2026-09-29): one causal state machine on visible objects, thresholds in seconds
 - [x] Check against PFF (`python -m vision.state_check`, `Docs/reviews/stage8-2026-09-29.md`): possession 77.9% (82.9% alive), under 90%. A confirmed carrier matches PFF 97.9%, but only 26% of alive frames have one. Dead → dead or null 89.9%, nearly all null
 - [ ] Same check on SkillCorner and IDSSE when their converters land (SkillCorner also checks the carrier)
-- [ ] Provider vs. inferred possession comparison (07 #6)
+- [x] Provider vs. inferred possession comparison (07 #6, `Docs/reviews/possession-inferred-2026-09-29.md`): PR-AUC 0.296 → 0.258 at H = 5 (5/5 folds worse), past 07's "big" line. On the 14% of scored rows where stage 8 names the other team, the model can't rank at all (PR-AUC 0.026)
+- [ ] Stage 8, carry-forward fix: possession changes with no confirmed carrier (stage 8 review "What it means"), or give the model stage 8's staleness (possession review). Rerun 07 #6 after, 7.5 min on the M1
 
 **GNNs** (code and tests on the M1, full CV runs on the workstation's RTX 2060, decided 2026-09-28)
 - [x] Frame GNN spec in 05 (2026-09-28): a graph per 10 Hz row (visible players + held ball, attacking frame), fully connected with edges in meters, v1 hand features as a global vector, plain log loss, early stopping on whole matches without a refit, stride-4 epochs. Built in-house, not with unravelsports (its velocities use later frames). Ablation arms `--gnn-layers 0` and `--gnn-globals none` say which claim a win supports
