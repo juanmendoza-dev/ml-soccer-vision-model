@@ -212,8 +212,9 @@ def process_game(
     del objects
     dst = out_dir / match_id
     dst.mkdir(parents=True, exist_ok=True)
-    # cached features (prediction.features.load_match) were built from the old tables
-    for stale in dst.glob("features_v*.parquet"):
+    # cached features and graphs (prediction.features, prediction.graphs) were built from
+    # the old tables
+    for stale in [*dst.glob("features_v*.parquet"), *dst.glob("graphs_v*.npz")]:
         stale.unlink()
     frames10.write_parquet(dst / "frames_10hz.parquet")
     objects10.write_parquet(dst / "objects_10hz.parquet")
