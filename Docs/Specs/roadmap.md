@@ -51,9 +51,12 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] Check against PFF, SkillCorner and IDSSE provider values (≥ 90% targets)
 - [ ] Provider vs. inferred possession comparison (07 #6)
 
-**GNNs**
-- [ ] Frame GNN with unravelsports
-- [ ] Temporal GNN
+**GNNs** (code and tests on the M1, full CV runs on the workstation's RTX 2060, decided 2026-09-28)
+- [ ] Frame GNN spec in 05: graph per 10 Hz row (visible players + held ball, attacking frame), node/edge features, model size, frame subsampling for training. Same leakage rules as the hand features (causal, no ESTIMATED positions, history rotated with the anchor row)
+- [ ] Frame GNN code (`prediction/gnn.py` or similar) behind the same fit / predict / coef interface, registered in `prediction.cv`, tests, and a tiny smoke fit on 2–3 matches on the M1. No full CV on the M1
+- [ ] Move the data to the workstation (`data/` is gitignored): `data/processed/*/{frames,objects}_10hz.parquet`, `data/gamestate/*/{match,events,frames}.parquet`, and the baseline run `data/runs/lgbm-held-2026-09-27`. Set up `uv sync` with the `prediction` extra on CUDA (09) and write the runbook into 09
+- [ ] Frame GNN full CV on the 2060 (H = 5 first, then H = 3): time one fold first, then compare with `lgbm-held-2026-09-27` using `evaluation.compare` and `scripts/lead_time.py`
+- [ ] Temporal GNN (last 2–3 s through the frame GNN + GRU), same path: code on the M1, runs on the 2060. Then rerun `id_fragment` from the sensitivity test on it
 - [ ] Node-level "who will shoot" head → P(goal) v2
 
 **Player profiles**
