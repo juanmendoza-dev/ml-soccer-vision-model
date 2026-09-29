@@ -4,6 +4,7 @@
         [--no-report] [--features-version 1|2] [--degrade ARM:SEVERITY ...]
         [--degrade-arm both|test] [--degrade-seed N] [--device auto|cuda|mps|cpu]
         [--gnn-globals v1|none] [--gnn-layers N] [--gnn-param KEY=VALUE ...] [--one-fold N]
+        [--possession provider|inferred]
 
 Per horizon and outer fold: fit on the training matches minus the inner split, pick
 tau on the inner matches, refit on all training matches, predict the held-out fold.
@@ -18,6 +19,10 @@ lead-time features. Each version has its own feature cache.
 --degrade runs the vision sensitivity test (05): objects are degraded the way vision
 fails before features are built. --degrade-arm both (default) degrades training and test
 matches; test fits and picks tau on clean data and predicts degraded held-out folds.
+
+--possession inferred builds the model's inputs from stage 8's possession (vision.state,
+run on the game state) instead of PFF's (05, "Inferred possession"; 07 #6). Labels, scored
+rows, tau and the alarms stay on PFF's. lgbm and floor only, not with --degrade.
 
 --model gnn is the frame GNN (05 model 2) on graphs cached per match. --gnn-globals none
 and --gnn-layers 0 are its ablation arms. --one-fold N is a timing run: outer fold N only,
@@ -42,7 +47,7 @@ from evaluation.folds import FOLDS_PATH, GAMESTATE_DIR, inner_split, load
 from evaluation.metrics import MAX_FALSE_PER_MATCH, choose_tau, shots_table
 from evaluation.report import PROCESSED_DIR, render
 from evaluation.runs import RUNS_DIR, save_run
-from prediction import degrade, floor, gnn, graphs, lgbm
+from prediction import degrade, floor, gnn, graphs, lgbm, possession
 from prediction.features import (
     BALL_SOURCES,
     FEATURE_SETS,
@@ -89,6 +94,9 @@ DATA_KEYS = (
     "degrade_arm",
     "degrade_seed",
     "degrade_realized",
+    "possession",
+    "state_config",
+    "possession_scored",
     "globals",
     "graphs_version",
 )
@@ -107,6 +115,8 @@ def load_data(
     degrade_seed: int = degrade.DEFAULT_SEED,
     degrade_stats: dict | None = None,
     features_version: str = FEATURES_VERSION,
+    possession_source: str = "provider",
+    possession_stats: dict | None = None,
 ):
     data = pl.concat(
         [
@@ -119,6 +129,9 @@ def load_data(
                 degrade_seed=degrade_seed,
                 degrade_stats=degrade_stats,
                 features_version=features_version,
+                possession=possession_source,
+                gamestate_dir=gamestate_dir,
+                possession_stats=possession_stats,
             )
             for i in ids
         ]
@@ -361,6 +374,12 @@ def main(argv: list[str]) -> int:
         help="gnn/tgnn: override one of gnn.PARAMS, repeatable (e.g. steps=4, batch_size=64)",
     )
     ap.add_argument(
+        "--possession",
+        default="provider",
+        choices=possession.POSSESSION,
+        help="where the model's inputs get possession from: PFF's, or stage 8's (07 #6)",
+    )
+    ap.add_argument(
         "--one-fold",
         type=int,
         metavar="N",
@@ -374,6 +393,11 @@ def main(argv: list[str]) -> int:
         args.gnn_overrides = gnn_overrides(args.gnn_param)
     except ValueError as e:
         ap.error(str(e))
+    if args.possession == "inferred":
+        if args.model in GNNS:
+            ap.error("--possession inferred is lgbm/floor only: graphs use PFF's possession (05)")
+        if specs:
+            ap.error("--possession inferred can't be combined with --degrade (05)")
     if args.model == "tgnn" and args.gnn_layers == 0:
         ap.error("--gnn-layers 0 has no graph, so no temporal model: use --model gnn")
     folds = load(args.folds)
@@ -398,7 +422,7 @@ def gnn_overrides(pairs: list[str]) -> dict:
 def run(args, specs, folds: dict) -> int:
     started = time.perf_counter()
     ids = sorted({m["match_id"] for m in folds["matches"]})
-    stats = {}
+    stats, pstats = {}, {}
     version = args.features_version
     data, shots = load_data(
         ids,
@@ -410,10 +434,23 @@ def run(args, specs, folds: dict) -> int:
         args.degrade_seed,
         stats,
         version,
+        args.possession,
+        pstats,
     )
     test_data, data_config, model_kwargs, test_attrs = None, {}, {}, None
     if args.model in VERSIONED:
         data_config = {"features": list(FEATURE_SETS[version]), "features_version": version}
+    if args.possession == "inferred":
+        data_config |= {
+            "possession": "inferred",
+            "state_config": possession.StateConfig().to_dict(),
+            "possession_scored": possession.summarize(pstats),
+        }
+        log(
+            f"inferred possession: {data_config['possession_scored']}, stage 8 "
+            f"{pstats.get('stage8_s', 0):.0f} s, features {pstats.get('features_s', 0):.0f} s "
+            "(0 when cached)"
+        )
     if specs:
         data_config |= {
             "degrade": specs,
@@ -482,6 +519,7 @@ def run(args, specs, folds: dict) -> int:
         test_attrs=test_attrs,
     )
     meta["config"]["timing"] |= {
+        **{k: round(pstats[k], 1) for k in ("stage8_s", "features_s") if k in pstats},
         "load_s": round(load_s, 1),
         "graphs_s": round(graphs_s, 1),
         "cv_s": round(time.perf_counter() - t0, 1),
