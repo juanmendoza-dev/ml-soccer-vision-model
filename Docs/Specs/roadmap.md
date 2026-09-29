@@ -12,7 +12,7 @@
 Code for all of this is written and pushed. What's left is running and checking it. Tick items here and in their sections below.
 
 **M1 (verification, no GPU)**
-- [ ] `git pull`, then the full suite: `uv run pytest -q`. Expect 490 on the M1 (it has the raw data). Only the touched test files were run on 2026-09-29, so 380 passed / 110 skipped on a clean clone is a count, not a run
+- [x] Full suite on the M1 (2026-09-29): 490 passed in 2 min 58 s. The workstation's 380 passed / 110 skipped is still a count until it runs there
 - [ ] Optional: delete the unused `data/processed/*/graphs_v1_held.npz` (the cache moved to v2)
 
 **RTX 2060 (training), in this order.** Every command is in 09, "GNN runs (workstation runbook)"
