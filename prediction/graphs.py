@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from prediction import degrade as degrade_mod
 from prediction.features import (
     PLAYER_TYPES,
     VEL_ROWS,
@@ -170,7 +171,9 @@ def match_graphs(
 
 
 def code(team: pl.Series) -> np.ndarray:
-    return team.cast(pl.String).replace_strict(TEAM_CODE, default=0, return_dtype=pl.Int8).to_numpy()
+    return (
+        team.cast(pl.String).replace_strict(TEAM_CODE, default=0, return_dtype=pl.Int8).to_numpy()
+    )
 
 
 def cache_path(match_dir: Path, ball_source: str = "held") -> Path:
@@ -178,11 +181,25 @@ def cache_path(match_dir: Path, ball_source: str = "held") -> Path:
 
 
 def load_graphs(
-    match_id: str, processed_dir: Path, ball_source: str = "held", cache: bool = True
+    match_id: str,
+    processed_dir: Path,
+    ball_source: str = "held",
+    cache: bool = True,
+    degrade=(),
+    degrade_seed: int = degrade_mod.DEFAULT_SEED,
 ) -> tuple[dict[str, np.ndarray], bool]:
     """One match's graphs, aligned with its frames_10hz rows sorted by (period, t_s).
     Cached next to the feature caches under their own name, so features_v* are never
-    read or written. Returns (graphs, built): built is False when the cache was used."""
+    read or written. Returns (graphs, built): built is True when a cache was written
+    (a one-off cost; degraded graphs are rebuilt every run, so they don't count).
+
+    With `degrade` (05, Vision sensitivity test) the objects are degraded in memory the
+    way load_match degrades them for the features (same seed, same objects), and the
+    clean cache is neither read nor written."""
+    if degrade:
+        if ball_source != "held":
+            raise ValueError("degradations need ball_source='held' (05)")
+        cache = False
     d = processed_dir / match_id
     path = cache_path(d, ball_source)
     frames = pl.read_parquet(
@@ -198,10 +215,14 @@ def load_graphs(
         ):
             raise ValueError(f"{match_id}: {path.name} doesn't match frames_10hz; delete it")
         return out, False
-    out = match_graphs(frames, pl.scan_parquet(d / "objects_10hz.parquet"), ball_source)
+    objects = pl.scan_parquet(d / "objects_10hz.parquet")
+    if degrade:
+        degraded, _ = degrade_mod.apply(objects.collect(), match_id, degrade, degrade_seed)
+        objects = degraded.lazy()
+    out = match_graphs(frames, objects, ball_source)
     if cache:
         np.savez_compressed(path, **out)
-    return out, True
+    return out, cache
 
 
 @dataclass
@@ -260,10 +281,16 @@ class GraphStore:
 
     @classmethod
     def load(
-        cls, ids: list[str], processed_dir: Path, ball_source: str = "held", log=None
+        cls,
+        ids: list[str],
+        processed_dir: Path,
+        ball_source: str = "held",
+        log=None,
+        degrade=(),
+        degrade_seed: int = degrade_mod.DEFAULT_SEED,
     ) -> "GraphStore":
         """Match by match into one preallocated array, so peak memory is the store plus
-        one match."""
+        one match. With degrade, every match is built from degraded objects, uncached."""
         total = sum(
             pl.scan_parquet(processed_dir / i / "frames_10hz.parquet")
             .select(pl.len())
@@ -274,7 +301,7 @@ class GraphStore:
         store = cls.empty(ids, total)
         at = 0
         for j, i in enumerate(ids):
-            g, built = load_graphs(i, processed_dir, ball_source)
+            g, built = load_graphs(i, processed_dir, ball_source, True, degrade, degrade_seed)
             at = store.put(j, at, g)
             store.built += built
             if log and built:
