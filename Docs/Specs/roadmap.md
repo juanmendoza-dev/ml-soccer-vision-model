@@ -8,6 +8,25 @@
 - [x] Download Metrica into `data/raw/` and add steps to `data/README.md`
 - [ ] Same for SkillCorner, IDSSE
 
+## Next session: what's left from 2026-09-29
+Code for all of this is written and pushed. What's left is running and checking it. Tick items here and in their sections below.
+
+**M1 (verification, no GPU)**
+- [ ] `git pull`, then the full suite: `uv run pytest -q`. Expect 490 on the M1 (it has the raw data). Only the touched test files were run on 2026-09-29, so 380 passed / 110 skipped on a clean clone is a count, not a run
+- [ ] Optional: delete the unused `data/processed/*/graphs_v1_held.npz` (the cache moved to v2)
+
+**RTX 2060 (training), in this order.** Every command is in 09, "GNN runs (workstation runbook)"
+- [ ] Setup: copy `data/workstation-data-2026-09-29.tar` and its `.sha256`, check, unpack, `git pull`, `uv sync` with the `prediction` extra on CUDA, CUDA check. The tar doesn't need repacking: it holds no caches, and graphs v2 get built on first use
+- [ ] Tests on the workstation: expect 380 passed, 110 skipped. Then `scripts\gnn_smoke.py --device cuda`
+- [ ] Frame GNN: `--model gnn --one-fold 0` timing, then full H = 5 and H = 3. Compare with `lgbm-held-2026-09-27` (`evaluation.compare`, `scripts/lead_time.py`)
+- [ ] Temporal GNN: `--model tgnn --one-fold 0` timing first and watch GPU memory. It has never been fitted on real data, so this is also its first real check. If it's too slow or runs out of memory, use `--gnn-param steps=4`, `stride=8` or `batch_size=64`. Then full H = 5 and H = 3. Compare with the frame GNN first (does history help?), then with LightGBM
+- [ ] Sensitivity on the temporal GNN (H = 5): `--degrade id_fragment:2` and `--degrade target`, each against the clean temporal run
+- [ ] Write the results up in `Docs/reviews/` (frame GNN, temporal GNN, degraded runs) and tick the GNN items below
+
+**M1 (code, next build)**
+- [ ] Spec, then build, provider vs inferred possession (07 #6): the same LightGBM trained on stage 8's possession instead of PFF's. The labels and the attack direction key off provider possession today, so the spec has to say how. This decides whether stage 8's 77.9% is good enough (`Docs/reviews/stage8-2026-09-29.md`)
+- [ ] Later: spec the node-level "who will shoot" head in 05 (labels from the shot's `player_id`, per-node team is already cached, the shooter is off camera in about a third of shot frames)
+
 ## Phase 1 — Predictor on tracking data (M1)
 Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order.
 
