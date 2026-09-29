@@ -58,7 +58,8 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] Frame GNN full CV on the 2060 (H = 5 first, then H = 3): time one fold first, then compare with `lgbm-held-2026-09-27` using `evaluation.compare` and `scripts/lead_time.py`
 - [x] Temporal GNN spec and code (2026-09-29, 05 model 3): 6 steps 0.5 s apart (last 2.5 s) turned into the anchor row's frame, the frame GNN's message passing on each, a GRU over them, batch 128. Graphs cache v2 keeps node teams (frame GNN inputs unchanged). `--model tgnn`, `--gnn-param` for timing tweaks. Tests on the M1 (window edges, turnover, mirror, causal, out of fold; learns a history-only toy at PR-AUC 0.64 vs 0.37 for the frame GNN). No real-data fit yet
 - [ ] Temporal GNN runs on the 2060 after the frame GNN: one-fold timing, then H = 5 and H = 3. Compare with the frame GNN first (09 runbook)
-- [ ] Rerun `id_fragment` on the temporal GNN: needs `--degrade` wired into the graphs first. Tracks aren't linked across steps, so it only reaches the model through `has_vel` (05)
+- [x] `--degrade` wired into the GNN graphs (2026-09-29): built from the same degraded objects as the features, never cached; the test arm swaps in a degraded store for the held-out folds. Checked end to end on 10 matches (tgnn, `ball_miss`, test arm, one fold)
+- [ ] Rerun `id_fragment` (and the combined arm) on the temporal GNN on the 2060, against the clean temporal run. Tracks aren't linked across steps, so it only reaches the model through `has_vel` (05)
 - [ ] Node-level "who will shoot" head → P(goal) v2
 
 **Player profiles**
