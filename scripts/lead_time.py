@@ -102,6 +102,7 @@ GROUPS = {
         "ball_line_gap",
         "att_beyond_line",
     ],
+    "v3: stage 8 carrier age": ["poss_carrier_age_s"],
 }
 
 
