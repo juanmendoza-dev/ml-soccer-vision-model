@@ -294,7 +294,7 @@ def test_caches_are_separate_and_keyed_by_the_config(tmp_path):
         "objects_10hz.parquet",
         "features_v1_held.parquet",
         f"features_v1_held_pinf_{key}.parquet",
-        f"state_inferred_{key}.parquet",
+        f"state_inferred_age_{key}.parquet",
     }
     assert clean.read_bytes() == before
     assert load(gs, proc, "provider").equals(prov)
@@ -342,3 +342,182 @@ def test_run_config_records_the_possession_source():
     }
     _, meta = cv.run_cv("floor", ["h5"], folds, data, shots, log=lambda m: None, data_config=extra)
     assert {k: meta["config"][k] for k in extra} == extra
+
+
+# --- stale possession (05, "Stale possession"): carrier age, v3, arm U ---
+
+
+def test_carrier_age_by_hand():
+    """0 on a carrier frame, seconds since the last one while nobody carries, null before
+    the period's first carrier, and a new period starts over. Row order is frames'."""
+    frames = pl.DataFrame(
+        {
+            "frame_id": [5, 0, 1, 2, 3, 4, 6, 7],
+            "period": [2, 1, 1, 1, 1, 1, 2, 2],
+            "timestamp_s": [0.0, 0.0, 0.5, 1.0, 1.5, 3.0, 0.5, 1.0],
+        }
+    )
+    state = pl.DataFrame(
+        {
+            "frame_id": [0, 1, 2, 3, 4, 5, 6, 7],
+            "ball_carrier_id": [None, "h1", "h1", None, None, None, None, "a1"],
+        },
+        schema_overrides={"ball_carrier_id": pl.String},
+    )
+    got = possession.carrier_age(frames, state).to_list()
+    # frame 5 (period 2, before any carrier) is null even though period 1 had one
+    assert got == [None, None, 0.0, 0.0, 0.5, 2.0, None, 0.0]
+
+
+def test_carrier_age_on_the_synthetic_match(built):
+    """home_1 carries from 0.3 s, away_1 from 8.3 s, then the ball goes up at 14 s and
+    nobody is a candidate: age grows from the last carrier frame (13.96 s). Period 2
+    starts over: null until away_1 has carried for 0.3 s."""
+    gs, proc, _, _ = built
+    state = possession.inferred_state("syn", gs, proc, cache=False)
+    frames = pl.read_parquet(gs / "syn" / "frames.parquet")
+    s = frames.select("frame_id", "period", "timestamp_s").join(state, on="frame_id")
+    p1 = s.filter(pl.col("period") == 1)
+    age = lambda lo, hi: p1.filter(pl.col("timestamp_s").is_between(lo, hi))["carrier_age_s"]
+    assert age(0.0, 0.25).is_null().all()
+    assert (age(0.3, 7.96) == 0).all() and (age(8.3, 13.96) == 0).all()
+    late = p1.filter(pl.col("timestamp_s") >= 14.0)
+    assert np.allclose(late["carrier_age_s"], late["timestamp_s"] - 13.96)
+    assert late["possession_team"].unique().to_list() == ["away"]  # still carried forward
+    p2 = s.filter(pl.col("period") == 2)
+    assert p2.filter(pl.col("timestamp_s") < 0.28)["carrier_age_s"].is_null().all()
+    assert (p2.filter(pl.col("timestamp_s") >= 0.3)["carrier_age_s"] == 0).all()
+
+
+def test_v1_inferred_is_match_features_on_stage_8s_possession(built):
+    """The new code leaves the v1 inferred arm as it was: features from the swapped
+    possession, nothing else."""
+    gs, proc, _, inf = built
+    frames = pl.read_parquet(proc / "syn" / "frames_10hz.parquet").sort("period", "t_s")
+    state = possession.inferred_state("syn", gs, proc, cache=False)
+    inputs = possession.swap_possession(frames, state).select(
+        "period", "t_s", "possession_team", "flipped"
+    )
+    feats = match_features(inputs, pl.scan_parquet(proc / "syn" / "objects_10hz.parquet"))
+    assert inf.select(FEATURES).equals(feats.select(FEATURES))
+
+
+@pytest.mark.parametrize("which", ["provider", "inferred"])
+def test_v3_is_v1_plus_the_carrier_age(built, which):
+    gs, proc, prov, inf = built
+    v1 = prov if which == "provider" else inf
+    v3 = load(gs, proc, which, cache=False, features_version="3")
+    assert v3.columns == [*v1.columns, "poss_carrier_age_s"]
+    assert v3.drop("poss_carrier_age_s").equals(v1)
+    # the row's native frame's age, NaN before the first carrier
+    f10 = pl.read_parquet(proc / "syn" / "frames_10hz.parquet").sort("period", "t_s")
+    state = possession.inferred_state("syn", gs, proc, cache=False)
+    want = f10.join(state, on="frame_id", how="left", maintain_order="left")["carrier_age_s"]
+    got = v3["poss_carrier_age_s"].cast(pl.Float64).fill_nan(None)
+    assert np.allclose(got.fill_null(-1), want.fill_null(-1), atol=1e-5)
+    assert got.is_null().any() and (got > 3).any()
+
+
+def test_unknown_nulls_possession_exactly_where_stale(built):
+    """Arm U with S = 2 s: past 15.96 s of period 1 stage 8's away is dropped. There
+    nobody is an attacker or defender and possession_s is NaN; everywhere else the
+    features are the plain inferred arm's. Labels and scored rows stay PFF's."""
+    gs, proc, prov, inf = built
+    stats = {}
+    unk = load(gs, proc, "inferred", cache=False, stale_after=2.0, possession_stats=stats)
+    f10 = pl.read_parquet(proc / "syn" / "frames_10hz.parquet").sort("period", "t_s")
+    state = possession.inferred_state("syn", gs, proc, cache=False)
+    age = f10.join(state, on="frame_id", how="left", maintain_order="left")["carrier_age_s"]
+    stale = (age > 2.0).fill_null(False).to_numpy()
+    assert stale.any() and not stale.all()
+    s = unk.filter(pl.Series(stale))
+    assert (s["n_visible_att"] == 0).all() and (s["n_visible_def"] == 0).all()
+    assert s["possession_s"].is_nan().all()
+    # the fresh rows match the plain inferred arm
+    assert unk.filter(pl.Series(~stale)).equals(inf.filter(pl.Series(~stale)))
+    cols = FRAME_COLS + [f"label_{x}_{h}" for h in ("h5", "h3") for x in ("mask", "shot")]
+    assert unk.select(cols).equals(prov.select(cols))
+    scored = (prov["label_mask_h5"] & ~prov["all_estimated"]).to_numpy()
+    assert stats["stale_unknown"] == int((stale & scored).sum()) > 0
+    summary = possession.summarize(stats)
+    assert summary["stale_unknown_share"] > 0
+    assert summary["inferred_null_share"] >= summary["stale_unknown_share"]
+
+
+def test_stale_features_only_use_the_past(tmp_path):
+    """v3 and arm U: objects after period 1's 10 s change nothing at rows <= 10 s."""
+    a_gs, a_proc = build(tmp_path / "a")
+    b_gs, b_proc = build(tmp_path / "b", shift_after=10.0)
+    early = (pl.col("period") == 1) & (pl.col("t_s") <= 10.0 + 1e-9)
+    for kw in (
+        {"features_version": "3"},
+        {"stale_after": 2.0},
+        {"stale_after": 2.0, "features_version": "3"},
+    ):
+        for which in ("provider", "inferred") if "stale_after" not in kw else ("inferred",):
+            a = load(a_gs, a_proc, which, cache=False, **kw)
+            b = load(b_gs, b_proc, which, cache=False, **kw)
+            assert a.filter(early).equals(b.filter(early)), (which, kw)
+            assert not a.filter(~early).equals(b.filter(~early))
+
+
+def test_stale_caches_are_separate(tmp_path):
+    gs, proc = build(tmp_path)
+    d = proc / "syn"
+    key = possession.config_key(StateConfig())
+    old = {
+        "features_v1_held.parquet": load(gs, proc, "provider"),
+        f"features_v1_held_pinf_{key}.parquet": load(gs, proc, "inferred"),
+    }
+    before = {n: (d / n).read_bytes() for n in old}
+    new = {
+        f"features_v3_held_s8_{key}.parquet": load(gs, proc, "provider", features_version="3"),
+        f"features_v3_held_pinf_{key}.parquet": load(gs, proc, "inferred", features_version="3"),
+        f"features_v1_held_pinf_{key}_unk2.parquet": load(gs, proc, "inferred", stale_after=2.0),
+        f"features_v1_held_pinf_{key}_unk5.parquet": load(gs, proc, "inferred", stale_after=5.0),
+    }
+    assert {p.name for p in d.glob("features_*")} == set(old) | set(new)
+    assert {p.name for p in d.glob("state_*")} == {f"state_inferred_age_{key}.parquet"}
+    assert {n: (d / n).read_bytes() for n in old} == before
+    for n, df in {**old, **new}.items():  # each reads back from its own cache
+        kw = {"features_version": "3"} if "_v3_" in n else {}
+        if "_unk" in n:
+            kw["stale_after"] = float(n.split("_unk")[1].split(".")[0])
+        which = "inferred" if "pinf" in n else "provider"
+        assert load(gs, proc, which, **kw).equals(df), n
+    assert not new[f"features_v1_held_pinf_{key}_unk2.parquet"].equals(
+        new[f"features_v1_held_pinf_{key}_unk5.parquet"]
+    )
+    process_game("syn", gs, proc)
+    assert not list(d.glob("state_*")) and not list(d.glob("features_v*"))
+
+
+def test_stale_refused_combinations(tmp_path, capsys):
+    gs, proc = build(tmp_path)
+    for kw in ({"stale_after": 2.0}, {"stale_after": 0.0, "which": "inferred"}):
+        which = kw.pop("which", "provider")
+        with pytest.raises(ValueError, match="stale_after"):
+            load(gs, proc, which, **kw)
+    with pytest.raises(ValueError, match="degradations"):
+        load(gs, proc, "provider", features_version="3", degrade=["ball_miss:0.1"])
+    with pytest.raises(ValueError, match="gamestate_dir"):
+        load_match("syn", proc, ["h5"], features_version="3")
+    for argv, msg in (
+        (["--stale-possession", "unknown", "--stale-after", "10"], "needs --possession inferred"),
+        (["--possession", "inferred", "--stale-possession", "unknown"], "positive --stale-after"),
+        (["--possession", "inferred", "--stale-after", "10"], "needs --stale-possession"),
+        (["--model", "gnn", "--features-version", "3"], "lgbm/floor only"),
+        (["--model", "lgbm", "--features-version", "3", "--degrade", "ball_miss:0.1"], "--degrade"),
+    ):
+        with pytest.raises(SystemExit):
+            cv.main(["--model", "lgbm", *argv] if "--model" not in argv else argv)
+        assert msg in capsys.readouterr().err
+
+
+def test_run_config_records_the_stale_arm():
+    from test_cv import world
+
+    folds, data, shots = world()
+    extra = {"stale_possession": {"arm": "unknown", "after_s": 10.0}}
+    _, meta = cv.run_cv("floor", ["h5"], folds, data, shots, log=lambda m: None, data_config=extra)
+    assert meta["config"]["stale_possession"] == extra["stale_possession"]
