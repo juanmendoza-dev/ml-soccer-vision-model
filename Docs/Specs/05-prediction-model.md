@@ -79,6 +79,35 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
    - **Results, held ball (PFF pooled OOF):** PR-AUC **0.296** at H = 5 (floor on the same held ball 0.177; ROC-AUC 0.931), **0.298** at H = 3 (floor 0.159). Better than the floor on **5/5 folds** for PR-AUC, ROC-AUC, Brier and miss rate. Calibrated. At 3 false alarms per match it catches 174 of 1,154 shots (2.5 false alarms per match), but the median lead is 0.7 s, so **00's ≥ 2 s isn't met**: p two seconds before a shot is 0.16 (median) against τ ≈ 0.6.
    - **What it uses** (gain): ball position 0.54, likely carrier 0.19, defenders 0.13, ball motion/history 0.07.
    - With the leaky ESTIMATED ball (`raw`): PR-AUC 0.309, no better alarms.
+   - **Lead-time features (v2, proposed 2026-09-28).** The baseline's alarms come 0.7 s before the shot because p only climbs once the ball is near goal (median p 0.05 five seconds out). v2 adds features that see an attack *building* over 2–5 s. `features_version = "2"` is v1's 29 columns unchanged plus the ones below, cached as `features_v2_<ball_source>.parquet`. v1 stays the default until v2 wins on most folds, so the sensitivity runs still reproduce.
+     - **Anchor frame for history.** Every older row is measured toward the anchor row's goal, and "attackers" are the anchor row's `possession_team`, even across a turnover. Each quantity is computed in pitch coordinates for both teams and both ends, and the anchor row picks its own (team, end). Rows with a null `possession_team` have no attacking team, so team features there are NaN (the model doesn't predict on them).
+     - **Windows** cover the last n grid rows, the anchor included, and never cross a period or a grid gap (`seg`). Possession runs (`poss_*`) are consecutive rows with the same non-null `possession_team` in one `seg`. `possession_s` (v1) only resets at periods, but PFF has no grid gaps inside a period (130 segs = 130 periods), so the two agree on PFF.
+     - **Same inputs as v1:** the held VISIBLE ball, velocities only between two fresh sightings 0.5 s apart, and VISIBLE players only. Goalkeepers are left out of the near-box counts and the defensive line. The likely carrier is the anchor team's visible player nearest the held ball, as in v1.
+     - **Known v1 flaw, left in place:** `ball_final_third_s` flags each older row with *its own* flip. So after a turnover, time the ball spent in the old attacker's final third counts for the new attacker, and null-possession rows count toward +x. v1 columns stay byte-identical so that v2 − v1 is a clean additive test. `poss_final_third_s` is the anchor-correct replacement.
+
+     | feature | definition (anchor frame) | NaN when |
+     |---|---|---|
+     | `ball_dist_change_5s` | goal distance now − 5 s ago | no ball at either end |
+     | `ball_dist_max_5s`, `ball_dist_min_5s` | farthest / closest the ball was from goal over the last 5 s | no ball in the window |
+     | `ball_vgoal_mean_2s`, `ball_vgoal_mean_5s` | mean speed toward goal over the rows with a fresh velocity | no fresh velocity in the window |
+     | `ball_box_s` | seconds of the last 5 s with the ball in the box | never (0 without a ball) |
+     | `poss_start_dist` | goal distance of the first ball seen in this possession | no ball seen yet in the run |
+     | `poss_min_dist` | closest the ball has been to goal in this possession | same |
+     | `poss_final_third_s` | seconds of this possession with the ball in the final third | no team |
+     | `poss_advance_rate` | (`poss_start_dist` − `ball_dist`) / max(possession age, 1 s), m/s | either is NaN |
+     | `carrier_goal_dist_change_3s`, `_5s` | the carrier's goal distance now − the anchor team's carrier then | no carrier at either end |
+     | `att_near_box`, `def_near_box` | outfield players in or near the box: x ≥ 26 m (10 m in front of the box), \|y\| ≤ 25 m | no team (0 with no visible players) |
+     | `near_box_diff` | `att_near_box` − `def_near_box` | same |
+     | `att_near_box_change_3s`, `def_near_box_change_3s` | count now − count 3 s ago (the anchor team's attackers / defenders then) | no row 3 s back |
+     | `def_line_dist` | 52.5 − x of the deepest visible outfield defender | no visible outfield defender |
+     | `def_line_change_3s` | `def_line_dist` now − 3 s ago (negative: the line is dropping) | no line at either end |
+     | `ball_line_gap` | line x − ball x (negative: the ball is past the deepest defender) | no line or no ball |
+     | `att_beyond_line` | visible attackers deeper than that defender | no line |
+     - **Tests** (`tests/test_features.py`): every v2 feature is unchanged when frames after t change; scrambling every ESTIMATED position changes none of them; a mirrored scene with swapped teams gives identical v2 features; hand-built windows that contain a turnover and a null-possession row. On all 64 games, the v1 columns inside v2 must equal the `features_v1_held` cache.
+     - **Test protocol:** `python -m prediction.cv --model lgbm --features-version 2 --horizons h5 h3`, compared with `lgbm-held-2026-09-27` using `evaluation.compare`. v2 − v1 is the ablation (gain share isn't one). Reported:
+       - PR-AUC and calibration
+       - at the τ budget: shots caught, median lead, and the share of all 1,154 open-play shots with ≥ 2 s lead (v1: 3 / 1,154)
+       - median p at 5 / 2 / 1 s before open-play shots, for both runs on the same shots and rows (`scripts/lead_time.py`); diagnostic only, not the test
 2. **Frame GNN:** one graph per frame. Nodes = players + ball (+ goals); node features = position, velocity, team, dynamic + profile features (04); edges = all pairs or k-nearest, edge features = distance, relative velocity. Built with `unravelsports` SoccerGraphConverter.
 3. **Temporal GNN:** last 2–3 s of frames (at 10 Hz) through a GNN backbone, then a GRU/T-GCN over time. Follows the SoccerAI approach.
 
