@@ -81,3 +81,12 @@ def test_predict_nulls_where_05_says_so():
     )
     p = m.predict(rows).to_list()
     assert 0 < p[0] < 1 and p[1] is None and p[2] is None
+
+
+def test_reads_only_its_own_feature_list():
+    df = data().with_columns(extra=pl.lit(1.0))
+    m = LGBMModel(**FAST, features=["ball_dist", "extra"]).fit(df, "h5")
+    assert list(m.coef) == ["ball_dist", "extra"]
+    # a feature it wasn't given can't reach it: dropping one changes nothing
+    a = m.predict(df).to_numpy()
+    assert np.array_equal(a, m.predict(df.drop("lane_defenders")).to_numpy(), equal_nan=True)

@@ -39,7 +39,9 @@ class LGBMModel:
         early_stopping: int = 100,
         es_share: float = 0.15,
         seed: int = 20260927,
+        features=FEATURES,
     ):
+        self.features = tuple(features)
         self.params = {**PARAMS, **(params or {}), "seed": seed}
         self.max_rounds = max_rounds
         self.early_stopping = early_stopping
@@ -48,12 +50,12 @@ class LGBMModel:
 
     def _matrix(self, df: pl.DataFrame) -> np.ndarray:
         # explicit list: nothing label-side (label_set_play_phase, masks) can slip in
-        return df.select(pl.col(f).cast(pl.Float32) for f in FEATURES).to_numpy()
+        return df.select(pl.col(f).cast(pl.Float32) for f in self.features).to_numpy()
 
     def _train(self, x, y, rounds, valid=None):
         import lightgbm as lgb
 
-        train = lgb.Dataset(x, y, feature_name=list(FEATURES), free_raw_data=False)
+        train = lgb.Dataset(x, y, feature_name=list(self.features), free_raw_data=False)
         kw = {}
         if valid is not None:
             kw["valid_sets"] = [lgb.Dataset(*valid, reference=train)]
@@ -86,7 +88,7 @@ class LGBMModel:
         """Share of total split gain per feature (sums to 1)."""
         gain = self.booster.feature_importance(importance_type="gain")
         total = gain.sum() or 1.0
-        return {f: float(g / total) for f, g in zip(FEATURES, gain, strict=True)}
+        return {f: float(g / total) for f, g in zip(self.features, gain, strict=True)}
 
     @property
     def fit_info(self) -> dict:
