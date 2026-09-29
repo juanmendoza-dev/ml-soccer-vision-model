@@ -112,7 +112,7 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
        - PR-AUC **0.287 vs 0.296** at H = 5 (v2 better on 0/5 folds) and 0.294 vs 0.298 at H = 3 (0/5). ROC-AUC +0.001, still calibrated.
        - Median p before shots is unchanged (5 s: 0.048 vs 0.051, 2 s: 0.158 vs 0.158, same shots and rows). Ranking of positives 2–5 s before the shot isn't better either (1/5 folds).
        - Alarms: at matched false alarms (pooled, descriptive) v2 catches fewer shots (127 vs 172 at ≤ 3 per match). Its inner τ went over budget on the held-out folds (4.6 false alarms per match). Lead ≥ 2 s: 1 of 1,154 vs 3.
-       - The v2 features take 0.24 of the gain, mostly from the carrier and defence groups, without better ranking. So the last 5 s summarized this way is information v1 already has. Lead time goes to the temporal GNN next.
+       - The v2 features take 0.24 of the gain, mostly from the carrier and defence groups, without better ranking. So the last 5 s summarized this way adds no ranking that v1 doesn't already have. Lead time goes to the temporal GNN next.
 2. **Frame GNN:** one graph per frame. Nodes = players + ball (+ goals); node features = position, velocity, team, dynamic + profile features (04); edges = all pairs or k-nearest, edge features = distance, relative velocity. Built with `unravelsports` SoccerGraphConverter.
 3. **Temporal GNN:** last 2–3 s of frames (at 10 Hz) through a GNN backbone, then a GRU/T-GCN over time. Follows the SoccerAI approach.
 
