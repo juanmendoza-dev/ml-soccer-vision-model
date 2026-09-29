@@ -82,6 +82,13 @@ An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where
 4. Dataset tracking vs. vision-pipeline tracking on the same matches, if available (measures how much vision errors hurt). Before paired footage exists, the vision sensitivity test (05) degrades PFF tracking the way vision fails and measures the loss.
 5. Full tracking vs. broadcast view (off-camera players dropped, see 05) on the same folds. **SkillCorner folds only** (plus IDSSE at the final check): PFF's off-camera positions are ESTIMATED and ~12 m off at shots (06), so its full view isn't a meaningful arm.
 6. Provider vs. inferred possession/ball state (03 stage 8) on dataset tracking: same model, same folds. Measures how much the inference rules alone cost before vision errors are added.
+   - **What's swapped (05, Inferred possession):** the model's inputs take stage 8's possession (the flip, attackers vs defenders, `possession_s`). Labels, `eligible`, `all_estimated` and the scored rows stay on PFF's, so both arms are scored on the same rows. Ball state isn't swapped: no feature reads it.
+   - **The alarm rule and τ selection stay on PFF's `possession_team` and `ball_state`** in this comparison, so the only difference between the arms is what the model sees. A fully live evaluation, with alarms starting and ending on stage 8's possession and ball state as well, is a separate, later question: it changes which alarms exist, not how well the model ranks rows.
+   - **Caveat:** PFF's possession is itself laggy (Floor from the labels: 25 of the oracle's 28 misses). Where stage 8 is right and PFF late, the inferred arm is penalized for disagreeing with PFF, not with the game.
+   - **Decision rule, set before the run (2026-09-29).** On the paired per-fold ΔPR-AUC at H = 5 (inferred − provider, `evaluation.compare`). The yardsticks: the provider run's fold-to-fold spread is ±0.023, a second degrade seed moved a result by 0.0014, and the vision sensitivity arms at their targets cost −0.010 to −0.018 each (05).
+     - **Small, stage 8 is good enough, move on:** mean Δ above −0.010 (under half the fold spread, and less than any vision arm that was worth acting on).
+     - **Big, stage 8 needs work before vision's own quality work:** mean Δ at or below −0.018 (the size of the worst single vision arm, `geom_loss`) and worse on at least 4 of 5 folds.
+     - **In between:** stage 8 goes on the vision quality list, ranked by its Δ next to the sensitivity arms, not ahead of them.
 
 ## Outputs
 

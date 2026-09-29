@@ -8,7 +8,7 @@ At each frame t, output P(shot in (t, t+H]) and P(goal in (t, t+H]).
 - Default **H = 5 s**; also evaluate H = 3 s.
 - Only frames in open play with a team in possession. Exclude dead-ball frames.
 - Attacking team = `possession_team`; flip coordinates so it always attacks +x.
-- Training uses provider `ball_state` and `possession_team` (02).
+- Training uses provider `ball_state` and `possession_team` (02). Labels always do; the model's inputs can take stage 8's possession instead (Inferred possession, below).
 
 ## Resampled frames and labels
 `prediction/resample.py` turns a game state match (02) into a 10 Hz table with labels. It isn't part of 02: only prediction code reads it, and the schema's tables stay untouched.
@@ -219,7 +219,7 @@ How much the baseline loses when PFF tracking is degraded the way vision fails (
 - **Episodes** (gaps, false balls, flips) start with a fixed chance on each grid row. Lengths are geometric with a set mean. The start chance is set so the expected share of time covered equals the severity. It's never "pick exactly f of the match", because that would use the whole match. The realized share is recorded in `run.json`.
 - **Correlated noise** is AR(1) per axis with stationary σ and a correlation time.
 - Anything that depends on where the ball is (drift center, "near the ball") uses the **clean held VISIBLE ball**, never an ESTIMATED one. That's where the camera and the crowd actually are.
-- **Labels and scored rows never change.** `eligible`, `all_estimated`, `possession_team`, `ball_state` and labels come from `frames_10hz` as before. So every run is scored on the same rows, and a row that loses all its objects stays scored, with NaN features. Possession and ball state stay provider values (inferred state is 07 #6).
+- **Labels and scored rows never change.** `eligible`, `all_estimated`, `possession_team`, `ball_state` and labels come from `frames_10hz` as before. So every run is scored on the same rows, and a row that loses all its objects stays scored, with NaN features. Possession and ball state stay provider values (inferred state is 07 #6, Inferred possession below).
 - **Held ball only.** `--degrade` with `ball_source=raw` is an error.
 - **No feature cache for degraded runs.** Features take ~8 s for all 64 games, so it isn't needed, and a degraded run can't read or overwrite the clean `features_v1_held` cache.
 
@@ -257,6 +257,42 @@ How much the baseline loses when PFF tracking is degraded the way vision fails (
 - Biggest single losses at target: `geom_loss` −0.018, `ball_miss` −0.017, `player_noise` −0.013, `team_flip` −0.012, `ball_noise` −0.010. `id_fragment` and `no_ball_z` are noise for this baseline.
 - `geom_loss` grows faster than linear (0.3: −0.042, 0.5: −0.082). Per affected frame, rejecting a homography costs more than keeping it with 2–4 m of error (17% rejected ≈ 2 m on every frame), so acceptance thresholds lean permissive; the cutoff is set on the vision benchmark.
 - `team_unknown` costs less than `team_flip` at the same share, but a real unknown option abstains on some correct teams too. At 2× the share it's about even, so it's only worth it if abstentions land mostly on would-be flips.
+
+## Inferred possession (07 #6)
+The model trains and scores on PFF's `possession_team`, but live it would get stage 8's (03, `vision/state.py`), which agrees with PFF on 77.9% of frames (`Docs/reviews/stage8-2026-09-29.md`). This arm trains the same model on the same folds with its **inputs** built from stage 8's possession, and keeps everything that's scored on PFF's. The Δ against the provider run is what stage 8 alone costs, before any vision error.
+
+    python -m prediction.cv --model lgbm --possession inferred [--horizons h5 h3] [--run-id ID]
+
+**What changes: the inputs only.**
+- Per match, `vision.state.infer` runs on the native game state (`data/gamestate/<match>/frames.parquet` + `objects.parquet`, 02), exactly as `vision.state_check` calls it: VISIBLE ball and players only, default `StateConfig`. Stage 8's rules and defaults aren't touched.
+- Its `possession_team` is joined onto the 10 Hz grid by `frame_id` (every grid row keeps the native frame it uses), and `flipped` is recomputed from it with the resampler's own rule (`resample.flipped_expr`, the one `add_frame_flags` uses, against the grid's `home_attacks_positive_x`).
+- Only that `(period, t_s, possession_team, flipped)` goes into `match_features`. So the attacking-frame rotation, the attacker/defender split (every player feature), `possession_s`, and v2's possession runs all follow stage 8.
+- **Unused on purpose:** stage 8's `ball_state` and `ball_carrier_id`. No feature reads `ball_state` (it's in the loaded table for the alarms only), and the carrier features take the nearest visible attacker, not `ball_carrier_id`. Inferred ball state is out of scope for this run: it's 45% null, and all it could change is `eligible`, which is label-side here (below). Where ball state matters is the alarm rule, and that's a later question (07 #6).
+- **Where it's called from:** `prediction/possession.py` is the one place prediction calls into `vision/`, and only `vision.state.infer` (03 says stage 8 is written to run on dataset tracking). `resample.py` keeps its no-`vision/` rule.
+
+**What stays PFF's.** `eligible`, `all_estimated`, `label_mask_*`, `label_shot_*` and the table's own `possession_team`, `flipped` and `ball_state` are the provider values, read from `frames_10hz` as before. So:
+- Every arm is trained and scored on the same rows as the provider run (the shots really happened), and `evaluation.compare` is paired row for row.
+- `predictable()` uses PFF's `eligible`, so p is null on the same rows.
+- τ selection and the alarm rule read `possession_team` and `ball_state` from the table, so they stay on PFF's too. Only the model's inputs differ between the two arms (07 #6).
+
+**Where they disagree.** On a scored row where stage 8 says the other team has the ball, the model sees the pitch rotated toward the other goal and the teams' roles swapped, while the label asks about PFF's team. That mismatch is the cost being measured, not a bug.
+
+**Nulls.** Stage 8's possession is null on 0.1% of frames (the start of a period until someone first carries the ball). A null does what a null PFF possession already does in `match_features`: `flipped` null, no rotation (sign +1), nobody is an attacker or a defender (counts 0, carrier and pressure features NaN), `possession_s` NaN. The difference is that PFF-null rows are never scored, while an inferred null can land on a PFF-eligible row, so here it is scored and trained on, with those features.
+
+**Leakage.** A grid row at `t_s` uses the native frame at or before it (Resampling). `infer` is causal: a frame's output depends on native frames up to it in `(period, timestamp_s)` order and on VISIBLE objects only (03, tested in `tests/test_state.py`). So the inferred possession on a row uses native frames `<= t_s`, and PFF's ESTIMATED positions (05 Leakage) never reach it. Native frames between grid points (and in skipped gaps) do feed the state machine; they're all in the past too. `tests/test_possession.py` changes objects after t and checks inferred possession and every feature at rows `<= t` stay the same.
+
+**Caches.** Both are separate from the provider ones and never read or overwrite them:
+- Inferred state per match: `data/processed/<match>/state_inferred_<key>.parquet` (`frame_id`, `possession_team`), where `<key>` is the first 10 hex of sha1 of the sorted `StateConfig` JSON.
+- Features: `features_v<version>_<ball_source>_pinf_<key>.parquet`, same key.
+- The inferred state comes from the game state, not the resampled tables, so it can't tell when a match was reconverted. `prediction.resample` deletes it with the feature and graph caches when it rewrites a match, and a reconversion is always followed by a resample.
+
+**Run metadata** (`run.json` config): `possession: "inferred"`, `state_config` (every `StateConfig` value), and over the scored rows of `horizons[0]`: the share where inferred ≠ PFF possession, where `flipped` differs, and where inferred is null. Plus the time stage 8 took and the time the features took, apart. A provider run leaves these keys out, so its `run.json` config looks like the earlier runs'.
+
+**Scope.**
+- `--model lgbm` is the run. `--model floor` goes through the same `load_match` and works too (its ball features rotate with `flipped`), but isn't part of 07 #6.
+- `--model gnn|tgnn` with `--possession inferred` is an error: the graphs are built from `frames_10hz`'s possession in `prediction.graphs` and cached separately, and wiring them is its own change.
+- `--degrade` with `--possession inferred` is an error. Stage 8 would run on clean native tracking while the features see degraded objects, which isn't anything vision produces. The live combination (stage 8 on degraded tracking) needs `degrade` at the native rate, which it doesn't do.
+- H = 5 and H = 3 in one run, like `lgbm-held-2026-09-27`, with the same features version (1), ball source (held), seed and folds.
 
 ## xG model
 ### Feature rule
