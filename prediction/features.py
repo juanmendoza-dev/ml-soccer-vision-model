@@ -532,6 +532,8 @@ def match_features(
     feats = bf | pf | {"possession_s": possession_s(g)}
     if version == "2":
         feats |= lead_ball_features(g, ball, bf) | lead_player_features(g, objects, ball)
+    if version == "3":  # stage 8's carrier age at the row's native frame (05, Stale possession)
+        feats["poss_carrier_age_s"] = g["carrier_age_s"].cast(pl.Float64).fill_null(np.nan)
     return g.drop("r", "k", "seg", "sign").with_columns(
         ball_visible=ball["visible"],
         **{f: pl.Series(feats[f], dtype=pl.Float32) for f in names},
@@ -578,7 +580,13 @@ LEAD_FEATURES = (
     "att_beyond_line",
 )
 # cached features are keyed by version: add a new one when any definition changes
-FEATURE_SETS = {"1": FEATURES, "2": FEATURES + LEAD_FEATURES}
+FEATURE_SETS = {
+    "1": FEATURES,
+    "2": FEATURES + LEAD_FEATURES,
+    "3": (*FEATURES, "poss_carrier_age_s"),  # 05, "Stale possession" (arm S)
+}
+# versions with a feature from stage 8's carrier: they run stage 8 whatever the possession
+STAGE8_VERSIONS = {"3"}
 FEATURES_VERSION = "1"  # the default; v1 is the baseline every earlier run used
 
 
@@ -608,6 +616,7 @@ def load_match(
     gamestate_dir: Path | None = None,
     state_config=None,
     possession_stats: dict | None = None,
+    stale_after: float | None = None,
 ) -> pl.DataFrame:
     """One match's grid rows with labels and features. Features are cached next to the
     resampled tables, keyed by features_version and ball_source.
@@ -621,36 +630,56 @@ def load_match(
     stage 8's possession, run on the game state in gamestate_dir, and cached under their
     own name. The returned table's possession_team, flipped, ball_state, eligible and
     labels stay the provider's. Counts on the rows horizons[0] scores, and the time spent
-    in stage 8 and on features, are added into possession_stats."""
+    in stage 8 and on features, are added into possession_stats. stale_after (arm U, 05
+    "Stale possession") makes that possession null where stage 8's carrier is older.
+
+    features_version 3 adds stage 8's carrier age, so it runs stage 8 (on gamestate_dir)
+    with either possession, and its cache name carries stage 8's config key."""
     if possession not in possession_mod.POSSESSION:
         raise ValueError(f"possession must be one of {possession_mod.POSSESSION}")
     inferred = possession == "inferred"
+    stage8 = inferred or features_version in STAGE8_VERSIONS
     if inferred and degrade:
         raise ValueError("inferred possession can't be combined with degradations (05)")
-    if inferred and gamestate_dir is None:
-        raise ValueError("inferred possession needs gamestate_dir to run stage 8 on")
+    if stage8 and degrade:
+        raise ValueError(f"features v{features_version} can't be combined with degradations (05)")
+    if stage8 and gamestate_dir is None:
+        raise ValueError("stage 8 (inferred possession, v3) needs gamestate_dir to run on")
+    if stale_after is not None and (not inferred or not stale_after > 0):
+        raise ValueError("stale_after needs possession='inferred' and a positive value (05)")
     d = processed_dir / match_id
     cols = FRAME_COLS + [f"label_{x}_{h}" for h in horizons for x in ("mask", "shot")]
-    read = cols + ["frame_id", "home_attacks_positive_x"] if inferred else cols
+    read = cols + ["frame_id", "home_attacks_positive_x"] if stage8 else cols
     frames = pl.read_parquet(d / "frames_10hz.parquet", columns=read).sort("period", "t_s")
     path = d / f"features_v{features_version}_{ball_source}.parquet"
     keep = ["period", "t_s", "ball_visible", *FEATURE_SETS[features_version]]
     objects = pl.scan_parquet(d / "objects_10hz.parquet")
     inputs = frames.select("period", "t_s", "possession_team", "flipped")
-    if inferred:
+    pstats = possession_stats if possession_stats is not None else {}
+    if stage8:
         config = state_config or possession_mod.StateConfig()
         key = possession_mod.config_key(config)
-        path = d / f"features_v{features_version}_{ball_source}_pinf_{key}.parquet"
-        pstats = possession_stats if possession_stats is not None else {}
         state = possession_mod.inferred_state(
             match_id, gamestate_dir, processed_dir, config, cache, pstats
         )
-        inputs = possession_mod.swap_possession(frames, state).select(inputs.columns)
+        age = ["carrier_age_s"] if features_version in STAGE8_VERSIONS else []
+    if inferred:
+        name = f"features_v{features_version}_{ball_source}_pinf_{key}"
+        if stale_after is not None:
+            name += f"_unk{stale_after:g}"
+        path = d / f"{name}.parquet"
+        swapped = possession_mod.swap_possession(frames, state, stale_after)
+        inputs = swapped.select(*inputs.columns, *age)
         scored = frames.select(
             pl.col(f"label_mask_{horizons[0]}") & ~pl.col("all_estimated")
         ).to_series()
-        possession_mod.add_stats(pstats, frames, inputs, scored)
-        frames = frames.select(cols)
+        unknown = None if stale_after is None else possession_mod.stale_rows(swapped, stale_after)
+        possession_mod.add_stats(pstats, frames, inputs, scored, unknown)
+    elif stage8:
+        path = d / f"features_v{features_version}_{ball_source}_s8_{key}.parquet"
+        # only the carrier age: possession stays PFF's
+        inputs = inputs.hstack(possession_mod.swap_possession(frames, state).select(age))
+    frames = frames.select(cols)
     if degrade:
         if ball_source != "held":
             raise ValueError("degradations need ball_source='held' (05)")
@@ -670,7 +699,7 @@ def load_match(
     else:
         t0 = time.perf_counter()
         feats = match_features(inputs, objects, ball_source, features_version).select(keep)
-        if inferred:
+        if stage8:
             pstats["features_s"] = pstats.get("features_s", 0.0) + time.perf_counter() - t0
         if cache:
             feats.write_parquet(path)
