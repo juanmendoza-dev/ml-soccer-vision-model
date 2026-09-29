@@ -6,7 +6,9 @@ import pytest
 
 from prediction.features import (
     BALL_HOLD_S,
+    FEATURE_SETS,
     FEATURES,
+    LEAD_FEATURES,
     goal_angle,
     goal_distance,
     in_lane,
@@ -76,8 +78,8 @@ def objects_of(rows):
     return pl.DataFrame(rows).lazy()
 
 
-def feats(frames, rows, ball_source="held"):
-    return match_features(frames, objects_of(rows), ball_source)
+def feats(frames, rows, ball_source="held", version="1"):
+    return match_features(frames, objects_of(rows), ball_source, version)
 
 
 def col(df, c):
@@ -254,17 +256,18 @@ def synth(seed, n=120):
     return frames, pl.DataFrame(rows, infer_schema_length=None)
 
 
-def same(a: pl.DataFrame, b: pl.DataFrame):
-    for f in FEATURES:
+def same(a: pl.DataFrame, b: pl.DataFrame, names=FEATURES):
+    for f in names:
         x, y = a[f].to_numpy(), b[f].to_numpy()
         assert np.allclose(x, y, equal_nan=True), f
 
 
+@pytest.mark.parametrize("version", ["1", "2"])
 @pytest.mark.parametrize("ball_source", ["held", "raw"])
-def test_features_only_use_the_past(ball_source):
+def test_features_only_use_the_past(ball_source, version):
     frames, objects = synth(1)
     cut = 6.0
-    base = match_features(frames, objects.lazy(), ball_source)
+    base = match_features(frames, objects.lazy(), ball_source, version)
     later = pl.col("t_s") > cut
     frames_b = frames.with_columns(
         possession_team=pl.when(later).then(pl.lit("home")).otherwise("possession_team"),
@@ -275,12 +278,13 @@ def test_features_only_use_the_past(ball_source):
         y=pl.when(later).then(0.0).otherwise("y"),
         visible=pl.when(later).then(~pl.col("visible")).otherwise("visible"),
     )
-    moved = match_features(frames_b, objects_b.lazy(), ball_source)
+    moved = match_features(frames_b, objects_b.lazy(), ball_source, version)
     upto = pl.col("t_s") <= cut
-    same(base.filter(upto), moved.filter(upto))
+    same(base.filter(upto), moved.filter(upto), FEATURE_SETS[version])
 
 
-def test_estimated_positions_never_reach_a_held_feature():
+@pytest.mark.parametrize("version", ["1", "2"])
+def test_estimated_positions_never_reach_a_held_feature(version):
     """PFF fills ESTIMATED positions from later frames (05): scramble every one of them
     and nothing may move."""
     frames, objects = synth(2)
@@ -290,11 +294,41 @@ def test_estimated_positions_never_reach_a_held_feature():
         y=pl.when(est).then(-pl.col("y") + 3).otherwise("y"),
         z=pl.when(est).then(9.0).otherwise("z"),
     )
-    same(match_features(frames, objects.lazy()), match_features(frames, scrambled.lazy()))
+    same(
+        match_features(frames, objects.lazy(), version=version),
+        match_features(frames, scrambled.lazy(), version=version),
+        FEATURE_SETS[version],
+    )
     # the check has teeth: raw does move
     raw_a = match_features(frames, objects.lazy(), "raw")
     raw_b = match_features(frames, scrambled.lazy(), "raw")
     assert not np.allclose(raw_a["ball_x"].to_numpy(), raw_b["ball_x"].to_numpy(), equal_nan=True)
+
+
+def test_load_match_caches_each_version_apart(tmp_path):
+    frames, objects = synth(6, n=40)
+    d = tmp_path / "m1"
+    d.mkdir()
+    lab = {
+        "match_id": ["m1"] * frames.height,
+        "ball_state": ["alive"] * frames.height,
+        "eligible": [True] * frames.height,
+        "all_estimated": [False] * frames.height,
+        "label_mask_h5": [True] * frames.height,
+        "label_shot_h5": [False] * frames.height,
+    }
+    frames.with_columns(**{k: pl.Series(v) for k, v in lab.items()}).write_parquet(
+        d / "frames_10hz.parquet"
+    )
+    objects.write_parquet(d / "objects_10hz.parquet")
+    v1 = load_match("m1", tmp_path, ["h5"])
+    v2 = load_match("m1", tmp_path, ["h5"], features_version="2")
+    assert {p.name for p in d.glob("features_v*")} == {
+        "features_v1_held.parquet",
+        "features_v2_held.parquet",
+    }
+    assert set(LEAD_FEATURES) <= set(v2.columns) and not set(LEAD_FEATURES) & set(v1.columns)
+    same(v2, load_match("m1", tmp_path, ["h5"], features_version="2"), FEATURE_SETS["2"])
 
 
 def test_load_match_cache_round_trip(tmp_path):
@@ -319,3 +353,102 @@ def test_load_match_cache_round_trip(tmp_path):
     assert first["t_s"].to_list() == sorted(first["t_s"].to_list())
     same(first, again)
     same(first, load_match("m1", tmp_path, ["h5"], cache=False))
+
+
+def test_v2_keeps_v1_as_it_is():
+    frames, objects = synth(4)
+    v1 = match_features(frames, objects.lazy())
+    v2 = match_features(frames, objects.lazy(), version="2")
+    assert FEATURE_SETS["2"][: len(FEATURES)] == FEATURES
+    assert set(LEAD_FEATURES).isdisjoint(FEATURES)
+    same(v1, v2, FEATURES)
+
+
+def mirror(frames: pl.DataFrame, objects: pl.DataFrame):
+    """The same match seen from the other side: pitch rotated 180 degrees, home and away
+    swapped. Every feature in the attacking frame must come out the same."""
+    swap = {"home": "away", "away": "home"}
+    return (
+        frames.with_columns(
+            possession_team=pl.col("possession_team").replace(swap),
+            flipped=~pl.col("flipped"),
+        ),
+        objects.with_columns(x=-pl.col("x"), y=-pl.col("y"), team=pl.col("team").replace(swap)),
+    )
+
+
+def test_v2_history_is_measured_in_the_anchor_frame():
+    """Possession flips every 3 s and some rows have no team: a mirrored match with the
+    teams swapped gives the same v2 features on every row with a team."""
+    frames, objects = synth(5, n=160)
+    loose = (pl.col("t_s") * 10).round().cast(pl.Int64).is_in([29, 30, 31, 95, 150])
+    frames = frames.with_columns(
+        possession_team=pl.when(loose).then(None).otherwise("possession_team"),
+        flipped=pl.when(loose).then(None).otherwise("flipped"),
+    )
+    a = match_features(frames, objects.lazy(), version="2")
+    frames_m, objects_m = mirror(frames, objects)
+    b = match_features(frames_m, objects_m.lazy(), version="2")
+    has_team = frames["possession_team"].is_not_null()
+    # v1's ball_final_third_s flags old rows with their own flip, so a no-team row counts
+    # toward +x in one world and -x in the other (05: known flaw, left in v1)
+    names = [f for f in FEATURE_SETS["2"] if f != "ball_final_third_s"]
+    same(a.filter(has_team), b.filter(has_team), names)
+    assert not a.filter(has_team)["def_line_change_3s"].is_nan().all()
+
+
+def test_v2_by_hand_across_a_turnover():
+    """Home has the ball for 3 s, a row with no team, then away for 2 s. The ball runs
+    from pitch x = 20 to x = -5 at 5 m/s, toward the goal away attacks (-x). At the last
+    row everything is measured toward away's goal, with away as the attackers."""
+    n = 51
+    poss = ["home"] * 30 + [None] + ["away"] * 20
+    frames = frames_of(n).with_columns(
+        possession_team=pl.Series(poss),
+        flipped=pl.Series([None if p is None else p == "away" for p in poss]),
+    )
+    rows = []
+    for i in range(n):
+        t, bx = round(i * 0.1, 1), 20.0 - 0.5 * i
+        rows += [
+            obj(1, t, "ball", bx, 0.0),
+            obj(1, t, "h1", bx, 2.0, team="home"),  # home's carrier
+            obj(1, t, "h2", -30.0 - 0.1 * i, 5.0, team="home"),  # the deepest defender
+            obj(1, t, "hk", -50.0, 0.0, team="home", object_type="goalkeeper"),  # not the line
+            obj(1, t, "a1", bx, -1.0, team="away"),  # away's carrier
+            obj(1, t, "a2", -40.0, 3.0, team="away", visible=i >= 40),  # in behind, from 4 s
+        ]
+    got = feats(frames, rows, version="2")
+    last = got.row(n - 1, named=True)
+    d = lambda i: 72.5 - 0.5 * i  # ball's distance to away's goal (-52.5, 0) at row i
+    assert last["ball_dist"] == pytest.approx(d(50))
+    assert last["ball_dist_change_5s"] == pytest.approx(d(50) - d(0))  # -25: 5 m/s at goal
+    assert last["ball_dist_max_5s"] == pytest.approx(d(1))  # 50 rows: 0.1 .. 5.0 s
+    assert last["ball_dist_min_5s"] == pytest.approx(d(50))
+    # home rows moved away from home's goal, but toward away's: +5 m/s in the anchor frame
+    assert last["ball_vgoal_mean_2s"] == pytest.approx(5.0)
+    assert last["ball_vgoal_mean_5s"] == pytest.approx(5.0)
+    assert last["ball_box_s"] == 0.0
+    assert last["poss_start_dist"] == pytest.approx(d(31))
+    assert last["poss_min_dist"] == pytest.approx(d(50))
+    assert last["poss_advance_rate"] == pytest.approx((d(31) - d(50)) / 1.9)
+    assert last["poss_final_third_s"] == 0.0
+    # v1's flaw (05): rows 1-4 were in *home's* final third, and v1 still counts them
+    assert last["ball_final_third_s"] == pytest.approx(0.4)
+    # carrier 3 s back is away's nearest player then (a1), though home had the ball
+    now_c, then_c = math.hypot(d(50), 1.0), math.hypot(d(20), 1.0)
+    assert last["carrier_goal_dist_change_3s"] == pytest.approx(now_c - then_c)
+    # line: h2 at anchor x = 35 (the keeper at 50 doesn't count), 32 three seconds back
+    assert last["def_line_dist"] == pytest.approx(17.5)
+    assert last["def_line_change_3s"] == pytest.approx(-3.0)
+    assert last["ball_line_gap"] == pytest.approx(35.0 - 5.0)
+    assert last["att_beyond_line"] == 1  # a2 at 40
+    assert last["att_near_box"] == 1 and last["def_near_box"] == 1  # a2, h2
+    assert last["near_box_diff"] == 0
+    assert last["att_near_box_change_3s"] == 1  # a2 wasn't visible 3 s ago
+    assert last["def_near_box_change_3s"] == 0
+    # the row with no team: no attackers, no possession
+    loose = got.row(30, named=True)
+    for f in ("poss_start_dist", "poss_final_third_s", "att_near_box", "def_line_dist"):
+        assert math.isnan(loose[f]), f
+    assert not math.isnan(loose["ball_dist_max_5s"])  # ball-only history needs no team
