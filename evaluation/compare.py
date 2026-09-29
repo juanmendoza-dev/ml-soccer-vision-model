@@ -165,7 +165,7 @@ def main(argv: list[str]) -> int:
         print(f"compare: {e}", file=sys.stderr)
         return 1
     if args.out:
-        args.out.write_text(text)
+        args.out.write_text(text, encoding="utf-8")  # τ, Δ: Windows defaults to cp1252
         print(f"wrote {args.out}")
     else:
         print(text, end="")

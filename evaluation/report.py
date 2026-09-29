@@ -394,7 +394,7 @@ def main(argv: list[str]) -> int:
         print(f"report: {e}", file=sys.stderr)
         return 1
     out = args.out or args.run_dir / "report.md"
-    out.write_text(text)
+    out.write_text(text, encoding="utf-8")  # τ, ≥, Δ: Windows defaults to cp1252
     print(f"wrote {out}")
     return 0
 
