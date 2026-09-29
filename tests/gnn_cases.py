@@ -18,7 +18,7 @@ from evaluation.metrics import pr_auc
 from prediction import cv
 from prediction.features import FEATURES, match_features
 from prediction.gnn import GNNModel, fit_temperature, resolve_device, sigmoid
-from prediction.gnn_net import EDGE_FEATURES, FrameGNN, edge_features
+from prediction.gnn_net import EDGE_FEATURES, FrameGNN, TemporalGNN, edge_features
 from prediction.graphs import IDX, MAX_NODES, GraphStore, match_graphs
 
 TINY = {"d": 16, "layers": 2, "max_epochs": 8, "batch_size": 64, "lr": 3e-3, "patience": 8}
@@ -187,6 +187,9 @@ def split(store: GraphStore) -> list[dict]:
                 "period": store.period[m],
                 "k": store.k[m],
                 "capped": np.array(0),
+                "team": store.team[m],
+                "sign": store.sign[m],
+                "poss": store.poss[m],
             }
         )
     return out
@@ -397,3 +400,157 @@ def test_one_fold_is_a_partial_timing_run():
     assert "Full run: about" in lines[0] and math.isfinite(
         meta["config"]["timing"]["h5"]["2"]["predict_s"]
     )
+
+
+# --- the temporal GNN (05 model 3): windows of 3 steps 0.5 s apart ---
+
+TEMPORAL = {"steps": 3, "step_rows": 5, "batch_size": 32}
+
+
+@pytest.fixture(scope="module")
+def temporal():
+    store, data = world(range(30, 38))
+    return model(graphs=store, **TEMPORAL).fit(data, "h5"), store, data
+
+
+def test_temporal_learns_the_toy(temporal):
+    m, _, _ = temporal
+    held_store, held = world(range(50, 54))
+    p = predict_with(m, held_store, held)
+    y = held["label_shot_h5"].to_numpy()
+    assert pr_auc(y, p) > 2 * y.mean()
+    assert m.fit_info["n_params"] > model(graphs=held_store).params["d"]
+    json.dumps(m.fit_info)
+
+
+def test_temporal_learns_what_only_the_past_shows():
+    """The label is whether the ball got closer to goal between 1.0 and 0.5 s ago. The
+    ball is a random walk, so nothing at t shows that step (the velocity at t covers the
+    last 0.5 s only): the window has it, the frame GNN without globals doesn't. One team
+    keeps the ball, so every row's frame is the same."""
+
+    def home(frames, objects):
+        return frames.with_columns(possession_team=pl.lit("home"), flipped=pl.lit(False)), objects
+
+    def moved(f):
+        d = f["ball_dist"].to_numpy()
+        lag = lambda n: np.r_[np.full(n, np.nan), d[:-n]]
+        step = lag(10) - lag(5)
+        return pl.Series(np.nan_to_num(step, nan=0.0) > 0.3)
+
+    store, data = world(range(30, 38), n=400, change=home, label=moved)
+    held_store, held = world(range(50, 53), n=400, change=home, label=moved)
+    y = held["label_shot_h5"].to_numpy()
+    scores = {}
+    longer = {"max_epochs": 15, "patience": 15, "stride": 1}
+    for name, extra in (("frame", {}), ("temporal", TEMPORAL)):
+        m = model((), graphs=store, **longer, **extra).fit(data, "h5")
+        scores[name] = pr_auc(y, predict_with(m, held_store, held))
+    assert scores["temporal"] > scores["frame"] + 0.1, (scores, y.mean())
+
+
+def test_temporal_only_uses_the_past(temporal):
+    m, _, _ = temporal
+    cut = 6.0
+
+    def later(frames, objects):
+        after = pl.col("t_s") > cut
+        return frames.with_columns(
+            possession_team=pl.when(after).then(pl.lit("home")).otherwise("possession_team"),
+            flipped=pl.when(after).then(True).otherwise("flipped"),
+        ), objects.with_columns(
+            x=pl.when(after).then(pl.col("x") * -3 + 7).otherwise("x"),
+            visible=pl.when(after).then(~pl.col("visible")).otherwise("visible"),
+        )
+
+    base_store, base = world(range(40, 43))
+    a = predict_with(m, base_store, base)
+    b = predict_with(m, *world(range(40, 43), change=later))
+    upto = (base["t_s"] <= cut).to_numpy()
+    assert np.allclose(a[upto], b[upto], rtol=0, atol=1e-6)
+    assert not np.allclose(a[~upto], b[~upto], rtol=0, atol=1e-6)
+
+
+def test_temporal_ignores_estimated_positions(temporal):
+    m, _, _ = temporal
+
+    def scramble(frames, objects):
+        est = ~pl.col("visible")
+        return frames, objects.with_columns(
+            x=pl.when(est).then(pl.col("x") * 7 - 20).otherwise("x"),
+            y=pl.when(est).then(-pl.col("y") + 3).otherwise("y"),
+        )
+
+    a = predict_with(m, *world(range(40, 43)))
+    b = predict_with(m, *world(range(40, 43), change=scramble))
+    assert np.array_equal(a, b)
+
+
+def test_temporal_mirrored_match_gives_the_same_p(temporal):
+    m, _, _ = temporal
+    a = predict_with(m, *world(range(40, 43)))
+    b = predict_with(m, *world(range(40, 43), change=mirror))
+    assert np.allclose(a, b, rtol=0, atol=1e-6)
+
+
+def test_temporal_rows_p_doesnt_depend_on_its_batch(temporal):
+    m, store, data = temporal
+    full = predict_with(m, store, data)
+    some = data.filter(pl.col("row") % 5 == 1).reverse()
+    assert np.allclose(predict_with(m, store, some), full[some["row"].to_numpy()], atol=1e-6)
+
+
+def test_temporal_empty_steps_and_padding_are_inert():
+    net = TemporalGNN(len(IDX), 0, d=8, layers=2).eval()
+    x = torch.randn(2, 3, MAX_NODES, len(IDX))
+    n = torch.tensor([[0, 4, 5], [0, 0, 3]])
+    g = torch.zeros(2, 0)
+    out = net(x, n, g)
+    assert torch.isfinite(out).all()
+    y = x.clone()
+    y[:, 0] = torch.randn(2, MAX_NODES, len(IDX)) * 100  # a step with no row
+    y[0, 1, 4:] = 50.0  # padding
+    assert torch.allclose(net(y, n, g), out, atol=1e-6)
+    with pytest.raises(ValueError, match="needs message passing"):
+        TemporalGNN(15, 4, layers=0)
+
+
+def test_tgnn_runs_through_cv_out_of_fold(monkeypatch):
+    folds, data, shots, store = cv_world()
+    seen = []
+
+    class Spy(GNNModel):
+        def fit(self, df, h):
+            self.trained_on = set(df["match_id"].unique())
+            seen.append(self.params["steps"])
+            return super().fit(df, h)
+
+        def predict(self, df):
+            assert not self.trained_on & set(df["match_id"].unique())
+            return super().predict(df)
+
+    params = {**cv.MODELS["tgnn"][1]["params"], **TINY, **TEMPORAL}
+    monkeypatch.setitem(cv.MODELS, "spy", (Spy, {"features": [], **CV_CONFIG, "params": params}))
+    preds, meta = cv.run_cv(
+        "spy", ["h5"], folds, data, shots, log=lambda *_: None, model_kwargs={"graphs": store}
+    )
+    assert seen == [3] * 11
+    y = data["label_shot_h5"].to_numpy()
+    p = preds["p_h5"].to_numpy()
+    assert preds["p_h5"].null_count() == 0 and p[y].mean() > 2 * p[~y].mean()
+    assert meta["config"]["params"]["steps"] == 3
+    json.dumps(meta)
+
+
+def test_tgnn_config_is_the_frame_gnn_with_a_window():
+    frame, temporal = cv.MODELS["gnn"][1], cv.MODELS["tgnn"][1]
+    assert frame["params"]["steps"] == 1 and temporal["params"]["steps"] == 6
+    assert {k: v for k, v in temporal.items() if k != "params"} == {
+        k: v for k, v in frame.items() if k != "params"
+    }
+    assert cv.gnn_overrides(["steps=4", "temperature=false"]) == {
+        "steps": 4,
+        "temperature": False,
+    }
+    with pytest.raises(ValueError):
+        cv.gnn_overrides(["nope=1"])
