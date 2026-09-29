@@ -6,6 +6,10 @@ Pooled PR-AUC of both runs on the scored rows (07), split by whether stage 8's
 possession (the inferred run's cached state) agrees with PFF's on the row. Descriptive:
 the split is picked from stage 8's output, not from the labels, so it's a diagnosis of
 the paired compare, not a replacement for it.
+
+On the rows where they disagree it also asks who is right: how often each team (PFF's,
+stage 8's) takes an open-play shot in (t, t+H]. If stage 8's team shot about as often as
+PFF's, much of the disagreement would be PFF's lag (07, Floor from the labels).
 """
 
 import argparse
@@ -17,11 +21,12 @@ import polars as pl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from evaluation.folds import FOLDS_PATH
-from evaluation.metrics import pr_auc
+from evaluation.folds import FOLDS_PATH, GAMESTATE_DIR
+from evaluation.metrics import pr_auc, shots_table
 from evaluation.report import PROCESSED_DIR
 from evaluation.runs import load_run
 from prediction.features import tenths
+from prediction.labels import HORIZONS
 from prediction.possession import config_key
 from vision.state import StateConfig
 
@@ -31,6 +36,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("provider", type=Path)
     ap.add_argument("inferred", type=Path)
     ap.add_argument("--processed", type=Path, default=PROCESSED_DIR)
+    ap.add_argument("--gamestate", type=Path, default=GAMESTATE_DIR)
     args = ap.parse_args(argv)
     runs = {"provider": load_run(args.provider), "inferred": load_run(args.inferred)}
     config = StateConfig(**runs["inferred"][0]["config"]["state_config"])
@@ -39,13 +45,45 @@ def main(argv: list[str]) -> int:
     ids = sorted(m["match_id"] for m in json.loads(FOLDS_PATH.read_text())["matches"])
     cols = ["match_id", "period", "t_s", "frame_id", "possession_team", "all_estimated"]
     cols += [f"label_{x}_{h}" for h in horizons for x in ("mask", "shot")]
-    rows = []
+    rows, shots = [], []
     for m in ids:
         d = args.processed / m
         f = pl.read_parquet(d / "frames_10hz.parquet", columns=cols)
         s = pl.read_parquet(d / f"state_inferred_{key}.parquet").rename({"possession_team": "inf"})
         rows.append(f.join(s, on="frame_id", how="left"))
+        g = args.gamestate / m
+        shots.append(
+            shots_table(
+                pl.read_parquet(g / "events.parquet"),
+                pl.read_parquet(
+                    g / "frames.parquet", columns=["frame_id", "period", "timestamp_s"]
+                ),
+                m,
+            )
+        )
     f = pl.concat(rows).with_columns(k=tenths())
+    open_play = (
+        pl.concat(shots)
+        .filter("open_play")
+        .select("match_id", "period", "team", shot_t="t_s")
+        .sort("shot_t")
+    )
+    # each row's next open-play shot by PFF's team and by stage 8's, strictly after t
+    for who, team in (("pff", "possession_team"), ("inf", "inf")):
+        nxt = open_play.rename({"team": team, "shot_t": f"{who}_next"})
+        f = (
+            f.sort("t_s")
+            .join_asof(
+                nxt,
+                left_on="t_s",
+                right_on=f"{who}_next",
+                by=["match_id", "period", team],
+                strategy="forward",
+                allow_exact_matches=False,
+                check_sortedness=False,
+            )
+            .sort("match_id", "period", "t_s")
+        )
     for name, (_, preds) in runs.items():
         p = preds.select(
             "match_id", "period", k=tenths(), **{f"{name}_{h}": f"p_{h}" for h in horizons}
@@ -71,6 +109,19 @@ def main(argv: list[str]) -> int:
             a = pr_auc(y, sub[f"provider_{h}"].to_numpy())
             b = pr_auc(y, sub[f"inferred_{h}"].to_numpy())
             print(f"| {name} | {sub.height:,} | {y.mean():.4f} | {a:.3f} | {b:.3f} |")
+        dis = sc.filter(~pl.col("agree"), pl.col("inf").is_not_null())
+        secs = HORIZONS[h] + 1e-9
+        rates = dis.select(
+            **{
+                who: ((pl.col(f"{who}_next") - pl.col("t_s")) <= secs).fill_null(False).mean()
+                for who in ("pff", "inf")
+            }
+        ).row(0, named=True)
+        print(
+            f"\nOn the {dis.height:,} scored rows where stage 8 names the other team: an open-play "
+            f"shot within {HORIZONS[h]} s by PFF's team on {rates['pff']:.4f} of them, by stage 8's "
+            f"team on {rates['inf']:.4f}"
+        )
     return 0
 
 

@@ -5,7 +5,8 @@ The LightGBM baseline retrained with its inputs built from stage 8's possession 
 ## Bottom line
 - **Stage 8 costs −0.038 PR-AUC at H = 5 (0.296 → 0.258), worse on 5/5 folds.** H = 3: −0.036, 5/5. That's past the "big" line set in 07 before the run (≤ −0.018 and worse on ≥ 4 folds). **Verdict: stage 8 needs work.**
 - For scale, it's twice the worst single vision arm at its target (`geom_loss`, −0.018) and more than half of every vision arm at target together (−0.070). The per-fold Δ is very steady (H = 5: −0.033 to −0.043, std 0.004), so this isn't fold noise. The provider run's fold-to-fold spread is ±0.023.
-- **The loss sits on the rows where stage 8 names the other team.** That's 14.2% of scored rows. There the inferred model's PR-AUC is 0.026, against 0.237 for the provider model on the same rows: it's close to useless there (base rate 0.014). Where stage 8 agrees with PFF, the gap is only −0.014 (0.302 → 0.288).
+- **The model collapses where stage 8 names the other team.** That's 14.2% of scored rows. There the inferred model's PR-AUC is 0.026, against 0.237 for the provider model on the same rows: it's close to useless (base rate 0.014). It's also worse where stage 8 agrees with PFF: −0.014 (0.302 → 0.288), close to the "big" line on its own, because it trained on 14% of rows with the frame reversed. Pooled PR-AUC doesn't split into parts, so neither piece is "the share" of the −0.038.
+- **Stage 8 is mostly the one that's wrong there, not PFF.** On those rows, PFF's team takes an open-play shot within 5 s 3.2× as often as the team stage 8 names (1.38% vs 0.43% of rows).
 - Stage 8's null possession doesn't matter: 0.15% of scored rows.
 
 ## Headline (PFF pooled out of fold)
@@ -30,7 +31,8 @@ Per-fold τ alarms (H = 5): the inferred run misses less (−0.051, 4/5 folds) b
 | stage 8 disagrees | 281,606 | 0.0137 | 0.237 | 0.026 |
 
 - **On a disagreeing row the model is looking the wrong way.** The pitch is rotated toward the other goal and attackers and defenders are swapped, while the label asks about PFF's team. The features describe the other team's attack, so the model can't rank those rows at all.
-- **The disagreeing rows hold 7.8% of the positives.** Those are rows where PFF's team really does shoot within 5 s, yet stage 8 says the other team has the ball. Some of those will be PFF being late rather than stage 8 being wrong (next section), but a shot by that team within seconds is good evidence that stage 8 is the one that's off on most of them.
+- **The disagreeing rows hold 7.8% of the positives.** Those are rows where PFF's team really does shoot within 5 s, yet stage 8 says the other team has the ball.
+- **Who's right on those rows:** the team that goes on to shoot. Over the 278,679 disagreeing rows where stage 8 names a team, PFF's team shoots (open play, within 5 s) on 1.38% and stage 8's team on 0.43%. H = 3: 0.87% vs 0.25%. Shots follow PFF's team about 3× as often, so on most of these rows stage 8 is carrying a stale team forward. Stage 8's team isn't at zero, though, so some of the disagreement is PFF being late (next section).
 - **Agreeing rows lose a little too (−0.014).** The model trained on 14% of rows with the frame the wrong way round, which is label noise for everything it learns, so it's slightly worse even where its input is right.
 - This split is descriptive: it's chosen from stage 8's output. The paired fold comparison above is the test.
 
@@ -42,7 +44,7 @@ Per-fold τ alarms (H = 5): the inferred run misses less (−0.051, 4/5 folds) b
 
 ## Caveats
 - **The alarm rule and τ still run on PFF's possession and ball state.** Live, alarms would start and end on stage 8's too. That's the later, fully live question, and it changes which alarms exist, not how rows rank. The PR-AUC Δ doesn't depend on it.
-- **PFF's possession is itself laggy.** The oracle floor loses 25 shots to PFF crediting the other team 1–4 s before a shot (07 "Floor from the labels"). Where stage 8 is right and PFF is late, the inferred arm is penalized for disagreeing with PFF, not with the game. Labels come from PFF's possession, so there's no clean way to measure this here. So the −0.038 may overstate stage 8's cost somewhat. Still, PFF's lag touches about 2% of shots in the oracle, while stage 8 disagrees on 7.8% of positive rows. That makes it unlikely to account for most of the loss.
+- **PFF's possession is itself laggy.** The oracle floor loses 25 shots to PFF crediting the other team 1–4 s before a shot (07 "Floor from the labels"). Where stage 8 is right and PFF is late, the inferred arm is penalized for disagreeing with PFF, not with the game. Labels come from PFF's possession, so this can't be removed from the Δ, and the −0.038 overstates stage 8's cost by some amount. The shot count above bounds how much: on rows where they disagree, the team that goes on to shoot is PFF's about 3× as often as stage 8's. So PFF's lag is the smaller part.
 - **Stage 8 runs on clean PFF tracking** (VISIBLE objects only). On vision output it would see less, so this is the cost of the rules alone, before any vision error (07 #6). The two costs aren't simply additive (the sensitivity review found losses don't add up).
 - One baseline model (v1 hand features). A temporal GNN could learn to discount a stale possession, but it isn't wired for inferred possession yet (05 Scope).
 

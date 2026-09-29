@@ -294,7 +294,7 @@ The model trains and scores on PFF's `possession_team`, but live it would get st
 - `--degrade` with `--possession inferred` is an error. Stage 8 would run on clean native tracking while the features see degraded objects, which isn't anything vision produces. The live combination (stage 8 on degraded tracking) needs `degrade` at the native rate, which it doesn't do.
 - H = 5 and H = 3 in one run, like `lgbm-held-2026-09-27`, with the same features version (1), ball source (held), seed and folds.
 
-**Result (2026-09-29, `Docs/reviews/possession-inferred-2026-09-29.md`).** PR-AUC 0.296 → **0.258** at H = 5 (−0.038, 5/5 folds), 0.298 → 0.260 at H = 3. Stage 8 disagrees with PFF on 14.2% of scored rows, and there the model can't rank at all (0.026 vs 0.237). Where they agree the cost is −0.014. Stage 8 needs work before a model runs on it (07 #6).
+**Result (2026-09-29, `Docs/reviews/possession-inferred-2026-09-29.md`).** PR-AUC 0.296 → **0.258** at H = 5 (−0.038, 5/5 folds), 0.298 → 0.260 at H = 3. Stage 8 disagrees with PFF on 14.2% of scored rows, and there the model can't rank at all (0.026 vs 0.237). There, PFF's team goes on to shoot about 3× as often as stage 8's, so stage 8 is mostly the one that's wrong. Where they agree the model is still worse (−0.014), since it trained with the frame reversed on 14% of rows. Stage 8 needs work before a model runs on it (07 #6).
 
 ## xG model
 ### Feature rule

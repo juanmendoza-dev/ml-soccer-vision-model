@@ -96,7 +96,7 @@ Main dataset is PFF, SkillCorner is the second CV pool (06). Build in this order
 - [ ] Final models on IDSSE, once
 
 ## Phase 2 — Vision pipeline (RTX 2060)
-In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-09-27.md`; F-numbers refer to it). The sensitivity test (`Docs/reviews/sensitivity-2026-09-28.md`) sets the order of the quality work: homography availability, then the ball, then player position accuracy, then an unknown team option (if the benchmark supports it), then player recall.
+In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-09-27.md`; F-numbers refer to it). The sensitivity test (`Docs/reviews/sensitivity-2026-09-28.md`) sets the order of the quality work: homography availability, then the ball, then player position accuracy, then an unknown team option (if the benchmark supports it), then player recall. **Stage 8's possession goes ahead of all of them** (07 #6, 2026-09-29: −0.038, twice the worst single arm; `Docs/reviews/possession-inferred-2026-09-29.md`).
 
 **Done**
 - [x] Streaming `VisionPipeline` (03): stage 0 gate, detection + ByteTrack with frame skip, kit-color teams after warmup, homography from roboflow's 32 keypoints in 02 coords, ball extrapolation. Tested with fake stages on a synthetic match (output passes the 02 validator)
