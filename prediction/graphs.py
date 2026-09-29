@@ -9,6 +9,10 @@ with the row's own flip.
 A match's graphs are one padded float16 array (rows, MAX_NODES, len(NODE_FEATURES)),
 nodes packed at the front with the ball first, plus the node count per row. Edge
 features are left to the model, which computes them from the node features.
+
+The temporal GNN (05 model 3) reads windows of these graphs. Each graph is in its own
+row's frame, so the cache also keeps each node's team and each row's sign and
+possession, and window() turns every step into the anchor row's frame.
 """
 
 from dataclasses import dataclass
@@ -29,7 +33,7 @@ from prediction.features import (
 )
 
 # cached graphs are keyed by version: add a new one when any node definition changes
-GRAPHS_VERSION = "1"
+GRAPHS_VERSION = "2"  # 2: team, sign and poss for the temporal GNN, nodes unchanged
 MAX_PLAYERS = 22  # PFF never has more visible on a row; past it, the nearest the ball stay
 MAX_NODES = MAX_PLAYERS + 1
 NODE_FEATURES = (
@@ -54,6 +58,7 @@ X_SCALE, Y_SCALE = 52.5, 34.0
 VEL_SCALE = 10.0
 DIST_SCALE = 52.5
 Z_SCALE = 3.0
+TEAM_CODE = {"home": 1, "away": -1}  # team, poss: 0 is the ball, padding or no team
 
 
 def _put(out: np.ndarray, **cols) -> np.ndarray:
@@ -68,7 +73,8 @@ def match_graphs(
     """frames (period, t_s, possession_team, flipped) and objects_10hz for one match.
     Returns nodes (rows, MAX_NODES, F) float16, n (rows,) uint8, and the grid keys
     period / k the rows are in (sorted, as load_match sorts them), plus capped: rows
-    with more than MAX_PLAYERS visible players."""
+    with more than MAX_PLAYERS visible players. For the temporal GNN: team (rows,
+    MAX_NODES) int8 per node, and sign and poss per row (TEAM_CODE)."""
     g = grid_rows(frames)
     t = g.height
     sign, seg = g["sign"].to_numpy(), g["seg"].to_numpy()
@@ -148,6 +154,8 @@ def match_graphs(
         has_ball=has_ball[rr],
     )
     nodes[rr, rank + has_ball[rr]] = feats
+    team = np.zeros((t, MAX_NODES), np.int8)
+    team[rr, rank + has_ball[rr]] = code(p["team"])[order]
     count = np.bincount(r, minlength=t)
     return {
         "nodes": nodes.astype(np.float16),
@@ -155,7 +163,14 @@ def match_graphs(
         "period": g["period"].to_numpy(),
         "k": g["k"].to_numpy(),
         "capped": np.array(int((count > MAX_PLAYERS).sum())),
+        "team": team,
+        "sign": sign.astype(np.int8),
+        "poss": code(g["possession_team"]),
     }
+
+
+def code(team: pl.Series) -> np.ndarray:
+    return team.cast(pl.String).replace_strict(TEAM_CODE, default=0, return_dtype=pl.Int8).to_numpy()
 
 
 def cache_path(match_dir: Path, ball_source: str = "held") -> Path:
@@ -201,6 +216,9 @@ class GraphStore:
     match: np.ndarray  # (rows,) index into ids
     period: np.ndarray
     k: np.ndarray
+    team: np.ndarray  # (rows, MAX_NODES) int8
+    sign: np.ndarray  # (rows,) int8
+    poss: np.ndarray  # (rows,) int8
     built: int = 0  # matches whose cache had to be built
     capped: int = 0  # rows with more than MAX_PLAYERS visible players
 
@@ -213,6 +231,9 @@ class GraphStore:
             match=np.zeros(total, np.int32),
             period=np.zeros(total, np.int64),
             k=np.zeros(total, np.int64),
+            team=np.zeros((total, MAX_NODES), np.int8),
+            sign=np.ones(total, np.int8),
+            poss=np.zeros(total, np.int8),
         )
 
     def put(self, j: int, at: int, g: dict) -> int:
@@ -223,6 +244,9 @@ class GraphStore:
         self.match[at : at + m] = j
         self.period[at : at + m] = g["period"]
         self.k[at : at + m] = g["k"]
+        self.team[at : at + m] = g["team"]
+        self.sign[at : at + m] = g["sign"]
+        self.poss[at : at + m] = g["poss"]
         self.capped += int(g["capped"])
         return at + m
 
@@ -281,3 +305,50 @@ class GraphStore:
 
     def take(self, rows: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         return self.nodes[rows], self.n[rows]
+
+    def steps(self, rows: np.ndarray, steps: int, step_rows: int) -> np.ndarray:
+        """(len(rows), steps) store rows of each anchor's window, oldest first, the anchor
+        last; -1 where a step has no row: another match or period, or a grid gap between
+        it and the anchor (its tenth isn't exactly lag x step_rows below)."""
+        lag = step_rows * np.arange(steps - 1, -1, -1)
+        src = rows[:, None] - lag[None, :]
+        ok = src >= 0
+        s = np.where(ok, src, 0)
+        a = rows[:, None]
+        ok &= (
+            (self.match[s] == self.match[a])
+            & (self.period[s] == self.period[a])
+            & (self.k[a] - self.k[s] == lag[None, :])
+        )
+        return np.where(ok, src, -1)
+
+    def window(self, rows: np.ndarray, steps: int, step_rows: int) -> tuple[np.ndarray, np.ndarray]:
+        """Each anchor row's window in its own frame: nodes (len(rows), steps, MAX_NODES,
+        F) float32 and n (len(rows), steps), n = 0 for a step with no row (05 model 3).
+        Every step is rotated into the anchor's frame, and is_att / is_def follow the
+        anchor's possession_team."""
+        src = self.steps(rows, steps, step_rows)
+        have = src >= 0
+        s = np.where(have, src, 0)
+        x = self.nodes[s].astype(np.float32)
+        n = np.where(have, self.n[s], 0).astype(np.uint8)
+        pad = np.arange(MAX_NODES)[None, None, :] >= n[..., None]
+        flip = (self.sign[s] * self.sign[rows][:, None]) < 0
+        f = np.where(flip, -1.0, 1.0).astype(np.float32)[..., None]
+        for c in ("x", "y", "vx", "vy"):
+            x[..., IDX[c]] *= f
+        px, py = x[..., IDX["x"]] * X_SCALE, x[..., IDX["y"]] * Y_SCALE
+        fl = np.broadcast_to(flip[..., None], px.shape)
+        # recomputed only where flipped, so the anchor step is the frame GNN's input exactly
+        x[..., IDX["goal_dist"]] = np.where(
+            fl, goal_distance(px, py) / DIST_SCALE, x[..., IDX["goal_dist"]]
+        )
+        x[..., IDX["goal_angle"]] = np.where(
+            fl, goal_angle(px, py) / np.pi, x[..., IDX["goal_angle"]]
+        )
+        team = self.team[s]
+        poss = self.poss[rows][:, None, None]
+        x[..., IDX["is_att"]] = (team != 0) & (team == poss)
+        x[..., IDX["is_def"]] = (team != 0) & (poss != 0) & (team == -poss)
+        x[pad] = 0.0
+        return x, n

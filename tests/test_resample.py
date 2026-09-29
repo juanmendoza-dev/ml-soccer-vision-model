@@ -462,7 +462,7 @@ def test_rewriting_a_match_drops_its_cached_features_and_graphs(tmp_path):
     out = tmp_path / "processed"
     (out / "syn").mkdir(parents=True)
     (out / "syn" / "features_v1_held.parquet").write_bytes(b"old")
-    (out / "syn" / "graphs_v1_held.npz").write_bytes(b"old")
+    (out / "syn" / "graphs_v2_held.npz").write_bytes(b"old")
     process_game("syn", tmp_path / "gs", out)
     assert not list((out / "syn").glob("features_v*.parquet"))
     assert not list((out / "syn").glob("graphs_v*.npz"))
