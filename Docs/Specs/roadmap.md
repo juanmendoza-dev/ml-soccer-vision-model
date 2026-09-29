@@ -12,12 +12,12 @@
 Code for all of this is written and pushed. What's left is running and checking it. Tick items here and in their sections below.
 
 **M1 (verification, no GPU)**
-- [x] Full suite on the M1 (2026-09-29): 490 passed in 2 min 58 s. The workstation's 380 passed / 110 skipped is still a count until it runs there
+- [x] Full suite on the M1 (2026-09-29): 490 passed in 2 min 58 s, 500 with the inferred possession tests (same time). The workstation's 390 passed / 110 skipped is still a count until it runs there
 - [ ] Optional: delete the unused `data/processed/*/graphs_v1_held.npz` (the cache moved to v2)
 
 **RTX 2060 (training), in this order.** Every command is in 09, "GNN runs (workstation runbook)"
 - [ ] Setup: copy `data/workstation-data-2026-09-29.tar` and its `.sha256`, check, unpack, `git pull`, `uv sync` with the `prediction` extra on CUDA, CUDA check. The tar doesn't need repacking: it holds no caches, and graphs v2 get built on first use
-- [ ] Tests on the workstation: expect 380 passed, 110 skipped. Then `scripts\gnn_smoke.py --device cuda`
+- [ ] Tests on the workstation: expect 390 passed, 110 skipped. Then `scripts\gnn_smoke.py --device cuda`
 - [ ] Frame GNN: `--model gnn --one-fold 0` timing, then full H = 5 and H = 3. Compare with `lgbm-held-2026-09-27` (`evaluation.compare`, `scripts/lead_time.py`)
 - [ ] Temporal GNN: `--model tgnn --one-fold 0` timing first and watch GPU memory. It has never been fitted on real data, so this is also its first real check. If it's too slow or runs out of memory, use `--gnn-param steps=4`, `stride=8` or `batch_size=64`. Then full H = 5 and H = 3. Compare with the frame GNN first (does history help?), then with LightGBM
 - [ ] Sensitivity on the temporal GNN (H = 5): `--degrade id_fragment:2` and `--degrade target`, each against the clean temporal run

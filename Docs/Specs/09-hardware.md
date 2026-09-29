@@ -79,10 +79,10 @@ uv sync --all-extras
 uv run python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0), 'sm_75' in torch.cuda.get_arch_list())"
 # 2.11.0+cu128 12.8 True NVIDIA GeForce RTX 2060 True
 
-uv run python -m pytest -q                        # 380 passed, 110 skipped (see below)
+uv run python -m pytest -q                        # 390 passed, 110 skipped (see below)
 uv run python scripts\gnn_smoke.py --device cuda  # ~2 min: loss goes down, peak GPU memory, rows/s
 ```
-- The tests give 380 passed and 110 skipped (360 on the clean clone check, plus 20 data-free tests added with the temporal GNN, the degraded graphs and stage 8). The skips are the converter tests: `data/raw` isn't copied. The M1, which has the raw data, runs all 490 in about 3 minutes (2026-09-29; the slowest are the PFF and Metrica converter setups, 54 s and 26 s, and the GNN cases, 46 s). The GNN cases run in their own process, inside `tests/test_gnn.py`.
+- The tests give 390 passed and 110 skipped (360 on the clean clone check, plus 30 data-free tests added with the temporal GNN, the degraded graphs, stage 8 and the inferred possession arm). The skips are the converter tests: `data/raw` isn't copied. The M1, which has the raw data, runs all 500 in about 3 minutes (2026-09-29, 2 min 58 s; the slowest are the PFF and Metrica converter setups, 54 s and 26 s, and the GNN cases, 46 s). The GNN cases run in their own process, inside `tests/test_gnn.py`.
 - The smoke fit prints training rows/s, including the early-stopping passes. The M1 Pro did about 2,800 on MPS. Peak GPU memory should be well under 6,000 MB.
 - Git Bash works too (it's what Claude Code uses on Windows). The same commands work there with forward slashes and `export PYTHONUTF8=1`.
 
@@ -162,6 +162,8 @@ VRAM isn't the limit: detector, ball model, keypoint model and SigLIP together n
 
 ## Training (brief)
 YOLOv8n/s/m fine-tuning at 640 fits in 6 GB at batch size ~8–16. A ball detector at 1280 needs batch size ~2–4 or Colab (01).
+
+LightGBM runs stay on the M1. Measured on the inferred possession run (07 #6, 2026-09-29), 64 games and both horizons: 7 min 22 s in all. That's stage 8 over the native game state 12 s (cached per match after), features 7 s, loading 21 s, CV 400 s (about 35 s per fold per horizon).
 
 ## Live app
 Live mode lives in its own repo, `soccer-live-overlay`, which will install this one as a dependency. It never trains or defines formats.
