@@ -1,31 +1,46 @@
 """Where stage 8's possession disagrees with PFF: by ball visibility and time since PFF's change.
 
-    PYTHONPATH=. python scripts/possession_split.py [--scored h5|h3] [match_id ...]
+    PYTHONPATH=. python scripts/possession_split.py [--scored h5|h3] [--state KEY=VALUE ...]
+        [match_id ...]
 
-Every provider frame with a team, default StateConfig. --scored keeps only the frames that
+Every provider frame with a team, default StateConfig unless --state overrides a field
+(e.g. --state carrier_min_s=0.1, --state team_near_s=0.1). --scored keeps only the frames that
 are 07's scored rows at that horizon (label mask on, not all ESTIMATED) and repeats the
 tables for its positive rows; the gap and since-change bookkeeping still runs on every frame.
 A diagnostic for the carry-forward fix
 (stage 8 review), not a run: the bookkeeping columns are never model inputs.
 """
 
+import argparse
 import json
 import sys
+from dataclasses import fields
 from pathlib import Path
 
 import polars as pl
 
-from vision.state import infer
+from vision.state import StateConfig, infer
 from vision.state_check import OBJECT_COLS
 
 GS = Path("data/gamestate")
 PROCESSED = Path("data/processed")
-args = sys.argv[1:]
-scored = None
-if args[:1] == ["--scored"]:
-    scored, args = args[1], args[2:]
-if args:
-    ids = args
+ap = argparse.ArgumentParser()
+ap.add_argument("--scored", choices=["h5", "h3"])
+ap.add_argument("--state", action="append", default=[], metavar="KEY=VALUE")
+ap.add_argument("ids", nargs="*")
+opts = ap.parse_args()
+scored = opts.scored
+names = {f.name for f in fields(StateConfig)}
+over = {}
+for pair in opts.state:
+    key, _, value = pair.partition("=")
+    if key not in names:
+        ap.error(f"--state {pair!r}: not a StateConfig field")
+    over[key] = float(value)
+config = StateConfig(**over)
+print(f"StateConfig overrides: {over or 'none'}")
+if opts.ids:
+    ids = opts.ids
 elif scored:
     ids = sorted(m["match_id"] for m in json.loads(Path("data/splits/folds.json").read_text())["matches"])
 else:
@@ -37,7 +52,7 @@ for i in ids:
     if frames["possession_team"].is_null().all():
         continue
     objects = pl.scan_parquet(d / "objects.parquet").select(OBJECT_COLS)
-    inf = infer(frames, objects)
+    inf = infer(frames, objects, config)
     vis = (
         objects.filter(pl.col("object_type") == "ball", pl.col("visible").fill_null(False),
                        pl.col("x").is_not_null())
@@ -94,6 +109,23 @@ a = a.with_columns(
 )
 
 
+def summary(a, what):
+    """Counts, not shares of disagreement: the scored rows are fixed by PFF, so configs
+    compare on these directly."""
+    early = pl.col("since_chg").is_in(["a <1s", "b 1-3s"])
+    parts = {
+        "all": a,
+        "< 3 s since change": a.filter(early),
+        "> 10 s since change": a.filter(pl.col("since_chg") == "d >10s"),
+    }
+    if "pos" in a.columns:
+        parts["positives"] = a.filter("pos")
+    print(f"\nsummary, {what}")
+    for name, b in parts.items():
+        n, d = b.height, int(b["dis"].sum())
+        print(f"  {name}: {d} / {n} disagree ({d / n:.4f})")
+
+
 def tables(a, what):
     tot = int(a["dis"].sum())
     print(f"\n\n{a.height} {what}, disagree {tot / a.height:.3f} ({tot})\n")
@@ -114,6 +146,7 @@ def tables(a, what):
             print(t, "\n")
 
 
+summary(a, f"scored frames ({scored})" if scored else "provider frames")
 if scored:
     tables(a, f"scored frames ({scored})")
     tables(a.filter("pos"), f"positive scored frames ({scored})")
