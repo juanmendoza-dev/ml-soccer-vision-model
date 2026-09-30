@@ -192,3 +192,98 @@ def test_infer_matches_stepping_frame_by_frame():
 def test_changes_skip_nulls():
     assert changes(pl.Series(["home", None, "home", "away", None, "home"])) == 2
     assert changes(pl.Series([None, None], dtype=pl.String)) == 0
+
+
+# --- team_near_s: the same team nearest the ball moves possession (off by default) ---
+
+TEAM = StateConfig(team_near_s=0.1)
+
+
+def test_default_config_key_and_dict_unchanged_by_the_new_rule():
+    from prediction.possession import config_key
+
+    assert config_key(StateConfig()) == "e737054b5d"  # the key of every earlier cache and run
+    assert "team_near_s" not in StateConfig().to_dict() and len(StateConfig().to_dict()) == 11
+    assert TEAM.to_dict()["team_near_s"] == 0.1 and config_key(TEAM) != config_key(StateConfig())
+    assert StateConfig(**TEAM.to_dict()) == TEAM
+
+
+def test_same_team_alternating_moves_possession_without_a_carrier():
+    ball = (0.0, 0.0, 0.0)
+    steps = [(t, ball, "h1", "home") for t in at(10, 1)]
+    # two away players take turns nearest: nobody is candidate for 0.3 s
+    steps += [(1 + t, ball, "a1" if i % 2 else "a2", "away") for i, t in enumerate(at(10, 1))]
+    off = run(steps)
+    on = run(steps, TEAM)
+    assert {p for _, p, _ in off[10:]} == {"home"}
+    assert all(c is None for _, _, c in on[11:])  # still no carrier
+    assert [p for _, p, _ in on[10:12]] == ["home", "away"]  # 0.1 s after the first away frame
+
+
+def test_team_streak_resets_on_the_other_team_or_nobody_and_unknown_does_nothing():
+    ball = (0.0, 0.0, 0.0)
+    steps = [(t, ball, "h1", "home") for t in at(10, 1)]
+    for i in range(10):  # away, then home or nobody, never two away frames in a row
+        steps.append((1 + i / 10, ball, "a1", "away") if i % 2 else (1 + i / 10, ball, None, None))
+    steps += [(2 + t, ball, "x1", None) for t in at(10, 1)]
+    assert {p for _, p, _ in run(steps, TEAM)} == {None, "home"}
+    # a ball gap over carrier_gap_s ends the streak too
+    steps = [(t, ball, "h1", "home") for t in at(10, 1)]
+    steps += [(1.0, ball, "a1", "away"), (1.7, None, None, None), (1.8, ball, "a2", "away")]
+    assert run(steps, TEAM)[-1][1] == "home"
+
+
+def test_team_rule_is_in_seconds_not_frames():
+    ball = (0.0, 0.0, 0.0)
+
+    def first_away(hz):
+        steps = [(t, ball, "h1", "home") for t in at(hz, 1)]
+        steps += [(1 + t, ball, ("a1", "a2")[i % 2], "away") for i, t in enumerate(at(hz, 1))]
+        out = run(steps, TEAM)
+        return next(t for (t, *_), (_, p, _) in zip(steps, out) if p == "away") - 1
+
+    assert first_away(10) == pytest.approx(0.1) and first_away(30) == pytest.approx(0.1)
+
+
+def contested(n=80, hz=10.0):
+    """game(), with a1 closer to the ball than h1 from frame 30 on."""
+    frames, objects = game(n, hz)
+    late = pl.col("frame_id") >= 30
+    return frames, objects.with_columns(
+        y=pl.when(late & (pl.col("object_id") == "a1")).then(0.2).otherwise("y")
+    )
+
+
+def test_team_rule_infer_only_uses_the_past():
+    frames, objects = contested()
+    a = infer(frames, objects, TEAM)
+    assert a["possession_team"][29] == "home" and a["possession_team"][32] == "away"
+    later = pl.col("frame_id") > 40
+    moved = objects.with_columns(
+        x=pl.when(later).then(pl.col("x") + 60).otherwise("x"),
+        team=pl.when(later & (pl.col("object_id") == "a1")).then(pl.lit("home")).otherwise("team"),
+    )
+    b = infer(frames, moved, TEAM)
+    assert a.head(41).equals(b.head(41))
+    assert not a.equals(b)
+
+
+def test_team_rule_infer_matches_stepping_and_default_is_unchanged():
+    frames, objects = contested()
+    out = infer(frames, objects, TEAM)
+    sm = StateMachine(TEAM)
+    for i, (fid, t) in enumerate(zip(frames["frame_id"], frames["timestamp_s"], strict=True)):
+        o = objects.filter(pl.col("frame_id") == fid, pl.col("visible"))
+        b = o.filter(pl.col("object_type") == "ball").row(0, named=True)
+        p = o.filter(pl.col("object_type").is_in(["player", "goalkeeper"]))
+        c = candidate(
+            (b["x"], b["y"], b["z"]),
+            p.select("x", "y").to_numpy(),
+            p["object_id"].to_list(),
+            p["team"].to_list(),
+        )
+        assert sm.step(1, t, (b["x"], b["y"], b["z"]), *c) == out.row(i)[1:], i
+    default = infer(frames, objects)
+    assert default.equals(infer(frames, objects, StateConfig(team_near_s=None)))
+    # the carrier rule alone moves it later (0.3 s), the team rule earlier (0.1 s)
+    assert default["possession_team"][32] == "home" and default["possession_team"][33] == "away"

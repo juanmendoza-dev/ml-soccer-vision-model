@@ -38,9 +38,14 @@ class StateConfig:
     still_any_s: float = 1.0
     kick_speed: float = 3.0
     speed_window_s: float = 0.2
+    # off (None) by default: the same team's player nearest the ball for this long moves
+    # possession, without one player being carrier
+    team_near_s: float | None = None
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        """Rules that are off are left out, so the default's cache key and run.json stay
+        the same as before they existed (05 Caches)."""
+        return {k: v for k, v in asdict(self).items() if v is not None}
 
 
 def is_out(x: float, y: float, margin: float) -> bool:
@@ -75,6 +80,7 @@ class StateMachine:
         self.possession = None
         self.carrier = None
         self.cand, self.cand_since, self.cand_team = None, None, None
+        self.team_cand, self.team_since = None, None
         self.last_ball_t = None
         self.sightings = deque()  # (t, x, y) of the visible ball, for speed
         self.dead = False
@@ -116,6 +122,7 @@ class StateMachine:
             if gap:
                 self.carrier = None
                 self.cand = self.cand_since = None
+                self.team_cand = self.team_since = None
         else:
             if candidate != self.cand:
                 self.cand, self.cand_since, self.cand_team = candidate, t, candidate_team
@@ -124,6 +131,15 @@ class StateMachine:
                 self.carrier = self.cand
                 if self.cand_team is not None:
                     self.possession = self.cand_team
+            # team_near_s: the same team nearest for that long, whichever of its players
+            if candidate_team != self.team_cand:
+                self.team_cand, self.team_since = candidate_team, t
+            if (
+                c.team_near_s is not None
+                and self.team_cand is not None
+                and t - self.team_since >= c.team_near_s - 1e-9
+            ):
+                self.possession = self.team_cand
 
         # ball state
         if ball is not None:
