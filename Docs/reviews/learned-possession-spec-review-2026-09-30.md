@@ -151,6 +151,8 @@ The user answered. For every question they left to the reviewer, the recommended
 
 The user's reply numbered the machine answer as 5 and left 6 open. It's read here as the machine question (workstation), with the gate question left to the reviewer.
 
+**Closed in the spec (2026-09-30):** B1 `a25c162` (its tests `02248ab`); answers 1, 2, 6 and S1, the 03 header, the q-vs-p note and 09 `42eef7b`; answers 3, 4, 5, 7, S2, S3 and S10 `0ffb468`; S4 `45a4b5b`; S5 and S6 `28c38bb`; S7, S8 and the vision cache key `c3de7cf`, synced into 05 `225985c`; S9, live latency, the history buffer, attack direction and provider smoothing `02248ab`; roadmap `d006f3a`.
+
 ## Verified
 - **Default config key:** `config_key(StateConfig())` = `e737054b5d` (run 2026-09-30). `to_dict()` drops None values (`state.py:45-48`), so a new `possession_model: None` keeps the key. Old run.json `state_config` dicts lack the field and still load through `StateConfig(**…)` because of the dataclass default.
 - **Folds:** `folds.json` has 64 PFF matches in folds 12/13/13/13/13, frozen `pff: 2026-09-26`.

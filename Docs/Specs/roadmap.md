@@ -27,7 +27,7 @@ Code for all of this is written and pushed. What's left is running and checking 
 - [x] Write the results up in `Docs/reviews/` (frame GNN, temporal GNN, degraded runs) and tick the GNN items below. **Done 2026-09-30 (`Docs/reviews/gnn-2026-09-30.md`): neither GNN beats LightGBM, history doesn't help (temporal vs frame 2/5 and 1/5), median lead still 0.7–0.8 s. LightGBM stays the baseline, GNN work is parked**
 
 **After the GNN runs: order of work (proposed 2026-09-30, from the GNN review)**
-1. Stage 8 carry-forward fix, then rerun 07 #6 (in progress; faster nearest-player rules failed on scored rows 2026-09-30, the learned rule is specced next). The biggest cheap loss (−0.038), and it's what live mode feeds the model
+1. Stage 8 carry-forward fix, then rerun 07 #6 (in progress; faster nearest-player rules failed on scored rows 2026-09-30; the learned rule is specced and reviewed, the diagnostic is next). The biggest cheap loss (−0.038), and it's what live mode feeds the model
 2. Train the model that runs on vision output with the degradations on (M1, small; Phase 1)
 3. xG + P(goal) v1 = P(shot) × xG (M1; Phase 1). The overlay's headline number, nothing built yet
 4. Vision quality on the 2060 in the sensitivity order: benchmark clips (W0), homography thresholds, ball association (Phase 2 group 4)
