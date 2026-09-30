@@ -145,7 +145,7 @@ These are unmeasured estimates for a 2060 with FP16 TensorRT exports. Plain PyTo
 | 2. Tracking (ByteTrack) | Every frame, CPU | < 2 ms |
 | 3. Team assignment | Fit during a warmup window, then classify only new tracks | Occasional SigLIP batch |
 | 6. Jersey OCR | Separate async worker, low rate, outside the main loop | Doesn't count against the frame budget |
-| 8. Game state inference | Every frame, pitch coordinates only | Negligible |
+| 8. Game state inference | Rule: every frame, pitch coordinates only. Learned possession (03, proposed): 159 features and two LightGBM predictions per 10 Hz tick, on its own worker | Rule: negligible. Learned: not measured; budget p95 < 10 ms, p99 < 33 ms per tick (03) |
 | Predictor (05) | 10 Hz, small GNN | Negligible |
 
 VRAM isn't the limit: detector, ball model, keypoint model and SigLIP together need well under 6 GB in FP16 at batch size 1. The limit is GPU time per frame. The full offline setup (large models, every frame, full resolution) won't reach real time on this card. Expect single-digit fps for that.
@@ -163,7 +163,13 @@ VRAM isn't the limit: detector, ball model, keypoint model and SigLIP together n
 ## Training (brief)
 YOLOv8n/s/m fine-tuning at 640 fits in 6 GB at batch size ~8–16. A ball detector at 1280 needs batch size ~2–4 or Colab (01).
 
-LightGBM runs stay on the M1. Measured on the inferred possession run (07 #6, 2026-09-29), 64 games and both horizons: 7 min 22 s in all. That's stage 8 over the native game state 12 s (cached per match after), features 7 s, loading 21 s, CV 400 s (about 35 s per fold per horizon).
+LightGBM goal-model runs stay on the M1. The learned possession fits (03 stage 8) are the exception: they run on the workstation CPU, `num_threads = 6`, because the 15 nested trainings need an overnight slot the M1 can't give. Runbook:
+1. Pilot (03, Timing plan): extraction on one match, then `outer_0` probe + refit. Record time, best rounds and peak RSS. Don't look at agreement.
+2. Project the whole possession stage (extraction × 64, 15 trainings by row count, 25 prediction contexts). Keep stride 1 if it's ≤ 10 h and ≤ 24 GiB peak RSS; otherwise stride 2, then stride 4, re-piloting each time; past stride 4, stop.
+3. Run it overnight: `python -m vision.possession_train --model-id <id>`. Models go to `data/models/possession/<id>/`, features to `data/vision_cache/<match>/`, per-context state to `data/processed/<match>/`.
+4. The scored-row gate and, only if it passes, 07 #6 run afterwards and aren't in the 10 h.
+
+Measured on the inferred possession run (07 #6, 2026-09-29), 64 games and both horizons: 7 min 22 s in all. That's stage 8 over the native game state 12 s (cached per match after), features 7 s, loading 21 s, CV 400 s (about 35 s per fold per horizon).
 
 ## Live app
 Live mode lives in its own repo, `soccer-live-overlay`, which will install this one as a dependency. It never trains or defines formats.
