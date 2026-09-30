@@ -1,11 +1,15 @@
 """Where stage 8's possession disagrees with PFF: by ball visibility and time since PFF's change.
 
-    PYTHONPATH=. python scripts/possession_split.py [match_id ...]
+    PYTHONPATH=. python scripts/possession_split.py [--scored h5|h3] [match_id ...]
 
-Every provider frame with a team, default StateConfig. A diagnostic for the carry-forward fix
+Every provider frame with a team, default StateConfig. --scored keeps only the frames that
+are 07's scored rows at that horizon (label mask on, not all ESTIMATED) and repeats the
+tables for its positive rows; the gap and since-change bookkeeping still runs on every frame.
+A diagnostic for the carry-forward fix
 (stage 8 review), not a run: the bookkeeping columns are never model inputs.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -15,7 +19,17 @@ from vision.state import infer
 from vision.state_check import OBJECT_COLS
 
 GS = Path("data/gamestate")
-ids = sys.argv[1:] or sorted(p.parent.name for p in GS.glob("*/frames.parquet"))
+PROCESSED = Path("data/processed")
+args = sys.argv[1:]
+scored = None
+if args[:1] == ["--scored"]:
+    scored, args = args[1], args[2:]
+if args:
+    ids = args
+elif scored:
+    ids = sorted(m["match_id"] for m in json.loads(Path("data/splits/folds.json").read_text())["matches"])
+else:
+    ids = sorted(p.parent.name for p in GS.glob("*/frames.parquet"))
 parts = []
 for i in ids:
     d = GS / i
@@ -49,6 +63,15 @@ for i in ids:
             since=pl.col("timestamp_s") - pl.col("chg"),
         )
     )
+    if scored:
+        rows = (
+            pl.read_parquet(PROCESSED / i / "frames_10hz.parquet",
+                            columns=["frame_id", "all_estimated", f"label_mask_{scored}", f"label_shot_{scored}"])
+            .filter(pl.col(f"label_mask_{scored}"), ~pl.col("all_estimated"))
+            .select("frame_id", pos=f"label_shot_{scored}")
+            .unique("frame_id")
+        )
+        j = j.join(rows, on="frame_id")
     parts.append(j)
     print(i, file=sys.stderr, end=" ", flush=True)
 
@@ -69,20 +92,30 @@ a = a.with_columns(
     since_chg=bucket("since", [1, 3, 10, 1e9], ["a <1s", "b 1-3s", "c 3-10s", "d >10s"], "e none"),
     state=pl.col("p_state").fill_null("null"),
 )
-tot = int(a["dis"].sum())
-print(f"\n\n{a.height} provider frames, disagree {tot / a.height:.3f} ({tot})\n")
-for keys in (["ball"], ["since_chg"], ["state"], ["ball", "since_chg"]):
-    t = (
-        a.group_by(keys)
-        .agg(n=pl.len(), dis_n=pl.col("dis").sum())
-        .with_columns(
-            frame_share=(pl.col("n") / a.height).round(3),
-            dis_rate=(pl.col("dis_n") / pl.col("n")).round(3),
-            share_of_dis=(pl.col("dis_n") / tot).round(3),
+
+
+def tables(a, what):
+    tot = int(a["dis"].sum())
+    print(f"\n\n{a.height} {what}, disagree {tot / a.height:.3f} ({tot})\n")
+    for keys in (["ball"], ["since_chg"], ["state"], ["ball", "since_chg"]):
+        t = (
+            a.group_by(keys)
+            .agg(n=pl.len(), dis_n=pl.col("dis").sum())
+            .with_columns(
+                frame_share=(pl.col("n") / a.height).round(3),
+                dis_rate=(pl.col("dis_n") / pl.col("n")).round(3),
+                share_of_dis=(pl.col("dis_n") / tot).round(3),
+            )
+            .sort(keys)
+            .drop("dis_n")
         )
-        .sort(keys)
-        .drop("dis_n")
-    )
-    with pl.Config(tbl_rows=40, tbl_formatting="MARKDOWN", tbl_hide_dataframe_shape=True,
-                   tbl_hide_column_data_types=True):
-        print(t, "\n")
+        with pl.Config(tbl_rows=40, tbl_formatting="MARKDOWN", tbl_hide_dataframe_shape=True,
+                       tbl_hide_column_data_types=True):
+            print(t, "\n")
+
+
+if scored:
+    tables(a, f"scored frames ({scored})")
+    tables(a.filter("pos"), f"positive scored frames ({scored})")
+else:
+    tables(a, "provider frames")
