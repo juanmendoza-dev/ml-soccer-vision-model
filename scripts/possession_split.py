@@ -377,6 +377,12 @@ def residual_report(rows: pl.DataFrame, chgs: pl.DataFrame):
         print(f"Unreachable: ESTIMATED bucket {n_est}, timing-mismatch candidates {n_tim}, both {n_both};"
               f" union {gone}")
         print(f"Reachable residual: {r.height - gone} / {r.height} ({(r.height - gone) / r.height:.3f})\n")
+        ahead = pl.col("contact").is_not_null() & (pl.col("timestamp_s") - pl.col("chg") < pl.col("contact"))
+        print("Reachable rows vs the new team's first visible contact (before it, only anticipation can help):\n")
+        show(r.filter(~(est | tim)).group_by(
+            when=pl.when(pl.col("contact").is_null()).then(pl.lit("no contact, ball mostly unseen"))
+            .when(ahead).then(pl.lit("before first contact")).otherwise(pl.lit("at/after first contact"))
+        ).agg(n=pl.len()).sort("when"))
 
     c = chgs.filter(pl.col("contact").is_not_null())
     print(f"\n## changes: {chgs.height} distinct PFF changes behind the residual\n")
