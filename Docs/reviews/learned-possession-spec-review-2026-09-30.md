@@ -124,6 +124,33 @@ The v1 set is mostly a snapshot of shape and contact, plus two lags. Missing:
 6. Which machine runs the possession fits: the M1 (09:166) or the workstation (03:130)?
 7. Do you accept the τ-validation overlap the spec concedes (03:109)? In every outer fold, all 4 inner fits train on some of that fold's 8 τ-validation matches. My read is yes. PR-AUC is threshold-free, so only the own-τ alarm counts are touched.
 
+## Answers and decisions (2026-09-30)
+The user answered. For every question they left to the reviewer, the recommended option is taken. The spec revision should adopt these before coding.
+
+1. **Budget: one overnight, 10 h, on the workstation.**
+   - The 10 h covers all of the possession stage: extracting features for all 64 matches, 15 trainings, and predictions for all 25 contexts. 07 #6 runs separately, after the gate.
+   - The pilot times two things: extraction on one match, and training `outer_0` (the largest fit, 3.32M mirrored rows) with its probe round count.
+   - Project the total from the pilot. Extraction scales by 64. The trainings scale by each fit's row count; the pair fits are about 0.75× of `outer_0`.
+   - Keep stride 1 if the projection is ≤ 10 h and peak RSS is ≤ 24 GiB, and reuse the pilot as `outer_0`.
+   - Otherwise try stride 2 (`…-s2`), then stride 4 (`…-s4`), re-projecting each time. If stride 4 still doesn't fit, stop for a new plan.
+   - Every step decides on time and memory only, before looking at any agreement.
+   - This replaces the unexplained 5 min per fit.
+2. **15 trainings behind the 25 logical IDs.** The result is identical, and it leaves more of the night free. Add the determinism test from S1.
+3. **Churn becomes a fifth bar.**
+   - Count home/away switches per period on all valid grid rows of the concatenated outer-test output. Nulls are carried over, so a null gap isn't a change.
+   - Measured the same way on the 64 matches today: PFF makes **14,546** changes (227 per match), and the default rule **10,074** (157).
+   - **Bar: at most 18,182 changes (1.25 × PFF's).** A model that followed every one of PFF's turnovers would land near PFF's count. The 25% margin allows a quick flip and flip-back on about one change in eight. Past that, flicker is resetting `possession_s` more often than real turnovers do.
+   - The default rule's 10,074 isn't the reference, because it misses changes, which is the problem being fixed.
+4. **At most two versions go through the gate: v1 and one revision.**
+   - A revision needs a spec change and a new ID first. It may be based only on the pooled diagnostic and gate tables, never on per-fold results or shot metrics.
+   - Report both attempts next to any 07 #6 result.
+   - If the revision fails too, learned possession stops, and stage 8's "big" verdict stands.
+5. **The four bars stay as they are, plus the churn bar.** Don't tighten them on a straight-line guess. 07 #6 takes about 10 min and answers the real question directly. Expect "in between" or "big" even if the gate passes. That's still worth one run, because it measures how much a better possession recovers.
+6. **Machine: the workstation CPU with `num_threads = 6`** (its physical cores), not 4. The M1 figure in 09:166 no longer applies to these fits, so update 09.
+7. **The τ-validation overlap is accepted as written in 03:109.**
+
+The user's reply numbered the machine answer as 5 and left 6 open. It's read here as the machine question (workstation), with the gate question left to the reviewer.
+
 ## Verified
 - **Default config key:** `config_key(StateConfig())` = `e737054b5d` (run 2026-09-30). `to_dict()` drops None values (`state.py:45-48`), so a new `possession_model: None` keeps the key. Old run.json `state_config` dicts lack the field and still load through `StateConfig(**…)` because of the dataclass default.
 - **Folds:** `folds.json` has 64 PFF matches in folds 12/13/13/13/13, frozen `pff: 2026-09-26`.
