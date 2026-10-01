@@ -8,7 +8,7 @@ v1 (`lgbm-v1-nested5x4-s1`) failed 03's gate on churn alone: 69,357 changes vs t
 - **Scoring:** `prediction.possession_gate`'s own helpers (`native_rows`, `scored_grid`, `match_rows`, `tally`, `churn`), so rows, buckets and churn are counted exactly as at the gate. Margin 0 / dwell 0 / no hold reproduces v1's stored `possession_team` exactly.
 - **Bars, relative:** the inner-OOF pool has 4× the gate's rows, so each bar is read as the ratio it encodes, on the same rows: overall ≤ 0.90 × default, first 3 s ≤ 0.85 × default, positives ≤ 1.00 × default, late rate ≤ default + 0.010, churn ≤ 1.25 × PFF.
 - **Proxy check:** unsmoothed inner-OOF lands where the gate did: churn 4.79 × PFF (gate 4.77), overall 0.539 × default (gate 0.535).
-- Script: `scripts/possession_smoothing_sweep.py`, about 6 min on the workstation.
+- Script: `scripts/possession_smoothing_sweep.py`, about 6 min on the workstation. It resets at each period start and calls away at p ≤ 0.5 − margin, exactly as 03's Revision v1h specs the rule. The first two runs carried the team across periods and used p < 0.5 − margin. That moved some numbers in the third or fourth decimal and changed no verdict. The table is from the rerun.
 
 ## Where the churn comes from (v1, inner-OOF)
 
@@ -26,17 +26,17 @@ v1 (`lgbm-v1-nested5x4-s1`) failed 03's gate on churn alone: 69,357 changes vs t
 | margin | dwell s | hold | overall | first 3 s | positives | late − default | churn | pass |
 |---|---|---|---|---|---|---|---|---|
 | 0 | 0 | no | 0.539 | 0.587 | 0.394 | −0.017 | 4.79 | no |
-| 0 | 0.5 | no | 0.619 | 0.778 | 0.402 | −0.022 | 1.68 | no |
-| 0.1 | 0.5 | no | 0.652 | 0.871 | 0.348 | −0.026 | 1.33 | no |
-| 0.2 | 0 | no | 0.563 | 0.708 | 0.311 | −0.025 | 1.60 | no |
+| 0 | 0.5 | no | 0.619 | 0.778 | 0.401 | −0.022 | 1.68 | no |
+| 0.1 | 0.5 | no | 0.652 | 0.871 | 0.347 | −0.026 | 1.33 | no |
+| 0.2 | 0 | no | 0.562 | 0.708 | 0.310 | −0.025 | 1.60 | no |
 | 0.2 | 0 | yes | 0.557 | 0.704 | 0.310 | −0.025 | 1.30 | no |
-| 0.2 | 0.2 | yes | 0.591 | 0.786 | 0.304 | −0.028 | 1.08 | yes |
-| 0.25 | 0 | no | 0.582 | 0.759 | 0.284 | −0.027 | 1.38 | no |
-| **0.25** | **0** | **yes** | **0.575** | **0.755** | **0.285** | **−0.028** | **1.10** | **yes** |
+| 0.2 | 0.2 | yes | 0.590 | 0.786 | 0.303 | −0.028 | 1.08 | yes |
+| 0.25 | 0 | no | 0.582 | 0.759 | 0.283 | −0.027 | 1.38 | no |
+| **0.25** | **0** | **yes** | **0.574** | **0.755** | **0.284** | **−0.028** | **1.10** | **yes** |
 | 0.25 | 0.2 | no | 0.626 | 0.843 | 0.282 | −0.029 | 1.20 | yes |
-| 0.3 | 0 | no | 0.611 | 0.818 | 0.252 | −0.030 | 1.19 | yes |
-| 0.3 | 0 | yes | 0.602 | 0.814 | 0.254 | −0.030 | 0.94 | yes |
-| 0.35 | 0 | yes | 0.642 | 0.882 | 0.246 | −0.033 | 0.81 | no |
+| 0.3 | 0 | no | 0.611 | 0.818 | 0.251 | −0.029 | 1.19 | yes |
+| 0.3 | 0 | yes | 0.602 | 0.814 | 0.253 | −0.030 | 0.94 | yes |
+| 0.35 | 0 | yes | 0.642 | 0.882 | 0.245 | −0.033 | 0.81 | no |
 
 Full grid in the script's CSV output.
 
