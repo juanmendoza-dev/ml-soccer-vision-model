@@ -255,12 +255,15 @@ def frame_features(nat: pl.DataFrame, pls: pl.DataFrame, bl: pl.DataFrame) -> pl
             .agg(
                 pl.col("dist").min().alias(f"near_{team}_m"),
                 pl.col("X").mean().alias(f"{team}_centroid_x"),
-                (pl.col("outfield") & (s * pl.col("X") > 0)).sum().alias(f"{team}_past_halfway"),
+                (pl.col("outfield") & (s * pl.col("X") > 0))
+                .sum()
+                .cast(pl.Float64)
+                .alias(f"{team}_past_halfway"),
                 outfield_x.max().alias(f"{team}_max_x"),
                 outfield_x.min().alias(f"{team}_min_x"),
-                pl.len().alias(f"{team}_visible_n"),
-                (pl.col("dist") <= 5).sum().alias(f"{team}_within5"),
-                (pl.col("dist") <= 10).sum().alias(f"{team}_within10"),
+                pl.len().cast(pl.Float64).alias(f"{team}_visible_n"),
+                (pl.col("dist") <= 5).sum().cast(pl.Float64).alias(f"{team}_within5"),
+                (pl.col("dist") <= 10).sum().cast(pl.Float64).alias(f"{team}_within10"),
                 pl.col("X").sort_by(*by_ball).first().alias(f"_{team}_nx"),
                 pl.col("Y").sort_by(*by_ball).first().alias(f"_{team}_ny"),
             )
@@ -462,3 +465,120 @@ def track_velocity(nat: pl.DataFrame, pls: pl.DataFrame) -> pl.DataFrame:
         )
         out = out.join(m, on="fi", how="left")
     return out
+
+
+SHAPES = ("centroid_x", "mean_vx_own", "past_halfway", "max_x", "min_x", "visible_n")
+BLOCK = [
+    "rule_team", "rule_carrier_age_s", "rule_candidate_team",
+    "ball_seen", "ball_age_s", "ball_x", "ball_y",
+    "ball_vx_02", "ball_vy_02", "ball_vx_1", "ball_vy_1",
+    "near_home_m", "near_away_m",
+    *(f"nearest_{t}_{w}_{r}" for t in ("home", "away") for w, _ in SHARE_W for r in ("any", "r15")),
+    "home_centroid_x", "away_centroid_x",
+    "home_mean_vx_own", "away_mean_vx_own",
+    "home_past_halfway", "away_past_halfway",
+    "home_max_x", "home_min_x", "away_max_x", "away_min_x",
+    "home_visible_n", "away_visible_n",
+    *(f"diff_{s}" for s in SHAPES),
+    "heads_home_03_m", "heads_home_05_m", "heads_away_03_m", "heads_away_05_m",
+    "heads_home_angle", "heads_away_angle",
+    "last_contact_team", "last_contact_age_s",
+    "home_within5", "home_within10", "away_within5", "away_within10",
+    "view_min_x", "view_max_x",
+]  # fmt: skip
+LAGS = (("lag05", 5), ("lag1", 10))  # grid ticks back
+COLUMNS = BLOCK + [f"{c}_{name}" for name, _ in LAGS for c in BLOCK]
+KEYS = ["period", "k", "t_s", "frame_id"]
+
+
+def extract(
+    frames: pl.DataFrame, objects: pl.DataFrame | pl.LazyFrame, native_fps: float
+) -> pl.DataFrame:
+    """One match's pfeat-v1 inputs: grid keys (period, k, t_s, frame_id), players_n (the
+    fallback condition, not a model input) and the 159 COLUMNS as Float32, NaN for missing."""
+    nat = native(frames, native_fps)
+    use = usable(objects)
+    g = grid(nat, native_fps)
+    pls, bl = players(nat, use), balls(nat, use)
+    per = (
+        rule_frames(frames, nat, use, pls, bl)
+        .join(frame_features(nat, pls, bl), on="fi")
+        .join(track_velocity(nat, pls), on="fi")
+    )
+    rows = (
+        g.hstack(ball_features(g, bl))
+        .hstack(contact_features(g, contacts(nat, pls, bl), native_fps))
+        .join(per, on="fi", how="left", maintain_order="left")
+    )
+    rows = rows.hstack(heads(rows, pls)).with_columns(
+        (pl.col(f"home_{s}") - pl.col(f"away_{s}")).alias(f"diff_{s}") for s in SHAPES
+    )
+    cur = rows.with_columns(
+        t_s=pl.col("t_us") / US,
+        *(pl.col(c).cast(pl.Float64).fill_null(np.nan) for c in BLOCK),
+    )
+    run = (
+        (pl.col("k") - pl.col("k").shift(1) != 1)
+        | (pl.col("seg") != pl.col("seg").shift(1))
+        | (pl.col("period") != pl.col("period").shift(1))
+    ).fill_null(True)
+    cur = cur.with_columns(run_k=pl.when(run).then("k").forward_fill())
+    lagged = []
+    for name, n in LAGS:
+        ok = pl.col("k") - n >= pl.col("run_k")
+        lagged += [
+            pl.when(ok).then(pl.col(c).shift(n)).otherwise(np.nan).alias(f"{c}_{name}")
+            for c in BLOCK
+        ]
+    return cur.with_columns(lagged).select(
+        *KEYS, "players_n", *(pl.col(c).cast(pl.Float32) for c in COLUMNS)
+    )
+
+
+def _block_mirror(sfx: str) -> list[pl.Expr]:
+    def c(name):
+        return pl.col(name + sfx)
+
+    def neg(e):
+        return 0.0 - e  # keeps 0 at +0.0
+
+    exprs = [
+        neg(c(n)).alias(n + sfx) for n in ("rule_team", "rule_candidate_team", "last_contact_team")
+    ]
+    exprs += [neg(c(n)).alias(n + sfx) for n in ("ball_x", "ball_vx_02", "ball_vx_1")]
+    pairs = [("near_home_m", "near_away_m")]
+    pairs += [
+        (f"nearest_home_{w}_{r}", f"nearest_away_{w}_{r}")
+        for w, _ in SHARE_W
+        for r in ("any", "r15")
+    ]
+    pairs += [
+        (f"home_{s}", f"away_{s}")
+        for s in ("mean_vx_own", "past_halfway", "visible_n", "within5", "within10")
+    ]
+    pairs += [(f"heads_home_{s}", f"heads_away_{s}") for s in ("03_m", "05_m", "angle")]
+    for h, a in pairs:
+        exprs += [c(a).alias(h + sfx), c(h).alias(a + sfx)]
+    exprs += [
+        neg(c("away_centroid_x")).alias("home_centroid_x" + sfx),
+        neg(c("home_centroid_x")).alias("away_centroid_x" + sfx),
+        neg(c("away_min_x")).alias("home_max_x" + sfx),
+        neg(c("away_max_x")).alias("home_min_x" + sfx),
+        neg(c("home_min_x")).alias("away_max_x" + sfx),
+        neg(c("home_max_x")).alias("away_min_x" + sfx),
+        neg(c("view_max_x")).alias("view_min_x" + sfx),
+        neg(c("view_min_x")).alias("view_max_x" + sfx),
+    ]
+    return exprs
+
+
+def mirror(df: pl.DataFrame) -> pl.DataFrame:
+    """03's transform M on every block: negate X and VX, swap home and away (team codes
+    negate, 0 stays 0), then recompute the home-minus-away differences. Ages, ball_seen,
+    Y and VY stay. Other columns pass through."""
+    for sfx in ("", *(f"_{name}" for name, _ in LAGS)):
+        df = df.with_columns(_block_mirror(sfx)).with_columns(
+            (pl.col(f"home_{s}{sfx}") - pl.col(f"away_{s}{sfx}")).alias(f"diff_{s}{sfx}")
+            for s in SHAPES
+        )
+    return df

@@ -357,3 +357,111 @@ def test_track_velocity_needs_an_unbroken_track():
     rows = [(f, "h1", "player", "home" if f < 2 else "away", 1.0 * f, 0.0) for f in range(4)]
     v = velocity_at(ten_hz(0.3), rows)
     assert missing(v["away_mean_vx_own"][2]) and v["away_mean_vx_own"][3] == pytest.approx(10.0)
+
+
+def random_scene(seed=0, fps=25.0, seconds=6.0, drop=(2.0, 2.3)):
+    """A messy synthetic match: random walks, dropouts, an unknown-team player, a missing
+    ball now and then, and a native gap (a feature segment break) in `drop`."""
+    rng = np.random.default_rng(seed)
+    n = int(seconds * fps)
+    times = [round(i / fps, 6) for i in range(n) if not drop[0] <= i / fps < drop[1]]
+    frames = make_frames(times)
+    ids = [(f"h{i}", "player", "home") for i in range(4)] + [
+        (f"a{i}", "player", "away") for i in range(4)
+    ]
+    ids += [("hk", "goalkeeper", "home"), ("ak", "goalkeeper", "away"), ("u0", "player", None)]
+    pos = {o: rng.uniform([-40, -25], [40, 25]) for o, _, _ in ids}
+    ball = np.array([0.0, 0.0])
+    rows, vis = [], []
+    for fid in range(len(times)):
+        ball = ball + rng.normal(0, 0.4, 2)
+        if rng.random() > 0.1:
+            rows.append((fid, "ball", "ball", None, *ball))
+            vis.append(rng.random() > 0.05)
+        for o, kind, team in ids:
+            pos[o] = pos[o] + rng.normal(0, 0.15, 2)
+            if o != "h0" or rng.random() > 0.2:
+                rows.append((fid, o, kind, team, *pos[o]))
+                vis.append(rng.random() > 0.1)
+    objects = objs(rows).with_columns(visible=pl.Series(vis))
+    return frames, objects, fps
+
+
+def swap_teams(objects):
+    return objects.with_columns(
+        x=-pl.col("x"),
+        team=pl.col("team").replace_strict({"home": "away", "away": "home"}, default=None),
+    )
+
+
+def assert_same(a, b, cols=pf.COLUMNS):
+    for c in cols:
+        x, y = a[c].to_numpy(), b[c].to_numpy()
+        np.testing.assert_allclose(x, y, rtol=1e-5, atol=1e-5, equal_nan=True, err_msg=c)
+
+
+def test_extract_shape_and_order():
+    frames, objects, fps = random_scene()
+    f = pf.extract(frames, objects, fps)
+    assert f.columns == [*pf.KEYS, "players_n", *pf.COLUMNS] and len(pf.COLUMNS) == 159
+    assert all(f[c].dtype == pl.Float32 for c in pf.COLUMNS)
+    assert f["k"].is_sorted() and f.height > 0
+
+
+def test_mirror_is_its_own_inverse():
+    frames, objects, fps = random_scene()
+    f = pf.extract(frames, objects, fps)
+    assert_same(pf.mirror(pf.mirror(f)), f)
+
+
+def test_mirrored_scene_gives_mirrored_features():
+    frames, objects, fps = random_scene(seed=3)
+    assert_same(
+        pf.extract(frames, swap_teams(objects), fps), pf.mirror(pf.extract(frames, objects, fps))
+    )
+
+
+def test_lag_blocks_copy_the_past_row_and_break_at_gaps():
+    frames, objects, fps = random_scene(seed=1)
+    f = pf.extract(frames, objects, fps).with_row_index("i")
+    by_k = {k: i for i, k in zip(f["i"], f["k"])}
+    for k in (35, 45, 59):  # frames resume at 2.32 s, so the run starts again at k = 24
+        row, back = f.row(by_k[k], named=True), f.row(by_k[k - 10], named=True)
+        assert row["ball_age_s_lag1"] == back["ball_age_s"] or np.isnan(back["ball_age_s"])
+        assert row["home_centroid_x_lag1"] == back["home_centroid_x"]
+    row = f.row(by_k[25], named=True)
+    assert all(np.isnan(row[f"{c}_lag05"]) for c in pf.BLOCK)  # 20 is before the break
+    assert np.isnan(f.row(by_k[28], named=True)["home_centroid_x_lag05"])  # 23 is skipped
+    assert not np.isnan(f.row(by_k[29], named=True)["home_centroid_x_lag05"])
+
+
+def test_nothing_after_t_changes_row_t():
+    frames, objects, fps = random_scene(seed=2)
+    cut = 3.0
+    later = frames.filter(pl.col("timestamp_s") > cut)["frame_id"]
+    changed = objects.with_columns(
+        x=pl.when(pl.col("frame_id").is_in(later.implode())).then(-pl.col("x") * 3).otherwise("x"),
+        visible=pl.when(pl.col("frame_id").is_in(later.implode()))
+        .then(~pl.col("visible"))
+        .otherwise("visible"),
+    )
+    a, b = (pf.extract(frames, o, fps).filter(pl.col("t_s") <= cut) for o in (objects, changed))
+    assert a.height == b.height
+    assert_same(a, b)
+    shorter = frames.filter(pl.col("timestamp_s") <= cut + 0.001)
+    c = pf.extract(shorter, objects, fps).filter(pl.col("t_s") <= cut)
+    assert_same(a, c)
+
+
+def test_invisible_objects_change_nothing():
+    frames, objects, fps = random_scene(seed=4)
+    hidden = ~pl.col("visible")
+    scrambled = objects.with_columns(
+        x=pl.when(hidden).then(pl.col("x") + 17.0).otherwise("x"),
+        team=pl.when(hidden).then(pl.lit("away")).otherwise("team"),
+        object_id=pl.when(hidden).then(pl.lit("zz")).otherwise("object_id"),
+        z=pl.lit(5.0),
+        vx=pl.lit(99.0),
+        player_id=pl.lit("p"),
+    )
+    assert_same(pf.extract(frames, objects, fps), pf.extract(frames, scrambled, fps))
