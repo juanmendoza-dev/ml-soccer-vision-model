@@ -121,9 +121,9 @@ The reduced W0 from the detection review (roadmap Phase 2): about 8 World Cup 20
 - **Sync, in this order.** The scoreboard clock gives the first pair to about ±1 s (period clock; the second half's starts at 45:00). Then refine it without vision's homography, which is what's being scored:
   1. a shot in the clip: its strike frame on video against the shot's `events.parquet` frame;
   2. else the edges of hand-marked cutaways against PFF's switches to and from all-`ESTIMATED` frames (when the footage is the world feed, they match to a frame);
-  3. else the clip is flagged `sync: coarse` and reported apart.
+  3. else the clip gets `sync_coarse: true` and is reported apart.
 
-  A second pair checks drift: if the offsets differ by more than 0.1 s, the source video's frame rate is wrong. The scorer also reports the offset, within ±1 s, that minimizes the median player error. That's a check only, never used to score.
+  A second pair checks drift: if the offsets differ by more than 0.1 s, the source video's frame rate is wrong and the scorer refuses the clip. `--offset-check` reports the offset, within ±1 s in PFF-frame steps, that minimizes the median player error on frames with geometry. That's a check only, never used to score.
 
 **Scored frames:** every clip frame outside the marks that lands within half a PFF frame (16.7 ms) of a PFF frame. The denominator never comes from vision's view gate.
 
@@ -147,7 +147,7 @@ The reduced W0 from the detection review (roadmap Phase 2): about 8 World Cup 20
 
 **Homography threshold sweep** (roadmap Phase 2, group 4). The sweep runs offline on the keypoint cache (03 Diagnostics), with no detector rerun. Swept: `ransac_m`, `min_inliers`, `max_homography_err_m`, `max_homography_jump_m`, `homography_max_age_s` and `homography_window`. The gate's `min_keypoint_conf` and `min_keypoints` aren't swept, because they change the view gate, which the replay doesn't simulate.
 - **Pick:** the highest pooled within-2 m with geometry missing ≤ 17%.
-- **Tie-break:** within 0.5 pt, the more permissive setting wins (05: a rejection costs more than 2–4 m of error).
+- **Tie-break:** within 0.5 pt, the setting with the least geometry missing wins (the permissive lean: 05 says a rejection costs more than 2–4 m of error). `python -m vision.bench --grid FIELD=V1,V2 ...` sweeps the cartesian grid and prints the pick.
 - Per-clip numbers for the pick and for the current defaults go in the review.
 
 ## Outputs
