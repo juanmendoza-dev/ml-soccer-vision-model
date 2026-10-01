@@ -381,6 +381,38 @@ xG at the carrier's current position is an approximation. The shot usually happe
 2. **v2: shooter-weighted.** If the node-level "who will shoot" head exists, P(goal) = Σ_i P(player i shoots) × xG(player i at t). Still uses positions at t, but covers runners who aren't on the ball.
 - A direct P(goal within H) model is out: even PFF + SkillCorner give ~200 goals with tracking, far too few to train it.
 
+### xG v1 build (spec 2026-10-01)
+Everything below fixes how xG is trained and applied so the StatsBomb side and the game-state side can't drift apart. The Wyscout baseline and SkillCorner check wait for those sources.
+
+**Inputs are the shot model's own columns.** xG reads eight columns that `prediction/features.py` already computes on every grid row: `ball_dist`, `ball_angle`, `lane_defenders`, `gk_in_lane`, `gk_off_line`, `gk_ball_dist`, `press_dist` and `def_within_5m`. They are already causal, VISIBLE-only and in the attacking frame. Defenders are the team not in possession, the keeper is the defending `goalkeeper`, and the location is the held ball. No new feature code runs at inference.
+- **Why the ball, not a carrier.** PFF has no `ball_carrier_id`, and stage 8 names a carrier on only about a quarter of alive frames. The shot model's own carrier is the visible attacker nearest the ball, so the ball is the shooter's position whenever someone is on it. StatsBomb's shot `location` is the shooter's position at the strike, so both sides are measured at the ball. A row without a held ball has no xG and no P(goal).
+
+**The training adapter (StatsBomb 360 → the same columns).** `prediction/xg.py` turns each StatsBomb shot with a 360 frame into one row of those eight columns, using `features.py`'s own `goal_distance`, `goal_angle`, `in_lane`, `GOAL_X` and `POST_Y`. No second geometry.
+- **Coordinates, anchored at the goal.** StatsBomb's 120 × 80 yards always attack +x, with origin at the top-left, so +y is the shooter's left. That makes `X = 52.5 − (120 − x) × 0.9144` and `Y = (40 − y) × 0.9144`, in meters from the goal, not stretched to 105 × 68. The 8-yard goal comes out 7.32 m wide, as in `features.py`, and the penalty spot 11 m out. A stretch would get both wrong.
+- **Players.** 360 `freeze_frame` entries with `teammate = False` are defenders, `keeper = True` among them is the keeper, and `actor` is the shooter. Teammates count for nothing here, as in the eight columns. The frame already holds only on-camera players, like VISIBLE. `visible_area` is never a feature, since `view_polygon` is null on PFF (03).
+- **Parity test.** A hand-built frame goes through `features.py` on a synthetic game state and through the adapter as the equivalent StatsBomb record; the eight columns match to float tolerance. A test converts the posts and the penalty spot.
+
+**Same shot population as the labels.** P(shot) counts open-play shots outside set-play phases (02, Labels), so xG trains on the closest StatsBomb match:
+- `shot.type = Open Play` (drops penalties, direct free kicks and corners, kick-offs)
+- not a set-play phase: no corner, and no free kick taken at least 17.5 m past halfway in the attacking direction, by the shooter's team in the same period within the 10 s before the shot. This is 02's PFF proxy, read from StatsBomb's own pass events (`pass.type` Corner / Free Kick, their location and timestamp).
+- men's competitions with 360 data, minus FIFA World Cup 2022 (competition 43, season 106): the same 64 matches as PFF.
+
+**Model.** LightGBM binary on the eight columns with plain log loss (Class imbalance). Missing values stay NaN; a keeper off camera is NaN `gk_off_line`. Parameters, fixed and not searched: learning rate 0.05, 7 leaves, at least 100 shots per leaf, feature and bagging fraction 0.8 every round, L2 1, seed 20260927, `deterministic`. At most 1,000 rounds, early stopping after 50 on held-out matches.
+- **Baseline.** Logistic regression on `ball_dist` and `ball_angle` (the location-only xG).
+- **CV.** 5 folds grouped by match: `numpy.random.default_rng(20260927)` permutes the sorted match IDs and deals them round-robin. Inside each training split the shot model's own `LGBMModel` holds out 15% of matches for early stopping and refits on the whole split; the baseline is `prediction.floor.LogisticFloor`. Both read the shot table under the shot model's column names, so no second training loop exists. Report pooled and per-fold log loss and Brier, calibration in 10 quantile bins, and the same for the baseline. `statsbomb_xg` is shown as a reference column, never a target or input: it uses body part.
+- **Choice, fixed now.** The production xG is LightGBM if its pooled out-of-fold log loss beats the baseline's and it wins on at least 4 of 5 folds; otherwise the baseline. Nothing else is tuned.
+- **Final model.** Fit the chosen model on every training shot the same way as inside a fold (`LGBMModel.fit`: its own 15% match hold-out for early stopping, then a refit on all of them). Store it under `data/models/xg/xg-v1/` as `model.txt` (or coefficients), plus a `manifest.json`: shot and match IDs, the population filter, the parameters, CV results, the source file hashes and the git commit.
+
+**Checks on held-out data (report only, never retrain).**
+1. **World Cup 2022 on StatsBomb 360.** The same tournament as PFF, never trained on. Same population filter. Log loss, Brier, calibration and goals vs summed xG, next to `statsbomb_xg` on the same shots.
+2. **PFF on game state.** For each PFF open-play shot outside set-play phases, read the eight columns from the provider-possession `features_v1_held` cache at the latest grid row at or before the shot's frame, and apply the final model. Report goals vs summed xG, calibration in 5 bins (too few goals for 10), and how often the row has no held ball. PFF's ball at the shot frame is a different measurement from StatsBomb's location, which is the point of this check.
+
+**P(goal) v1.** `P(goal within H)(t) = P(shot within H)(t) × xG(t)` on every scored row with a held ball. P(shot) is a run's out-of-fold prediction, so P(goal) is out of fold too. xG never saw World Cup 2022.
+- `python -m prediction.pgoal <run>` writes `pgoal.parquet` (the run's rows plus `xg` and `p_goal`) and `pgoal.md` into the run folder.
+- Scored against 05's `label_goal_h5` / `label_goal_h3`: PR-AUC, calibration (pooled bins, then summed P(goal) vs goals), and next to the same with xG alone and P(shot) alone. Descriptive: there's no bar to pass yet.
+- **The v1 underestimate.** For every open-play shot, xG(t) at 5, 2 and 1 s before it vs xG at the shot's own grid row: the median ratio, and how it splits by goal vs no goal. That's how much "xG at the ball now" undershoots the shot that follows, which v2 is for.
+- The first run is on `lgbm-held-2026-09-27` (provider possession, the baseline everything else compares to).
+
 ## Class imbalance
 - **No class weights and no focal loss** (decided 2026-09-28; this replaces "weighted or focal loss"). Plain log loss keeps p calibrated, which the alarms and P(goal) = P(shot) × xG both need. LightGBM showed it works at a ~2.5% base rate: the top decile predicts 0.186 and sees 0.185. Reweighting inflates p, and undoing that is another calibration step to get right. The GNNs use the same loss.
 - Evaluate with PR-AUC, not accuracy.
