@@ -29,3 +29,20 @@ rm -rf raw/metrica/repo/.git
 ```
 
 Games 1–2 (CSV) are converted with `python -m converters.metrica`. Game 3 (EPTS + JSON) isn't converted yet.
+
+## raw/statsbomb/ — StatsBomb open data (360)
+xG training (05 "xG model"). Open data under StatsBomb's licence (https://github.com/statsbomb/open-data): credit StatsBomb if anything is published.
+
+```
+python scripts/fetch_statsbomb.py
+```
+
+Fetches `competitions.json`, the match lists of every men's competition-season with 360 data, and `events/` plus `three-sixty/` for each match whose 360 status is available (about 3.5 GB). Files on disk are kept, so a rerun fetches only what's missing. World Cup 2022 is downloaded too; training drops it (05, Leakage).
+
+```
+raw/statsbomb/
+├── competitions.json
+├── matches/{competition_id}/{season_id}.json
+├── events/{match_id}.json
+└── three-sixty/{match_id}.json
+```
