@@ -89,7 +89,7 @@ def ten_hz(seconds, home_pos=True):
     return make_frames([round(i / 10, 6) for i in range(int(seconds * 10) + 1)], home_pos=home_pos)
 
 
-def ball_at(frames, rows, home_pos=True):
+def ball_at(frames, rows):
     nat = pf.native(frames, FPS)
     g = pf.grid(nat, FPS)
     return g, pf.ball_features(g, pf.balls(nat, pf.usable(objs(rows))))
@@ -122,7 +122,7 @@ def test_ball_velocity_spans_and_direction():
 def test_ball_velocity_needs_no_long_gap_between_sightings():
     frames_seen = [0, 1, *range(7, 11)]  # 0.1 -> 0.7 s is a 0.6 s hole
     rows = [(f, "ball", "ball", None, float(f), 0.0) for f in frames_seen]
-    g, b = ball_at(ten_hz(1), rows)
+    _, b = ball_at(ten_hz(1), rows)
     assert missing(b["ball_vx_1"][10])
     assert b["ball_vx_02"][10] == pytest.approx(10.0)
 
@@ -170,3 +170,87 @@ def test_rule_candidate_is_absent_without_a_ball_or_out():
     assert r["rule_candidate_team"][0] == 0.0  # present, team unknown
     assert missing(r["rule_candidate_team"][2])  # no ball: no stale candidate
     assert missing(r["rule_candidate_team"][3])  # ball out
+
+
+def frame_at(rows, frames=None, home_pos=True):
+    frames = frames if frames is not None else make_frames([0.0], home_pos=home_pos)
+    nat = pf.native(frames, FPS)
+    use = pf.usable(objs(rows))
+    return pf.frame_features(nat, pf.players(nat, use), pf.balls(nat, use)).sort("fi")
+
+
+SCENE = [
+    (0, "ball", "ball", None, 0.0, 0.0),
+    (0, "h1", "player", "home", 3.0, 4.0),  # 5 m
+    (0, "h2", "player", "home", 0.0, 0.0),  # exactly on halfway, on the ball
+    (0, "hk", "goalkeeper", "home", -50.0, 0.0),
+    (0, "a1", "player", "away", -8.0, 0.0),
+    (0, "u1", "player", None, 60.0, 0.0),
+]
+
+
+def test_frame_features_shape_pressure_and_view():
+    f = frame_at(SCENE).row(0, named=True)
+    assert f["near_home_m"] == 0.0 and f["near_away_m"] == 8.0
+    assert f["home_centroid_x"] == pytest.approx(-47 / 3)  # keepers count for the centroid
+    assert f["home_past_halfway"] == 1  # h1 only: h2 is on halfway, the keeper isn't outfield
+    assert f["away_past_halfway"] == 1  # away attacks -X
+    assert (f["home_max_x"], f["home_min_x"]) == (3.0, 0.0)  # keeper excluded
+    assert f["home_visible_n"] == 3 and f["away_visible_n"] == 1 and f["players_n"] == 5
+    assert (f["home_within5"], f["home_within10"], f["away_within5"], f["away_within10"]) == (
+        2,
+        2,
+        0,
+        1,
+    )
+    assert (f["view_min_x"], f["view_max_x"]) == (-50.0, 60.0)  # unknown team counts for the view
+
+
+def test_frame_features_rotate_and_handle_missing_ball():
+    f = frame_at(SCENE, home_pos=False).row(0, named=True)
+    assert (f["home_max_x"], f["home_min_x"]) == (0.0, -3.0)
+    assert f["away_past_halfway"] == 0 and f["home_past_halfway"] == 0
+    f = frame_at(SCENE[1:]).row(0, named=True)
+    assert f["near_home_m"] is None and f["home_within5"] is None
+    assert f["home_visible_n"] == 3 and f["home_centroid_x"] == pytest.approx(-47 / 3)
+    f = frame_at([(0, "ball", "ball", None, 0.0, 0.0)]).row(0, named=True)
+    assert f["home_visible_n"] == 0 and f["home_within5"] == 0 and f["home_centroid_x"] is None
+
+
+def test_heads_extrapolate_from_past_sightings_only():
+    rows = []
+    for f in range(4):
+        rows.append((f, "ball", "ball", None, 1.0 * f, 0.0))  # 10 m/s in x
+        rows.append((f, "h1", "player", "home", 8.0, 0.0))
+        rows.append((f, "a1", "player", "away", 3.0, 5.0))
+    frames = make_frames([0.0, 0.1, 0.2, 0.3])
+    nat = pf.native(frames, FPS)
+    g = pf.grid(nat, FPS)
+    use = pf.usable(objs(rows))
+    pls, bl = pf.players(nat, use), pf.balls(nat, use)
+    rows_g = g.hstack(pf.ball_features(g, bl)).join(pf.frame_features(nat, pls, bl), on="fi")
+    h = pf.heads(rows_g, pls).row(3, named=True)  # ball at 3 m
+    assert h["heads_home_03_m"] == pytest.approx(2.0)  # point (6, 0)
+    assert h["heads_home_05_m"] == pytest.approx(0.0)  # point (8, 0)
+    assert h["heads_away_03_m"] == pytest.approx(np.hypot(3, 5))
+    assert h["heads_home_angle"] == pytest.approx(0.0)
+    assert h["heads_away_angle"] == pytest.approx(np.pi / 2)
+    assert missing(pf.heads(rows_g, pls).row(0, named=True)["heads_home_03_m"])  # no velocity yet
+
+
+def test_heads_angle_needs_a_moving_ball():
+    rows = []
+    for f in range(3):
+        rows.append((f, "ball", "ball", None, 0.01 * f, 0.0))  # 0.1 m/s
+        rows.append((f, "h1", "player", "home", 8.0, 0.0))
+    frames = make_frames([0.0, 0.1, 0.2])
+    nat = pf.native(frames, FPS)
+    g = pf.grid(nat, FPS)
+    use = pf.usable(objs(rows))
+    pls, bl = pf.players(nat, use), pf.balls(nat, use)
+    rows_g = g.hstack(pf.ball_features(g, bl)).join(pf.frame_features(nat, pls, bl), on="fi")
+    h = pf.heads(rows_g, pls).row(2, named=True)
+    assert missing(h["heads_home_angle"]) and h["heads_home_03_m"] == pytest.approx(
+        8.0 - 0.02 - 0.03
+    )
+    assert missing(h["heads_away_03_m"])  # nobody on away

@@ -228,3 +228,106 @@ def ball_features(g: pl.DataFrame, bl: pl.DataFrame) -> pl.DataFrame:
             cols[f"ball_vx_{name}"] = np.where(ok, (bX[ic] - bX[first]) / (span / US), np.nan)
             cols[f"ball_vy_{name}"] = np.where(ok, (bY[ic] - bY[first]) / (span / US), np.nan)
     return pl.DataFrame(cols)
+
+
+def dist(x: str, y: str) -> pl.Expr:
+    return ((pl.col("X") - pl.col(x)) ** 2 + (pl.col("Y") - pl.col(y)) ** 2).sqrt()
+
+
+def frame_features(nat: pl.DataFrame, pls: pl.DataFrame, bl: pl.DataFrame) -> pl.DataFrame:
+    """Per native frame u: nearest distance, shape, pressure and view features, the
+    team's nearest player to the ball (for the heading angle) and players_n (every usable
+    player, unknown team included: the fallback condition, not a model input)."""
+    pb = pls.join(bl.select("fi", "bX", "bY"), on="fi", how="left").with_columns(
+        dist=dist("bX", "bY")
+    )
+    out = (
+        nat.select("fi")
+        .join(bl.select("fi", ball=pl.lit(True)), on="fi", how="left")
+        .with_columns(pl.col("ball").fill_null(False))
+    )
+    for team, s in (("home", 1.0), ("away", -1.0)):
+        outfield_x = pl.col("X").filter("outfield")
+        by_ball = pl.col("dist"), pl.col("object_id")
+        agg = (
+            pb.filter(pl.col("team") == team)
+            .group_by("fi")
+            .agg(
+                pl.col("dist").min().alias(f"near_{team}_m"),
+                pl.col("X").mean().alias(f"{team}_centroid_x"),
+                (pl.col("outfield") & (s * pl.col("X") > 0)).sum().alias(f"{team}_past_halfway"),
+                outfield_x.max().alias(f"{team}_max_x"),
+                outfield_x.min().alias(f"{team}_min_x"),
+                pl.len().alias(f"{team}_visible_n"),
+                (pl.col("dist") <= 5).sum().alias(f"{team}_within5"),
+                (pl.col("dist") <= 10).sum().alias(f"{team}_within10"),
+                pl.col("X").sort_by(*by_ball).first().alias(f"_{team}_nx"),
+                pl.col("Y").sort_by(*by_ball).first().alias(f"_{team}_ny"),
+            )
+        )
+        out = out.join(agg, on="fi", how="left").with_columns(
+            pl.col(f"{team}_past_halfway", f"{team}_visible_n").fill_null(0),
+            *(
+                pl.when("ball").then(pl.col(c).fill_null(0))
+                for c in (f"{team}_within5", f"{team}_within10")
+            ),
+        )
+    view = (
+        pl.concat([pls.select("fi", "X"), bl.select("fi", X="bX")])
+        .group_by("fi")
+        .agg(view_min_x=pl.col("X").min(), view_max_x=pl.col("X").max())
+    )
+    count = pls.group_by("fi").agg(players_n=pl.len())
+    return (
+        out.join(view, on="fi", how="left")
+        .join(count, on="fi", how="left")
+        .with_columns(pl.col("players_n").fill_null(0))
+        .drop("ball")
+    )
+
+
+HEAD_S = (("03", 0.3), ("05", 0.5))
+STILL_SPEED = 0.5  # still_speed: under it the direction is jitter
+
+
+def heads(rows: pl.DataFrame, pls: pl.DataFrame) -> pl.DataFrame:
+    """heads_<team>_03_m / _05_m and heads_<team>_angle per grid row. rows: fi, ball_seen,
+    ball_x/y, ball_vx_02/vy_02 and the frame's _<team>_nx/_ny, in grid order."""
+    r = rows.with_row_index("row")
+    moving = r.filter(pl.col("ball_seen") == 1, pl.col("ball_vx_02").is_not_nan())
+    out = r.select("row")
+    for name, h in HEAD_S:
+        pt = moving.select(
+            "row",
+            "fi",
+            hx=pl.col("ball_x") + h * pl.col("ball_vx_02"),
+            hy=pl.col("ball_y") + h * pl.col("ball_vy_02"),
+        )
+        d = (
+            pt.join(pls.select("fi", "team", "X", "Y"), on="fi")
+            .filter(pl.col("team").is_in(["home", "away"]))
+            .with_columns(dist=dist("hx", "hy"))
+            .group_by("row")
+            .agg(
+                *(
+                    pl.col("dist").filter(pl.col("team") == t).min().alias(f"heads_{t}_{name}_m")
+                    for t in ("home", "away")
+                )
+            )
+        )
+        out = out.join(d, on="row", how="left")
+    vx, vy = pl.col("ball_vx_02"), pl.col("ball_vy_02")
+    speed = (vx**2 + vy**2).sqrt()
+    for t in ("home", "away"):
+        dx, dy = pl.col(f"_{t}_nx") - pl.col("ball_x"), pl.col(f"_{t}_ny") - pl.col("ball_y")
+        cos = (vx * dx + vy * dy) / (speed * (dx**2 + dy**2).sqrt())
+        r = r.with_columns(
+            pl.when(pl.col("ball_seen") == 1, vx.is_not_nan(), speed >= STILL_SPEED)
+            .then(cos.clip(-1.0, 1.0).arccos())
+            .alias(f"heads_{t}_angle")
+        )
+    return (
+        out.join(r.select("row", "heads_home_angle", "heads_away_angle"), on="row")
+        .sort("row")
+        .drop("row")
+    )
