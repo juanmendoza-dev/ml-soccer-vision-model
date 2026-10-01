@@ -234,3 +234,24 @@ def test_main_draws_only_the_processed_range(tmp_path, capsys):
     assert "ball with a usable mapping on 15" in capsys.readouterr().out
     video.main([*args, "--frames", "10-99"])
     assert int(cv2.VideoCapture(str(out)).get(cv2.CAP_PROP_FRAME_COUNT)) == 5
+
+
+def test_a_detection_jump_draws_the_ring_but_no_arrow_or_trail_across_it(tmp_path):
+    _, cache, gs = write_run(tmp_path)
+    objs = pl.read_parquet(gs / "objects.parquet")
+    jump = pl.col("frame_id") == 9
+    objs.with_columns(
+        x=pl.when(jump).then(pl.col("x") + 25.0).otherwise("x"),
+        vx=pl.when(jump).then(250.0).otherwise("vx"),
+    ).write_parquet(gs / "objects.parquet")
+    bv = video.BallVideo(cache, gs)
+    blank = np.full((H_PX, W, 3), (40, 110, 40), np.uint8)
+    for f in (9, 10):  # the jump frame, and the frame after it
+        d = bv.ball_det[f]
+        center = (round((d["x1"] + d["x2"]) / 2), round((d["y1"] + d["y2"]) / 2))
+        want = blank.copy()
+        tip = None
+        if f == 10:
+            tip = video.as_point(screen(bv.ball_xy(10)["x"] + ov.ARROW_S * 4.0, 0.0), W, H_PX)
+        ov.ball_marker(want, center, max(round((d["x2"] - d["x1"]) * 0.9), 6), "solid", tip)
+        assert np.array_equal(bv.draw(blank, f), want)
