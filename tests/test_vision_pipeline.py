@@ -639,3 +639,31 @@ def test_filled_box_off_screen_is_written_not_visible(tmp_path):
     got = pl.read_parquet(out / "objects.parquet").sort("object_id")
     assert got["visible"].to_list() == [True, True, False]
     assert got.filter(~pl.col("visible"))["interpolated"].all()  # 02: not visible => interpolated
+
+
+def test_run_starts_at_start_s(tmp_path, monkeypatch):
+    import json
+
+    from vision import run as vision_run
+
+    video = tmp_path / "clip.avi"
+    out = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"MJPG"), FPS, (W, H))
+    for i in range(30):
+        out.write(render(i))
+    out.release()
+    monkeypatch.setattr(
+        vision_run,
+        "build_stages",
+        lambda *a: Stages(FakeDetector(), FakeTracker(), FakeKeypoints(), ShirtColorTeams()),
+    )
+    vision_run.main(
+        [
+            *("--video", str(video), "--weights-dir", str(tmp_path), "--match-id", "clip"),
+            *("--start-s", "1.0", "--gamestate-dir", str(tmp_path / "gs")),
+            *("--cache-dir", str(tmp_path / "cache")),
+        ]
+    )
+    run = json.loads((tmp_path / "cache" / "clip" / "run.json").read_text())
+    assert run["video_start_s"] == 1.0
+    frames = pl.read_parquet(tmp_path / "gs" / "clip" / "frames.parquet")
+    assert frames.height == 20 and frames["timestamp_s"][0] == 0.0

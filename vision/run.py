@@ -61,6 +61,12 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--detect-every", type=int, default=1)
     ap.add_argument("--fps", type=float, help="override when the video reports none or a bad one")
     ap.add_argument("--max-frames", type=int)
+    ap.add_argument(
+        "--start-s",
+        type=float,
+        default=0.0,
+        help="skip this many seconds of video first (t = 0 there)",
+    )
     ap.add_argument("--gamestate-dir", type=Path, default=Path("data/gamestate"))
     ap.add_argument("--cache-dir", type=Path, default=Path("data/vision_cache"))
     args = ap.parse_args(argv)
@@ -71,6 +77,11 @@ def main(argv: list[str] | None = None) -> None:
     fps = args.fps or cap.get(cv2.CAP_PROP_FPS)
     if not (math.isfinite(fps) and fps > 0):
         raise SystemExit(f"{args.video} reports fps {fps}; pass --fps")
+    # frame-exact skip: grab() without decoding, since seeking by time can land on a keyframe
+    skip = round(args.start_s * fps)
+    for _ in range(skip):
+        if not cap.grab():
+            raise SystemExit(f"{args.video} ends before --start-s {args.start_s}")
     try:
         config = VisionConfig(
             detect_every=args.detect_every,
@@ -94,6 +105,7 @@ def main(argv: list[str] | None = None) -> None:
             "video_sha256": sha256(args.video),
             "weights": {p.name: sha256(p) for p in sorted(args.weights_dir.glob("*.pt"))},
             "device": args.device,
+            "video_start_s": skip / fps,  # the source video's time at t = 0
         },
     )
 
