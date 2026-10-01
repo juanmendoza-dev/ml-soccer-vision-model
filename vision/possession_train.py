@@ -12,12 +12,17 @@ outer_0. A sealed manifest is never rewritten: a change needs a new model ID.
 --pilot trains (or reuses) outer_0 only, times extraction, the 2D rule and inference on
 the largest match, and projects the whole stage against the overnight budget. It
 decides on time and memory only and never looks at agreement.
+
+A derived ID (03 Revision v1h, `--model-id lgbm-v1h-nested5x4-s1`) trains nothing: it copies
+its source's sealed trainings byte for byte and seals a manifest equal to the source's apart
+from model_id, the output rule and derived_from.
 """
 
 import argparse
 import contextlib
 import hashlib
 import json
+import shutil
 import sys
 import tempfile
 import time
@@ -30,6 +35,7 @@ from vision import possession_model as pm
 from vision.state import StateConfig
 
 STRIDES = {f"lgbm-v1-nested5x4-s{s}": s for s in (1, 2, 4)}
+DERIVED = {"lgbm-v1h-nested5x4-s1": ("lgbm-v1-nested5x4-s1", pm.HYSTERESIS)}
 FOLDS_PATH = Path("data/splits/folds.json")
 MODELS_DIR = Path("data/models/possession")
 FOLD_SIZES = [12, 13, 13, 13, 13]
@@ -227,6 +233,38 @@ def run(
     return man
 
 
+def derive(model_id: str, models_dir: Path = MODELS_DIR, log=print) -> dict:
+    """Seal a derived model (no training): the source's fits/<training>/ copied byte for
+    byte, and its manifest with this model_id, the output rule and derived_from."""
+    source, output = DERIVED[model_id]
+    src_dir, model_dir = models_dir / source, models_dir / model_id
+    path = model_dir / pm.MANIFEST
+    if path.exists() and json.loads(path.read_text()).get("sealed"):
+        raise ValueError(f"{path} is sealed; a change needs a new model id")
+    src_path = src_dir / pm.MANIFEST
+    base = json.loads(src_path.read_text())
+    pm.check_manifest(base)
+    for name, tr in base["trainings"].items():
+        dst = model_dir / tr["dir"]
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in ("model.txt", "fit.json"):
+            shutil.copyfile(src_dir / tr["dir"] / f, dst / f)
+        if pf.sha256_file(dst / "model.txt") != tr["model_sha256"]:
+            raise ValueError(f"{dst / 'model.txt'}: copy differs from {source}'s manifest")
+        if pf.sha256_file(dst / "fit.json") != tr["fit_sha256"]:
+            raise ValueError(f"{dst / 'fit.json'}: copy differs from {source}'s manifest")
+    man = base | {
+        "model_id": model_id,
+        "output": output,
+        "derived_from": {"model_id": source, "manifest_sha256": pf.sha256_file(src_path)},
+    }
+    pm.check_manifest(man)
+    pm.check_derived(model_dir, man)
+    write_manifest(model_dir, man)
+    log(f"sealed {path}: {source}'s {len(man['trainings'])} trainings, output {output['rule']}")
+    return man
+
+
 def native_frames(m: str, gamestate_dir: Path) -> int:
     return pl.scan_parquet(gamestate_dir / m / "frames.parquet").select(pl.len()).collect().item()
 
@@ -326,7 +364,7 @@ def pilot(
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument("--model-id", required=True, choices=sorted(STRIDES))
+    ap.add_argument("--model-id", required=True, choices=sorted(STRIDES | DERIVED))
     ap.add_argument("--only", nargs="+", help="train just these (no determinism check, no seal)")
     ap.add_argument("--pilot", action="store_true", help="outer_0 plus timings and projection")
     ap.add_argument("--gamestate", type=Path, default=pf.GAMESTATE_DIR)
@@ -338,6 +376,11 @@ def main(argv: list[str]) -> int:
     def log(msg):
         print(msg, flush=True)
 
+    if a.model_id in DERIVED:
+        if a.pilot or a.only:
+            ap.error(f"{a.model_id} is derived: nothing to train or pilot")
+        derive(a.model_id, a.models, log)
+        return 0
     with keep_awake():
         if a.pilot:
             out = pilot(a.model_id, a.gamestate, a.cache, a.models, a.folds, log)
