@@ -20,6 +20,7 @@ from vision.types import (
     PLAYER,
     Box,
     Detection,
+    KeypointCall,
     Keypoints,
     Track,
     VisionFrame,
@@ -135,6 +136,7 @@ class VisionPipeline:
 
         n = self._n
         self._n += 1
+        self._kp_calls: list[KeypointCall] = []
 
         kp_found = None
         h_err = None
@@ -152,7 +154,17 @@ class VisionPipeline:
         if before == MATCH and view == OTHER:
             self._off_since = t
         if view == OTHER:
-            return VisionFrame(frame_id, t, OTHER, grass, kp_found, False, None, None)
+            return VisionFrame(
+                frame_id,
+                t,
+                OTHER,
+                grass,
+                kp_found,
+                False,
+                None,
+                None,
+                keypoint_calls=self._kp_calls,
+            )
         if before == OTHER:
             self._enter_match(t)
             # don't wait for the next keypoint frame
@@ -212,7 +224,19 @@ class VisionPipeline:
         if h_ok:
             corners = project(H, [[0, 0], [w, 0], [w, h], [0, h]])
             polygon = [float(v) for v in to_02(corners, cfg.home_attacks_tv_right_p1).ravel()]
-        return VisionFrame(frame_id, t, MATCH, grass, kp_found, h_ok, h_err, polygon, objects, ball)
+        return VisionFrame(
+            frame_id,
+            t,
+            MATCH,
+            grass,
+            kp_found,
+            h_ok,
+            h_err,
+            polygon,
+            objects,
+            ball,
+            self._kp_calls,
+        )
 
     # --- homography (stage 4) --------------------------------------------
 
@@ -222,6 +246,7 @@ class VisionPipeline:
         small error, and then only if it agrees with the one in use (HomographyFilter)."""
         cfg = self.config
         kp = self.stages.keypoints.detect(image)
+        self._kp_calls.append(KeypointCall(t, use, self._segment, kp))
         fit = fit_homography(kp.xy, kp.conf, cfg.min_keypoint_conf, cfg.ransac_m)
         self._kp_seen = fit.n_confident
         if (

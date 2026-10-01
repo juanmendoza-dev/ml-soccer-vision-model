@@ -210,6 +210,22 @@ def test_detections_cache_has_kit_clusters(run):
     assert det.filter(pl.col("class") == REFEREE)["team_cluster"].to_list() == [None]
 
 
+def test_keypoints_cache_has_every_stage4_call(run):
+    _, _, cache, _ = run
+    kp = pl.read_parquet(cache / "keypoints.parquet")
+    first = kp.filter(pl.col("frame_id") <= 10)
+    # probes on green frames before the switch, then a used fit on entering match
+    assert first["frame_id"].to_list() == [0, 5, 10, 10]
+    assert first["used"].to_list() == [False, False, False, True]
+    assert first["segment"].to_list() == [-1, -1, -1, 0]
+    assert kp.filter((pl.col("frame_id") >= 70) & pl.col("used"))["segment"].unique().to_list() == [
+        1
+    ]
+    row = kp.row(3, named=True)
+    xy = np.column_stack([row["kp_x"], row["kp_y"]])
+    assert np.allclose(xy, project(CAMERA, TEMPLATE)) and len(row["kp_conf"]) == 32
+
+
 def test_debug_renderer_draws_the_run(run, tmp_path):
     from demo.debug import main as debug_main
 
@@ -398,6 +414,8 @@ def test_run_with_no_detections_writes_typed_caches(tmp_path):
     det = pl.read_parquet(tmp_path / "cache" / "empty" / "detections.parquet")
     assert det.height == 0 and "frame_id" in det.columns
     det.partition_by("frame_id", as_dict=True)  # the debug renderer does this
+    kp = pl.read_parquet(tmp_path / "cache" / "empty" / "keypoints.parquet")
+    assert kp.height == 0 and kp.schema["kp_x"] == pl.List(pl.Float64)
 
 
 def test_writer_reports_validation(run, tmp_path):

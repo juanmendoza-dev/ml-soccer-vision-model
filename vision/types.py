@@ -40,6 +40,16 @@ class Keypoints:
 
 
 @dataclass(frozen=True)
+class KeypointCall:
+    """One stage 4 run, as the keypoints cache stores it (03 Diagnostics)."""
+
+    t: float
+    used: bool  # allowed into the homography filter (match view); probes in other aren't
+    segment: int  # match segment; the filter resets when it changes
+    keypoints: Keypoints
+
+
+@dataclass(frozen=True)
 class VisionObject:
     object_id: str
     cls: str  # detector class
@@ -66,3 +76,4 @@ class VisionFrame:
     view_polygon: list[float] | None
     objects: list[VisionObject] = field(default_factory=list)  # players, goalkeepers, referees
     ball: VisionObject | None = None
+    keypoint_calls: list[KeypointCall] = field(default_factory=list)  # keypoints cache only

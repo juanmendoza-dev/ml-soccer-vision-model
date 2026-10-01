@@ -39,6 +39,16 @@ VIEW_SCHEMA = {
     "grass_share": pl.Float64,
     "keypoints_found": pl.Int64,
 }
+KEYPOINTS_SCHEMA = {
+    "match_id": pl.String,
+    "frame_id": pl.Int64,
+    "t": pl.Float64,
+    "used": pl.Boolean,
+    "segment": pl.Int64,
+    "kp_x": pl.List(pl.Float64),
+    "kp_y": pl.List(pl.Float64),
+    "kp_conf": pl.List(pl.Float64),
+}
 
 
 def on_screen(o) -> bool:
@@ -74,6 +84,7 @@ class GameStateWriter:
         self._objects: list[dict] = []
         self._detections: list[dict] = []
         self._views: list[dict] = []
+        self._keypoints: list[dict] = []
         self._started = time.time()
         self.errors: list[str] = []  # 02 validator output, set by close()
 
@@ -104,6 +115,20 @@ class GameStateWriter:
                 "keypoints_found": vf.keypoints_found,
             }
         )
+        for call in vf.keypoint_calls:
+            kp = call.keypoints
+            self._keypoints.append(
+                {
+                    "match_id": self.match_id,
+                    "frame_id": vf.frame_id,
+                    "t": call.t,
+                    "used": call.used,
+                    "segment": call.segment,
+                    "kp_x": kp.xy[:, 0].tolist(),
+                    "kp_y": kp.xy[:, 1].tolist(),
+                    "kp_conf": kp.conf.tolist(),
+                }
+            )
         for o in [*vf.objects, *([vf.ball] if vf.ball else [])]:
             self._detections.append(
                 {
@@ -233,6 +258,9 @@ class GameStateWriter:
                 self.cache / "detections.parquet"
             )
             pl.DataFrame(self._views, schema=VIEW_SCHEMA).write_parquet(self.cache / "view.parquet")
+            pl.DataFrame(self._keypoints, schema=KEYPOINTS_SCHEMA).write_parquet(
+                self.cache / "keypoints.parquet"
+            )
 
         # An all-other clip (no objects) fails here on purpose: a run that saw no
         # match is a failed run, not a valid empty one
