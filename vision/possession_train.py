@@ -15,6 +15,7 @@ decides on time and memory only and never looks at agreement.
 """
 
 import argparse
+import contextlib
 import hashlib
 import json
 import sys
@@ -337,12 +338,36 @@ def main(argv: list[str]) -> int:
     def log(msg):
         print(msg, flush=True)
 
-    if a.pilot:
-        out = pilot(a.model_id, a.gamestate, a.cache, a.models, a.folds, log)
-        print(json.dumps(out, indent=2))
-    else:
-        run(a.model_id, a.only, a.gamestate, a.cache, a.models, a.folds, log)
+    with keep_awake():
+        if a.pilot:
+            out = pilot(a.model_id, a.gamestate, a.cache, a.models, a.folds, log)
+            print(json.dumps(out, indent=2))
+        else:
+            run(a.model_id, a.only, a.gamestate, a.cache, a.models, a.folds, log)
     return 0
+
+
+@contextlib.contextmanager
+def keep_awake():
+    """Windows sleeps when idle, even halfway through an overnight run: ask it not to while
+    this process runs (09). A copy of prediction.cv's, since vision doesn't import it."""
+    if sys.platform != "win32":
+        yield
+        return
+    import ctypes
+
+    continuous, system_required = 0x80000000, 0x00000001
+    try:
+        ok = ctypes.windll.kernel32.SetThreadExecutionState(continuous | system_required)
+    except (AttributeError, OSError):
+        ok = 0
+    if not ok:
+        print("warning: couldn't keep Windows awake, set sleep to never (09)", flush=True)
+    try:
+        yield
+    finally:
+        with contextlib.suppress(AttributeError, OSError):
+            ctypes.windll.kernel32.SetThreadExecutionState(continuous)
 
 
 if __name__ == "__main__":
