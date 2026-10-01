@@ -111,10 +111,17 @@ def event_text(e: dict, names: dict[str, str]) -> str:
 
 
 def ticker(events: pl.DataFrame, frame_id: int, fps: float) -> list[dict]:
-    """Events from their frame_id for TICKER_S, newest first."""
+    """Events from their frame_id for TICKER_S, newest first. A shot whose outcome is a
+    goal is dropped when its goal event is on the same frame, so the goal isn't listed twice."""
     span = round(TICKER_S * fps)
     live = events.filter(pl.col("frame_id") <= frame_id, pl.col("frame_id") > frame_id - span)
-    return live.sort("frame_id", descending=True).to_dicts()
+    goal_frames = live.filter(pl.col("event_type") == "goal")["frame_id"]
+    dup = (
+        (pl.col("event_type") == "shot")
+        & (pl.col("outcome") == "goal")
+        & pl.col("frame_id").is_in(goal_frames.implode())
+    )
+    return live.filter(~dup.fill_null(False)).sort("frame_id", descending=True).to_dicts()
 
 
 def lane(
