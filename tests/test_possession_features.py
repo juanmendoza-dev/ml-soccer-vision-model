@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 import numpy as np
@@ -465,3 +466,39 @@ def test_invisible_objects_change_nothing():
         player_id=pl.lit("p"),
     )
     assert_same(pf.extract(frames, objects, fps), pf.extract(frames, scrambled, fps))
+
+
+def write_game(root, frames, objects, fps, match_id="m1"):
+    d = root / match_id
+    d.mkdir(parents=True)
+    frames.write_parquet(d / "frames.parquet")
+    objects.write_parquet(d / "objects.parquet")
+    pl.DataFrame({"match_id": [match_id], "source": ["pff"], "native_fps": [fps]}).write_parquet(
+        d / "match.parquet"
+    )
+    return d
+
+
+def test_cache_round_trip_and_refuses_stale_inputs(tmp_path):
+    frames, objects, fps = random_scene(seed=5)
+    gs, cache = tmp_path / "gs", tmp_path / "cache"
+    d = write_game(gs, frames, objects, fps)
+    built = pf.build("m1", gs, cache)
+    assert pf.load("m1", gs, cache).equals(built)
+    assert pf.pff_games(gs) == ["m1"]
+    objects.with_columns(x=pl.col("x") + 1).write_parquet(d / "objects.parquet")
+    with pytest.raises(ValueError, match="objects_sha256"):
+        pf.load("m1", gs, cache)
+    pf.build("m1", gs, cache)
+    pf.load("m1", gs, cache)
+    path, _ = pf.cache_paths("m1", cache)
+    built.head(3).write_parquet(path)
+    with pytest.raises(ValueError, match="output_sha256"):
+        pf.load("m1", gs, cache)
+
+
+def test_vision_never_imports_prediction():
+    tree = ast.parse(Path(pf.__file__).read_text(encoding="utf-8"))
+    names = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
+    names += [n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
+    assert not [m for m in names if m.split(".")[0] in ("prediction", "evaluation")]

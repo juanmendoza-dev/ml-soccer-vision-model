@@ -10,6 +10,13 @@ Times are integer microseconds for every comparison. A native gap longer than
 are rotated per period so home attacks +X.
 """
 
+import argparse
+import hashlib
+import json
+import sys
+import time
+from pathlib import Path
+
 import numpy as np
 import polars as pl
 
@@ -514,8 +521,8 @@ def extract(
         (pl.col(f"home_{s}") - pl.col(f"away_{s}")).alias(f"diff_{s}") for s in SHAPES
     )
     cur = rows.with_columns(
-        t_s=pl.col("t_us") / US,
         *(pl.col(c).cast(pl.Float64).fill_null(np.nan) for c in BLOCK),
+        (pl.col("t_us") / US).alias("t_s"),
     )
     run = (
         (pl.col("k") - pl.col("k").shift(1) != 1)
@@ -582,3 +589,113 @@ def mirror(df: pl.DataFrame) -> pl.DataFrame:
             for s in SHAPES
         )
     return df
+
+
+GAMESTATE_DIR = Path("data/gamestate")
+CACHE_DIR = Path("data/vision_cache")
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def grid_hash(keys: pl.DataFrame) -> str:
+    """SHA256 of the grid keys (period, k, frame_id) in order."""
+    h = hashlib.sha256()
+    for c in ("period", "k", "frame_id"):
+        h.update(keys[c].cast(pl.Int64).to_numpy().tobytes())
+    return h.hexdigest()
+
+
+def native_inputs(match_id: str, gamestate_dir: Path) -> dict:
+    d = gamestate_dir / match_id
+    return {
+        "frames_sha256": sha256_file(d / "frames.parquet"),
+        "objects_sha256": sha256_file(d / "objects.parquet"),
+        "native_fps": pl.read_parquet(d / "match.parquet")["native_fps"][0],
+    }
+
+
+def cache_paths(match_id: str, cache_dir: Path) -> tuple[Path, Path]:
+    stem = cache_dir / match_id / f"possession_inputs_{CONTRACT}"
+    return stem.with_suffix(".parquet"), stem.with_suffix(".json")
+
+
+def build(
+    match_id: str, gamestate_dir: Path = GAMESTATE_DIR, cache_dir: Path = CACHE_DIR
+) -> pl.DataFrame:
+    """Extract one match and write possession_inputs_pfeat-v1.parquet with its .json
+    provenance (native input, grid and extractor hashes)."""
+    d = gamestate_dir / match_id
+    meta = native_inputs(match_id, gamestate_dir)
+    frames = pl.read_parquet(d / "frames.parquet")
+    f = extract(frames, pl.scan_parquet(d / "objects.parquet"), meta["native_fps"])
+    path, side = cache_paths(match_id, cache_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f.write_parquet(path)
+    meta |= {
+        "contract": CONTRACT,
+        "match_id": match_id,
+        "grid_sha256": grid_hash(f),
+        "extractor_sha256": sha256_file(Path(__file__)),
+        "output_sha256": sha256_file(path),
+        "rows": f.height,
+        "columns": COLUMNS,
+    }
+    side.write_text(json.dumps(meta, indent=2))
+    return f
+
+
+def load(
+    match_id: str, gamestate_dir: Path = GAMESTATE_DIR, cache_dir: Path = CACHE_DIR
+) -> pl.DataFrame:
+    """The cached inputs, refused unless every recorded hash still matches: the native
+    frames/objects, the grid rebuilt from those frames, the extractor and the file itself."""
+    path, side = cache_paths(match_id, cache_dir)
+    if not path.exists() or not side.exists():
+        raise FileNotFoundError(
+            f"{path}: no cached {CONTRACT} inputs; run python -m vision.possession_features"
+        )
+    meta = json.loads(side.read_text())
+    now = native_inputs(match_id, gamestate_dir)
+    frames = pl.read_parquet(gamestate_dir / match_id / "frames.parquet")
+    now["grid_sha256"] = grid_hash(grid(native(frames, now["native_fps"]), now["native_fps"]))
+    now["extractor_sha256"] = sha256_file(Path(__file__))
+    now["output_sha256"] = sha256_file(path)
+    now["contract"], now["columns"] = CONTRACT, COLUMNS
+    stale = [k for k, v in now.items() if meta.get(k) != v]
+    if stale:
+        raise ValueError(f"{path}: stale cache ({', '.join(stale)} changed); rebuild it")
+    return pl.read_parquet(path)
+
+
+def pff_games(gamestate_dir: Path) -> list[str]:
+    return sorted(
+        p.parent.name
+        for p in gamestate_dir.glob("*/match.parquet")
+        if pl.read_parquet(p)["source"][0] == "pff"
+    )
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=f"Build {CONTRACT} possession inputs per match.")
+    ap.add_argument("--games", nargs="*", help="match ids (default: every PFF game)")
+    ap.add_argument("--gamestate", type=Path, default=GAMESTATE_DIR)
+    ap.add_argument("--cache", type=Path, default=CACHE_DIR)
+    a = ap.parse_args(argv)
+    games = a.games or pff_games(a.gamestate)
+    total = time.perf_counter()
+    for m in games:
+        t0 = time.perf_counter()
+        f = build(m, a.gamestate, a.cache)
+        print(f"{m}: {f.height} rows, {time.perf_counter() - t0:.1f} s", flush=True)
+    print(f"{len(games)} games, {time.perf_counter() - total:.0f} s")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
