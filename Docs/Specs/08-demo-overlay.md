@@ -20,8 +20,23 @@ A video that makes the model's output obvious to someone who knows nothing about
 
 ## Modes
 - **Offline:** render from saved game state + predictions (any machine).
+- **Pitch view:** the offline renderer drawn on a top-down pitch instead of video, from game state alone (`python -m demo.render`). For dataset matches with no footage (PFF), and for checking an overlay element before it goes on video. Drawing functions take pixel positions, so the video overlay reuses them with screen positions in place of the pitch mapping.
 - **Debug:** same renderer, for a frame range (`--frames 1200-1500`): boxes, track IDs, teams and minimap from the detections cache (03 Diagnostics). For finding where and when vision went wrong; never published.
 - **Live:** run on RTX 2060 workstation; detection every 2nd–3rd frame, smaller YOLO model. Frame budget and stages that need changes for live are in 09.
+
+## Element definitions (2026-10-01, before the first render)
+Everything is drawn at frame t from frames `<= t` only, the same rule as prediction, so a shot's marker never shows before its frame and the meter's lead time stays honest.
+
+- **Ball marker:** ring on the ball. Velocity arrow tip at the position 0.5 s ahead at the current `vx, vy`, mapped through the same meters→pixels transform as the ball (the pitch's +y is screen-up). No arrow when `vx` or `vy` is null.
+- **Ball trail:** the ball's positions over the last 1.0 s (native frames), fading with age. A missing ball row breaks the line.
+- **Sprint highlight:** speed `|(vx, vy)|`, three bands: under 5.5 m/s no ring; 5.5 to under 7 m/s high-speed running (cyan ring); 7 m/s and up sprinting (magenta ring). The 5.5 and 7 m/s cuts are the usual 19.8 and 25.2 km/h tracking-data bands. Null velocity: no band.
+- **Confidence/uncertainty tint:** `interpolated = True` (guessed or off-camera, which includes every `visible = False` row, 02) draws a dashed marker. A detected row with `confidence < 0.5` draws dimmed (PFF LOW = 0.33). Applies to players and the ball.
+- **Possession panel:**
+  - Possession %: cumulative from the period-1 kickoff to t, not from the start of the clip, so a clip shows the same number TV would. A frame counts when `ball_state = alive` and `possession_team` isn't null; each counted frame is one native frame of time.
+  - Thirds: of each team's counted frames that have a ball row, the share with the ball in its defensive, middle and attacking third. Thirds are cut at x = ±17.5 m in that team's attacking direction, from `frames.home_attacks_positive_x` on that frame (never odd/even periods).
+  - Score: `goal` events with `frame_id <= t`. Clock: `timestamp_s` plus 45 min per earlier period (90 + 15 per period in extra time).
+- **Event ticker:** each `events.parquet` row shows from its `frame_id` for 4 s, newest first. PFF events are only shots and goals, so the text is built from `event_type`, the team, `set_piece` (when not open play) and `outcome`. A goal flashes the whole strip; the event's `x, y` gets a marker on the pitch for the same 4 s.
+- **Shooting-lane cone:** the triangle from the ball to the posts of the goal `possession_team` attacks. The count is 05's `lane_defenders` rule: VISIBLE players of the other team inside the triangle (`prediction.features.in_lane` in the attacking frame). Fill: 0 open, 1 amber, 2+ red. No cone without a ball row, with `possession_team` null, or while `ball_state` isn't alive.
 
 ## Footage
 | Use | Footage | Can it be published? |
