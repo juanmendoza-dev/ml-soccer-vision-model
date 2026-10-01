@@ -240,6 +240,7 @@ def learned_manifest(config: StateConfig, models_dir: Path | None = None) -> tup
         )
     man = json.loads(path.read_text())
     vpm.check_manifest(man)
+    vpm.check_derived(path.parent, man)
     if man["model_id"] != config.possession_model:
         raise ValueError(f"{path}: model id {man['model_id']!r}, not {config.possession_model!r}")
     return path, man
@@ -272,6 +273,7 @@ def learned_meta(
         "rule_2d": man["rule_2d"],
         "mirror": man["mirror"],
         "threshold": man["threshold"],
+        **({"output": man["output"], "derived_from": man["derived_from"]} if "output" in man else {}),
         "manifest": str(man_path),
         "manifest_sha256": sha256_file(man_path),
         "folds_sha256": man["folds"]["sha256"],

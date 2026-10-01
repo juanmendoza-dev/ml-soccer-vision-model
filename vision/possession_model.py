@@ -275,6 +275,9 @@ def p_home(booster, feats: pl.DataFrame) -> np.ndarray:
 
 N_FOLDS = 5
 MANIFEST = "manifest.json"
+# 03 Revision v1h: the only output rule a manifest may carry besides v1's plain 0.5 cut
+HYSTERESIS = {"rule": "hysteresis", "home_at": 0.75, "away_at": 0.25, "dwell": 0, "fallback": "hold"}
+DERIVED_KEYS = ("model_id", "output", "derived_from")
 
 
 def plan(folds: Mapping[str, int], dedup: bool = True) -> dict[str, dict]:
@@ -320,6 +323,10 @@ def check_manifest(man: dict) -> None:
     training on exactly its allowed matches, excluding its outer fold and its own."""
     if man.get("sealed") is not True:
         raise ValueError("manifest: not sealed (an incomplete artifact can't serve a CV run)")
+    if ("output" in man) != ("derived_from" in man):
+        raise ValueError("manifest: an output rule comes only with derived_from, and back")
+    if "output" in man and man["output"] != HYSTERESIS:
+        raise ValueError(f"manifest: output {man['output']!r} isn't 03's v1h rule")
     folds = {m: int(f) for m, f in man["folds"]["assignments"].items()}
     want = plan(folds, man["dedup_pairs"])
     if set(man["logical"]) != set(want):
@@ -343,12 +350,31 @@ def check_manifest(man: dict) -> None:
             raise ValueError(f"manifest: {lid} trains on its outer or predicted fold")
 
 
+def check_derived(model_dir: Path, man: dict) -> None:
+    """A derived manifest (v1h) must point at its source's current manifest by hash and
+    equal it apart from model_id, output and derived_from: same boosters, folds and fits."""
+    src = man.get("derived_from")
+    if src is None:
+        return
+    path = model_dir.parent / src["model_id"] / MANIFEST
+    if not path.exists() or pf.sha256_file(path) != src["manifest_sha256"]:
+        raise ValueError(f"manifest: derived_from {src['model_id']} is missing or changed")
+    base = json.loads(path.read_text())
+    if "derived_from" in base:
+        raise ValueError("manifest: derived from a derived manifest")
+    if {k: v for k, v in man.items() if k not in DERIVED_KEYS} != {
+        k: v for k, v in base.items() if k != "model_id"
+    }:
+        raise ValueError(f"manifest: differs from {src['model_id']}'s beyond the output rule")
+
+
 def resolve(model_dir: Path, logical_id: str, match_id: str) -> tuple[dict, dict, Path]:
     """(manifest, logical entry, model.txt path) for predicting match_id under
     logical_id. Refuses a match outside the fit's prediction set, and a model or fit
     record whose hashes or match lists differ from the manifest's."""
     man = json.loads((model_dir / MANIFEST).read_text())
     check_manifest(man)
+    check_derived(model_dir, man)
     if logical_id not in man["logical"]:
         raise ValueError(f"manifest: no logical fit {logical_id!r}")
     entry = man["logical"][logical_id]
@@ -414,6 +440,31 @@ def team(p: np.ndarray) -> np.ndarray:
     return np.where(p >= 0.5, "home", "away")
 
 
+def relabel(period, k, p, fallback, rule_team, output: dict) -> list[str | None]:
+    """03 Revision v1h's hysteresis, causal over grid rows in (period, k) order. A model row
+    switches to home at p >= home_at and to away at p <= away_at, else keeps the current
+    team (v1's 0.5 cut when there is none yet). A fallback row keeps the current team, or
+    takes the 2D rule's (null included) when there is none. Resets at a period start and a
+    skipped grid point."""
+    home_at, away_at = output["home_at"], output["away_at"]
+    out, cur, prev = [], None, None
+    for per, kk, q, fb, rule in zip(period, k, p, fallback, rule_team, strict=True):
+        if prev is None or per != prev[0] or kk != prev[1] + 1:
+            cur = None
+        prev = (per, kk)
+        if fb:
+            if cur is None:
+                cur = rule
+        elif q >= home_at:
+            cur = "home"
+        elif q <= away_at:
+            cur = "away"
+        elif cur is None:
+            cur = "home" if q >= 0.5 else "away"
+        out.append(cur)
+    return out
+
+
 STATE_COLUMNS = [
     "period",
     "k",
@@ -441,7 +492,8 @@ def predict_match(
     """One match's learned state on every valid grid row under one logical fit (03
     "Prediction plumbing"): possession home if p_home >= 0.5 else away; with no usable
     player on the native frame, the 2D rule's possession (null included), p_home null
-    and fallback true. Carrier, ball state and carrier age are always the 2D rule's.
+    and fallback true. A manifest with an `output` block (v1h) takes the team from relabel
+    instead. Carrier, ball state and carrier age are always the 2D rule's.
     Reads only the hash-checked inputs and the native frames' time columns (never PFF
     possession or ball state); writes nothing."""
     import lightgbm as lgb
@@ -463,12 +515,18 @@ def predict_match(
         raise ValueError(f"{match_id}: rule grid differs from the cached input grid")
     p = p_home(lgb.Booster(model_file=str(path)), feats)
     fallback = (feats["players_n"] == 0).to_numpy()
-    learned = pl.Series(team(p))
+    if "output" in man:
+        rows = (rule["period"], rule["k"], p, fallback, rule["rule_possession_team"])
+        hard = pl.Series(relabel(*rows, man["output"]), dtype=pl.String)
+    else:
+        hard = (
+            pl.when(pl.Series(fallback))
+            .then(pl.col("rule_possession_team"))
+            .otherwise(pl.Series(team(p)))
+        )
     return rule.with_columns(
         t_s=feats["t_s"],
-        possession_team=pl.when(pl.Series(fallback))
-        .then(pl.col("rule_possession_team"))
-        .otherwise(learned),
+        possession_team=hard,
         p_home=pl.Series(np.where(fallback, np.nan, p)).fill_nan(None),
         fallback=pl.Series(fallback),
         fit_id=pl.lit(logical_fit_id),
