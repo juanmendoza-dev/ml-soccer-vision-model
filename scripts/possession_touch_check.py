@@ -139,7 +139,7 @@ def table(rows: pl.DataFrame) -> pl.DataFrame:
                 "sep": round(max(a, 1 - a), 3),
                 "finite_turnover": round(float(fin_t), 3),
                 "finite_touch": round(float(fin_h), 3),
-                "eligible": kind != "-" and min(fin_t, fin_h) >= MIN_FINITE,
+                "eligible": bool(kind != "-" and min(fin_t, fin_h) >= MIN_FINITE),
                 "med_turnover": round(q(t, 0.5), 3),
                 "iqr_turnover": f"{q(t, 0.25):.2f}..{q(t, 0.75):.2f}",
                 "med_touch": round(q(h, 0.5), 3),
