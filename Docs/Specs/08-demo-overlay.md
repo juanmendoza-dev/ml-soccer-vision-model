@@ -42,6 +42,7 @@ Everything is drawn at frame t from frames `<= t` only, the same rule as predict
   - **Skip rules:** no arrow and no trail when the frame's view isn't `match`, `homography_ok` is false, fewer than 4 people have a position or they stand nearly on one line (under 1 m of spread across it), or the refit's worst error on those people is over 2 px. The ring stays.
   - **Base and tip:** the arrow starts at the ball box's center and ends at `pitch_x, pitch_y` + 0.5 s × (`vx, vy`) mapped to the screen; no arrow when the velocity is null or the tip lands more than a frame's width outside the image.
   - **Trail:** the ball's game-state positions over the last 1.0 s, mapped through the current frame's mapping so the camera's pan doesn't drag it. It doesn't reach back past the last frame without a usable mapping (a cut or a close-up resets it).
+  - **Detection jumps:** a ball faster than 40 m/s (past the hardest shots, about 35 m/s) is a wrong detection, not a ball: no arrow while `vx, vy` says so, and the trail stops where consecutive positions imply it. The ring still shows the detection, so the error stays visible. First seen on the M1 sample run (2026-10-01): one frame's ball jumped about 25 m to the image edge, 382 m/s.
   - **Frames:** the cache's processed range by default, so a run never draws past what vision processed (the debug-mode `--frames` trap).
 
 ## Footage
