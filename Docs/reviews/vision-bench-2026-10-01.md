@@ -28,6 +28,24 @@ First real run of the W0 benchmark (07 "Vision benchmark (W0)"). One clip, so th
 3. **The view gate drops 16% of unmarked wide frames.** That's more than the rejected homographies, and no acceptance threshold moves it (07). Example: video 1:16, a wide shot with the halfway line and centre circle has no geometry.
 4. The 17% target on rejected homographies is met here (10.1%), but within 2 m is far below the 90% target. **Threshold tuning isn't the bottleneck on this clip;** geometry accuracy and teams are.
 
+## Diagnosis (same clip, after the user checked the marks)
+**Teams.** `KitColorTeams` uses mean Lab chroma (a, b) only. Its own docstring says kits that differ mainly in lightness need L back, and navy vs white/sky blue is that case. On 350 torso crops matched to PFF players (≤ 2.5 m), a 2-means fit on standardized features:
+
+| Feature | Agreement with PFF team |
+|---|---|
+| (a, b) mean (current) | 56.9% |
+| (L, a, b) mean | 85.4% |
+| (L, a, b) median | 85.4% |
+| L histogram + (a, b) | 85.4% |
+
+These are per crop; per-track votes come on top.
+
+**Positions: the homography is wrong as a whole on each frame, not the detections.**
+- Removing one shift per frame: median 2.80 → 1.95 m (within 2 m: 26% → 52%). Removing one affine per frame: 0.52 m (88%). So boxes and feet are fine, and each frame's mapping is off by a stretch.
+- The per-frame affine from vision to PFF has median a_xx 0.87 and a_yy 0.945 (p10–p90: 0.78–1.02 and 0.88–1.05). Vision's picture is stretched about 13% along the pitch and 5% across, and the amount changes per frame. One global affine leaves 2.39 m, so it's not one constant (pitch size, PFF units).
+- The fit's own check can't see it. Accepted fits have a 0.41 m mean inlier error (p90 0.65 m), but a homography has 8 parameters and these fits use 5–11 inliers (median 8). The fit can pass close to every keypoint and still be wrong elsewhere.
+- Not the cause: inlier count or spread (error is flat across quartiles of the inlier hull area, 2.5–2.8 m), lag (`homography_window = 1`: 2.81 → 2.70 m), distance from the camera (flat across the width), the error threshold (`max_homography_err_m = 0.5` makes it worse).
+
 ## Next
 - User checks the marks; then the other four 2022 clips and the three geometry-only clips, before reading anything into these numbers.
 - If items 1 and 2 hold across clips, they go ahead of the threshold sweep: kit clustering, and a look at where the 2 m comes from. Tackle the y bias first, as the cheapest lead.
