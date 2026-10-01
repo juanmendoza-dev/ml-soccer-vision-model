@@ -5,6 +5,7 @@
         [--degrade-arm both|test] [--degrade-seed N] [--device auto|cuda|mps|cpu]
         [--gnn-globals v1|none] [--gnn-layers N] [--gnn-param KEY=VALUE ...] [--one-fold N]
         [--possession provider|inferred] [--stale-possession none|unknown] [--stale-after S]
+        [--possession-model ID]
 
 Per horizon and outer fold: fit on the training matches minus the inner split, pick
 tau on the inner matches, refit on all training matches, predict the held-out fold.
@@ -27,6 +28,11 @@ rows, tau and the alarms stay on PFF's. lgbm and floor only, not with --degrade.
 confirmed carrier is more than S seconds old (arm U, 05 "Stale possession").
 --features-version 3 adds stage 8's carrier age as a feature, with either possession, so
 it runs stage 8 too (arm S). lgbm and floor only, not with --degrade.
+--possession-model ID (with --possession inferred) takes possession from a sealed learned
+model (03 stage 8, vision.possession_train) under strict nested contexts: each outer fold's
+data is assembled once with test possession for its fold and inner-OOF possession for the
+training matches, then both horizons run on it; the final tau uses every match's outer
+test possession. lgbm, v1, held ball only.
 
 --model gnn is the frame GNN (05 model 2) on graphs cached per match. --gnn-globals none
 and --gnn-layers 0 are its ablation arms. --one-fold N is a timing run: outer fold N only,
@@ -124,26 +130,32 @@ def load_data(
     possession_source: str = "provider",
     possession_stats: dict | None = None,
     stale_after: float | None = None,
+    state_config: possession.StateConfig | None = None,
+    contexts: dict | None = None,
 ):
-    data = pl.concat(
-        [
-            load_match(
-                i,
-                processed_dir,
-                horizons,
-                ball_source,
-                degrade=degrade_specs,
-                degrade_seed=degrade_seed,
-                degrade_stats=degrade_stats,
-                features_version=features_version,
-                possession=possession_source,
-                gamestate_dir=gamestate_dir,
-                possession_stats=possession_stats,
-                stale_after=stale_after,
-            )
-            for i in ids
-        ]
-    ).with_row_index("row")
+    """contexts {match_id: possession.Context} is for learned possession only: each match
+    loads under its context, tagged with a possession_context column."""
+
+    def one(i):
+        df = load_match(
+            i,
+            processed_dir,
+            horizons,
+            ball_source,
+            degrade=degrade_specs,
+            degrade_seed=degrade_seed,
+            degrade_stats=degrade_stats,
+            features_version=features_version,
+            possession=possession_source,
+            gamestate_dir=gamestate_dir,
+            possession_stats=possession_stats,
+            stale_after=stale_after,
+            state_config=state_config,
+            context=contexts[i] if contexts else None,
+        )
+        return df.with_columns(possession_context=pl.lit(contexts[i].suffix)) if contexts else df
+
+    data = pl.concat([one(i) for i in ids]).with_row_index("row")
     shots = pl.concat(
         [
             shots_table(
@@ -188,13 +200,19 @@ def run_cv(
     model_kwargs: dict | None = None,
     only_folds: list[int] | None = None,
     test_attrs: dict | None = None,
+    provider=None,
 ) -> tuple[pl.DataFrame, dict]:
     """test_data (same rows as data, e.g. degraded) replaces data for the held-out
     predictions only; every fit and tau choice uses data. test_attrs are set on each
     outer model just before it predicts the held-out fold (the GNN's degraded graph
     store, with --degrade-arm test). model_kwargs go to the model but not into run.json
     (the GNN's graph store). only_folds runs just those outer folds and skips the final
-    tau: a partial run, for timing."""
+    tau: a partial run, for timing.
+
+    provider (learned possession, 05) maps an outer fold k, or None for the final tau, to
+    that context's table: the same rows and order as data, with a possession_context
+    column. Every fit, tau and prediction of that context reads it; data stays the
+    canonical provider table for the run's row index and statistics."""
     cls, config = MODELS[model]
     config = {**config, "ball_source": ball_source, **(data_config or {})}
     if test_data is None:
@@ -211,57 +229,79 @@ def run_cv(
     ids = sorted({m["match_id"] for m in folds["matches"]})
     fold_of = {m["match_id"]: m["fold"] for m in folds["matches"]}
     p_cols = {h: np.full(data.height, np.nan) for h in horizons}
-    tau, met, detail, timing = {}, {}, {}, {}
+    tau, met, detail, timing = ({h: {} for h in horizons} for _ in range(4))
     fold_list = range(folds["n_folds"]) if only_folds is None else only_folds
-    for h in horizons:
-        tau[h], met[h], detail[h], timing[h] = {}, {}, {}, {}
-        for fold in fold_list:
-            test = [i for i in ids if fold_of[i] == fold]
-            train = [i for i in ids if fold_of[i] != fold]
-            inner = inner_split(fold, folds)
-            if set(train) & set(test) or not set(inner) <= set(train):
-                raise AssertionError(f"fold {fold}: train/test/inner don't nest")
-            fit_ids = [i for i in train if i not in inner]
-            t0 = time.perf_counter()
-            choice, _ = fit_and_choose(make, data, shots, fit_ids, inner, h, max_false)
-            t1 = time.perf_counter()
-            m = make().fit(of(data, train), h)
-            t2 = time.perf_counter()
-            rows = of(test_data, test)
-            for name, value in (test_attrs or {}).items():
-                setattr(m, name, value)
-            p_cols[h][rows["row"].to_numpy()] = m.predict(rows).fill_null(np.nan).to_numpy()
-            t3 = time.perf_counter()
-            timing[h][str(fold)] = {
-                "inner_fit_and_tau_s": round(t1 - t0, 1),
-                "outer_fit_s": round(t2 - t1, 1),
-                "predict_s": round(t3 - t2, 1),
-            }
-            tau[h][str(fold)] = choice["tau"]
-            met[h][str(fold)] = choice["met"]
-            detail[h][str(fold)] = {
-                "coef": m.coef,
-                "train_rows": m.n_train,
-                **getattr(m, "fit_info", {}),
-                "inner": {
-                    k: choice[k] for k in ("miss_rate", "lead_s_median", "false_alarms_per_match")
-                },
-            }
-            log(
-                f"{h} fold {fold}: tau {choice['tau']:.4f} (met {choice['met']}, inner miss "
-                f"{choice['miss_rate']:.3f}, false/match {choice['false_alarms_per_match']:.2f}) "
-                f"coef {', '.join(f'{k} {v:+.3f}' for k, v in top(m.coef))} ({t3 - t0:.0f} s)"
-            )
-        if only_folds is not None:
-            continue
+
+    def outer_fold(h, fold, data, test_data, context=None):
+        test = [i for i in ids if fold_of[i] == fold]
+        train = [i for i in ids if fold_of[i] != fold]
+        inner = inner_split(fold, folds)
+        if set(train) & set(test) or not set(inner) <= set(train):
+            raise AssertionError(f"fold {fold}: train/test/inner don't nest")
+        fit_ids = [i for i in train if i not in inner]
+        t0 = time.perf_counter()
+        choice, _ = fit_and_choose(make, data, shots, fit_ids, inner, h, max_false)
+        t1 = time.perf_counter()
+        m = make().fit(of(data, train), h)
+        t2 = time.perf_counter()
+        rows = of(test_data, test)
+        for name, value in (test_attrs or {}).items():
+            setattr(m, name, value)
+        p_cols[h][rows["row"].to_numpy()] = m.predict(rows).fill_null(np.nan).to_numpy()
+        t3 = time.perf_counter()
+        timing[h][str(fold)] = {
+            "inner_fit_and_tau_s": round(t1 - t0, 1),
+            "outer_fit_s": round(t2 - t1, 1),
+            "predict_s": round(t3 - t2, 1),
+        }
+        tau[h][str(fold)] = choice["tau"]
+        met[h][str(fold)] = choice["met"]
+        detail[h][str(fold)] = {
+            "coef": m.coef,
+            "train_rows": m.n_train,
+            **getattr(m, "fit_info", {}),
+            "inner": {
+                k: choice[k] for k in ("miss_rate", "lead_s_median", "false_alarms_per_match")
+            },
+        } | ({"context": context} if context else {})
+        log(
+            f"{h} fold {fold}: tau {choice['tau']:.4f} (met {choice['met']}, inner miss "
+            f"{choice['miss_rate']:.3f}, false/match {choice['false_alarms_per_match']:.2f}) "
+            f"coef {', '.join(f'{k} {v:+.3f}' for k, v in top(m.coef))} ({t3 - t0:.0f} s)"
+        )
+
+    def final_tau(h, data):
         t0 = time.perf_counter()
         inner = inner_split(None, folds)
-        choice, m = fit_and_choose(
+        choice, _ = fit_and_choose(
             make, data, shots, [i for i in ids if i not in inner], inner, h, max_false
         )
         tau[h]["final"], met[h]["final"] = choice["tau"], choice["met"]
         timing[h]["final"] = {"inner_fit_and_tau_s": round(time.perf_counter() - t0, 1)}
         log(f"{h} final: tau {choice['tau']:.4f} (met {choice['met']})")
+
+    if provider is None:  # one table for every fit: horizons outside folds
+        for h in horizons:
+            for fold in fold_list:
+                outer_fold(h, fold, data, test_data)
+            if only_folds is None:
+                final_tau(h, data)
+    else:  # learned possession (05): one assembly per context, both horizons on it
+        contexts = [*fold_list] + ([None] if only_folds is None else [])
+        assembly_s = {}
+        for outer in contexts:
+            t0 = time.perf_counter()
+            ctx = provider(outer)
+            assembly_s["final" if outer is None else str(outer)] = round(
+                time.perf_counter() - t0, 1
+            )
+            check_context(ctx, data, outer, fold_of)
+            for h in horizons:
+                if outer is None:
+                    final_tau(h, ctx)
+                else:
+                    outer_fold(h, outer, ctx, ctx, context_roles(outer))
+        timing["assembly_s"] = assembly_s
     preds = data.select(KEYS).with_columns(
         **{f"p_{h}": pl.Series(p_cols[h]).fill_nan(None) for h in horizons}
     )
@@ -292,6 +332,27 @@ def run_cv(
             "note": "timing run: these outer folds only and no final tau, not a CV result",
         }
     return preds, meta
+
+
+def context_roles(outer: int) -> dict:
+    return {"outer": outer, "train": f"outer{outer}_inner-oof<j>", "test": f"outer{outer}_test"}
+
+
+def check_context(ctx: pl.DataFrame, data: pl.DataFrame, outer: int | None, fold_of: dict):
+    """A context's table must have the canonical rows in order, and every match the
+    possession of its role: test (own fold k) or inner-oof (training match) in outer k,
+    the test output of its own fold in the final context."""
+    if not ctx.select(KEYS).equals(data.select(KEYS)):
+        raise ValueError(f"context {outer}: rows differ from the canonical table")
+    got = ctx.select("match_id", "possession_context").unique()
+    for m, c in got.iter_rows():
+        j = fold_of[m]
+        if outer is None or j == outer:
+            want = f"outer{j}_test"
+        else:
+            want = f"outer{outer}_inner-oof{j}"
+        if c != want:
+            raise ValueError(f"context {outer}: match {m} has {c}, want {want}")
 
 
 def top(coef: dict[str, float], n: int = 6) -> list[tuple[str, float]]:
@@ -395,6 +456,11 @@ def main(argv: list[str]) -> int:
     )
     ap.add_argument("--stale-after", type=float, metavar="S", help="seconds, with unknown")
     ap.add_argument(
+        "--possession-model",
+        metavar="ID",
+        help="learned possession (03 stage 8): a sealed model under data/models/possession",
+    )
+    ap.add_argument(
         "--one-fold",
         type=int,
         metavar="N",
@@ -430,8 +496,31 @@ def main(argv: list[str]) -> int:
     folds = load(args.folds)
     if args.one_fold is not None and not 0 <= args.one_fold < folds["n_folds"]:
         ap.error(f"--one-fold must be 0..{folds['n_folds'] - 1}")
+    state_config = None
+    if args.possession_model is not None:
+        why = learned_refusal(args, specs)
+        if why:
+            ap.error(f"--possession-model: {why} (05, Learned possession)")
+        state_config = possession.StateConfig(possession_model=args.possession_model)
     with keep_awake():
-        return run(args, specs, folds)
+        return run(args, specs, folds, state_config)
+
+
+def learned_refusal(args, specs) -> str | None:
+    """Why a --possession-model run is refused, or None: v1 learned is one arm (05)."""
+    if args.possession != "inferred":
+        return "needs --possession inferred"
+    if args.model != "lgbm":
+        return "lgbm only"
+    if args.features_version != "1":
+        return "features v1 only"
+    if args.ball_source != "held":
+        return "held ball only"
+    if specs:
+        return "no --degrade"
+    if args.stale_possession != "none" or args.stale_after is not None:
+        return "no stale-possession arm"
+    return None
 
 
 def gnn_overrides(pairs: list[str]) -> dict:
@@ -446,11 +535,17 @@ def gnn_overrides(pairs: list[str]) -> dict:
     return out
 
 
-def run(args, specs, folds: dict) -> int:
+def run(args, specs, folds: dict, state_config: possession.StateConfig | None = None) -> int:
+    """state_config is stage 8's config for inferred possession and v3 (default rule when
+    None); run.json records the one that ran."""
     started = time.perf_counter()
+    state_config = state_config or possession.StateConfig()
     ids = sorted({m["match_id"] for m in folds["matches"]})
     stats, pstats = {}, {}
     version = args.features_version
+    learned = state_config.possession_model is not None
+    # learned: the canonical table is the provider's (labels, row index); each context's
+    # possession comes through the provider below
     data, shots = load_data(
         ids,
         args.processed,
@@ -461,15 +556,38 @@ def run(args, specs, folds: dict) -> int:
         args.degrade_seed,
         stats,
         version,
-        args.possession,
+        "provider" if learned else args.possession,
         pstats,
         args.stale_after,
+        None if learned else state_config,
     )
+    provider = None
+    if learned:
+        man_path, man = possession.learned_manifest(state_config)
+        fold_of = {m["match_id"]: m["fold"] for m in folds["matches"]}
+        if man["folds"]["assignments"] != fold_of:
+            raise ValueError(f"{man_path}: its folds aren't this run's folds")
+
+        def provider(outer):
+            ctx = {m: possession.context_for(outer, fold_of[m]) for m in ids}
+            return load_data(
+                ids,
+                args.processed,
+                args.gamestate,
+                args.horizons,
+                args.ball_source,
+                features_version=version,
+                possession_source="inferred",
+                possession_stats=pstats,
+                state_config=state_config,
+                contexts=ctx,
+            )[0]
+
     test_data, data_config, model_kwargs, test_attrs = None, {}, {}, None
     if args.model in VERSIONED:
         data_config = {"features": list(FEATURE_SETS[version]), "features_version": version}
     if args.possession == "inferred" or version in STAGE8_VERSIONS:
-        data_config["state_config"] = possession.StateConfig().to_dict()
+        data_config["state_config"] = state_config.to_dict()
     if args.possession == "inferred":
         data_config |= {
             "possession": "inferred",
@@ -477,6 +595,7 @@ def run(args, specs, folds: dict) -> int:
         }
         if args.stale_after is not None:
             data_config["stale_possession"] = {"arm": "unknown", "after_s": args.stale_after}
+    if args.possession == "inferred" and not learned:  # learned: counted as contexts load
         log(
             f"inferred possession: {data_config['possession_scored']}, stage 8 "
             f"{pstats.get('stage8_s', 0):.0f} s, features {pstats.get('features_s', 0):.0f} s "
@@ -548,7 +667,14 @@ def run(args, specs, folds: dict) -> int:
         model_kwargs=model_kwargs,
         only_folds=only,
         test_attrs=test_attrs,
+        provider=provider,
     )
+    if learned:
+        meta["config"]["possession_scored"] = possession.summarize(pstats)
+        meta["config"]["possession_model"] = possession.learned_meta(
+            state_config, man_path, man, ids, fold_of, args.processed, pstats
+        )
+        log(f"learned possession, outer-test rows: {meta['config']['possession_scored']}")
     meta["config"]["timing"] |= {
         **{k: round(pstats[k], 1) for k in ("stage8_s", "features_s") if k in pstats},
         "load_s": round(load_s, 1),

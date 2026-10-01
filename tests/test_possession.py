@@ -521,3 +521,89 @@ def test_run_config_records_the_stale_arm():
     extra = {"stale_possession": {"arm": "unknown", "after_s": 10.0}}
     _, meta = cv.run_cv("floor", ["h5"], folds, data, shots, log=lambda m: None, data_config=extra)
     assert meta["config"]["stale_possession"] == extra["stale_possession"]
+
+
+# --- learned possession config (03 stage 8): B1 and refusals on the rule-only paths ---
+
+LEARNED = StateConfig(possession_model="lgbm-v1-nested5x4-s1")
+
+
+class Stop(Exception):
+    pass
+
+
+def test_run_json_records_the_state_config_that_ran(monkeypatch):
+    """B1: run() hands its config to load_data and writes that same config to run.json."""
+    import argparse
+
+    from test_cv import world
+
+    folds, data, shots = world()
+    args = argparse.Namespace(
+        model="lgbm",
+        features_version="1",
+        processed=None,
+        gamestate=None,
+        horizons=["h5"],
+        ball_source="held",
+        degrade_seed=0,
+        possession="inferred",
+        stale_after=None,
+        one_fold=None,
+    )
+    seen = {}
+
+    def fake_load(*a, **kw):
+        seen["loaded_with"] = a[12]
+        return data, shots
+
+    def fake_cv(*a, data_config=None, **kw):
+        seen["written"] = data_config["state_config"]
+        raise Stop
+
+    monkeypatch.setattr(cv, "load_data", fake_load)
+    monkeypatch.setattr(cv, "run_cv", fake_cv)
+    # the learned run is checked end to end in test_possession_learned.py
+    for config in (StateConfig(), StateConfig(team_near_s=0.05)):
+        seen.clear()
+        with pytest.raises(Stop):
+            cv.run(args, [], folds, config)
+        assert seen["loaded_with"] == config and seen["written"] == config.to_dict()
+
+
+def test_load_data_forwards_the_state_config(tmp_path):
+    gs, proc = build(tmp_path)
+    team = StateConfig(team_near_s=0.05)
+    cv.load_data(["syn"], proc, gs, ["h5"], possession_source="inferred", state_config=team)
+    names = {p.name for p in (proc / "syn").glob("state_inferred_*.parquet")}
+    assert names == {f"state_inferred_age_{possession.config_key(team)}.parquet"}
+
+
+def test_rule_only_paths_refuse_a_learned_config(tmp_path, capsys):
+    import importlib.util
+    import os
+    import subprocess
+    import sys
+
+    gs, proc = build(tmp_path)
+    with pytest.raises(ValueError, match="learned possession"):
+        possession.inferred_state("syn", gs, proc, LEARNED)
+    with pytest.raises(ValueError, match="learned possession"):
+        load(gs, proc, "inferred", state_config=LEARNED)
+    assert not list((proc / "syn").glob("state_inferred_*"))
+    out = subprocess.run(
+        [sys.executable, "scripts/possession_split.py", "--state", "possession_model=x"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": "."},
+    )
+    assert out.returncode == 2 and "--possession-model" in out.stderr
+    spec = importlib.util.spec_from_file_location("staleness", "scripts/possession_staleness.py")
+    staleness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(staleness)
+    run_meta = {"config": {"state_config": LEARNED.to_dict()}}
+    staleness.load_run = lambda _: (run_meta, None)
+    with pytest.raises(SystemExit):
+        staleness.main(["provider_run", "learned_run"])
+    assert "--possession-model" in capsys.readouterr().err
