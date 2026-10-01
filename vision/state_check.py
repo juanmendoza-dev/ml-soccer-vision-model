@@ -19,7 +19,7 @@ from pathlib import Path
 
 import polars as pl
 
-from vision.state import StateConfig, infer
+from vision.state import StateConfig, infer, rule_only
 
 GAMESTATE_DIR = Path("data/gamestate")
 OBJECT_COLS = ["frame_id", "object_id", "object_type", "team", "x", "y", "z", "visible"]
@@ -49,6 +49,7 @@ def changes(s: pl.Series) -> int:
 
 
 def check_match(match_dir: Path, config: StateConfig | None = None) -> dict | None:
+    rule_only(config or StateConfig())
     frames = pl.read_parquet(match_dir / "frames.parquet")
     if frames["possession_team"].is_null().all() and frames["ball_state"].is_null().all():
         return None

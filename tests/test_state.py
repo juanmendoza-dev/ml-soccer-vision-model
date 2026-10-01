@@ -208,6 +208,37 @@ def test_default_config_key_and_dict_unchanged_by_the_new_rule():
     assert StateConfig(**TEAM.to_dict()) == TEAM
 
 
+LEARNED = StateConfig(possession_model="lgbm-v1-nested5x4-s1")
+
+
+def test_learned_config_is_off_by_default_and_keeps_the_key():
+    from prediction.possession import config_key
+
+    assert "possession_model" not in StateConfig().to_dict()
+    assert config_key(StateConfig()) == "e737054b5d"
+    assert LEARNED.to_dict()["possession_model"] == "lgbm-v1-nested5x4-s1"
+    assert config_key(LEARNED) != config_key(StateConfig())
+    assert StateConfig(**LEARNED.to_dict()) == LEARNED
+
+
+def test_the_plain_rule_refuses_a_learned_config(tmp_path):
+    from vision.state_check import check_match
+
+    with pytest.raises(ValueError, match="learned possession"):
+        StateMachine(LEARNED)
+    frames = pl.DataFrame({"frame_id": [0], "period": [1], "timestamp_s": [0.0]})
+    objects = pl.DataFrame(
+        {"frame_id": [0], "object_id": ["b"], "object_type": ["ball"], "team": [None],
+         "x": [0.0], "y": [0.0], "z": [None], "visible": [True]},
+        schema_overrides={"team": pl.String, "z": pl.Float64},
+    )  # fmt: skip
+    with pytest.raises(ValueError, match="learned possession"):
+        infer(frames, objects, LEARNED)
+    # refused before reading anything, even a match check_match would skip
+    with pytest.raises(ValueError, match="learned possession"):
+        check_match(tmp_path / "missing", LEARNED)
+
+
 def test_same_team_alternating_moves_possession_without_a_carrier():
     ball = (0.0, 0.0, 0.0)
     steps = [(t, ball, "h1", "home") for t in at(10, 1)]

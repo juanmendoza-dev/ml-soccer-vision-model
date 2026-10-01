@@ -156,6 +156,11 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
     runs = {"provider": load_run(args.provider), "inferred": load_run(args.inferred)}
     config = StateConfig(**runs["inferred"][0]["config"]["state_config"])
+    if config.possession_model is not None:
+        ap.error(
+            f"{args.inferred} is a learned-possession run: carrier staleness is the rule's; "
+            "use possession_split.py --possession-model (03)"
+        )
     key = config_key(config)
     ids = sorted(m["match_id"] for m in json.loads(FOLDS_PATH.read_text())["matches"])
     cols = ["match_id", "period", "t_s", "frame_id", "possession_team", "all_estimated"]

@@ -40,6 +40,8 @@ names = {f.name for f in fields(StateConfig)}
 over = {}
 for pair in opts.state:
     key, _, value = pair.partition("=")
+    if key == "possession_model":
+        ap.error("--state possession_model isn't a rule override: use --possession-model (03)")
     if key not in names:
         ap.error(f"--state {pair!r}: not a StateConfig field")
     over[key] = float(value)

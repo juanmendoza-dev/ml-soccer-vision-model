@@ -41,11 +41,24 @@ class StateConfig:
     # off (None) by default: the same team's player nearest the ball for this long moves
     # possession, without one player being carrier
     team_near_s: float | None = None
+    # off (None) by default: names a learned possession model version (03 stage 8,
+    # "Learned possession"). Only its wrapper takes it; the plain rule refuses it
+    possession_model: str | None = None
 
     def to_dict(self) -> dict:
         """Rules that are off are left out, so the default's cache key and run.json stay
         the same as before they existed (05 Caches)."""
         return {k: v for k, v in asdict(self).items() if v is not None}
+
+
+def rule_only(config: StateConfig) -> None:
+    """Refuse a learned config where only the rule runs, so it can't write rule output
+    under the learned config's key (03 stage 8, "Config, models and caches")."""
+    if config.possession_model is not None:
+        raise ValueError(
+            f"possession_model={config.possession_model!r} is learned possession: the plain "
+            "rule doesn't run it (use --possession-model, 03 stage 8)"
+        )
 
 
 def is_out(x: float, y: float, margin: float) -> bool:
@@ -73,6 +86,7 @@ class StateMachine:
 
     def __init__(self, config: StateConfig | None = None):
         self.cfg = config or StateConfig()
+        rule_only(self.cfg)
         self.period = None
 
     def _reset(self, period):
@@ -201,6 +215,7 @@ def infer(
     ball_state, possession_team and ball_carrier_id. Candidates are found in bulk, then
     the state machine steps through the frames in (period, timestamp_s) order."""
     c = config or StateConfig()
+    rule_only(c)
     obj = objects.lazy().filter(pl.col("visible").fill_null(False), pl.col("x").is_not_null())
     ball = (
         obj.filter(pl.col("object_type") == "ball")
