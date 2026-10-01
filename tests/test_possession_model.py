@@ -55,7 +55,14 @@ def game(seed, seconds=40.0, fps=10.0):
     )
     objects = pl.DataFrame(
         rows, schema=["frame_id", "object_id", "object_type", "team", "x", "y"], orient="row"
-    ).with_columns(visible=pl.Series(vis), interpolated=pl.lit(False), z=pl.lit(None, pl.Float64))
+    ).with_columns(
+        visible=pl.Series(vis),
+        interpolated=pl.lit(False),
+        z=pl.lit(None, pl.Float64),
+        vx=pl.lit(0.0),
+        vy=pl.lit(0.0),
+        player_id=pl.col("object_id"),
+    )
     return frames, objects, fps
 
 
@@ -306,7 +313,8 @@ def test_rule_grid_matches_the_cached_rule_columns(synthetic):
 
 def scramble_hidden(frames, objects, seed=0):
     """Scramble what a VISIBLE-only consumer must never read: invisible objects'
-    position, team and identity, every z, and PFF's possession and ball state."""
+    position, team and identity, every z, provider vx/vy and player_id, and PFF's
+    possession and ball state."""
     rng = np.random.default_rng(seed)
     n = objects.height
     hidden = ~objects["visible"]
@@ -318,11 +326,34 @@ def scramble_hidden(frames, objects, seed=0):
         .then(pl.lit("ghost") + pl.int_range(n).cast(pl.String))
         .otherwise("object_id"),
         z=pl.Series(rng.uniform(0, 3, n)),
+        vx=pl.Series(rng.normal(0, 5, n)),
+        vy=pl.Series(rng.normal(0, 5, n)),
+        player_id=pl.lit("p") + pl.Series(rng.integers(0, 99, n)).cast(pl.String),
     )
     frames = frames.with_columns(
         possession_team=pl.lit("away"), ball_state=pl.lit("dead"), set_play_phase=pl.lit(True)
     )
     return frames, objects
+
+
+def test_the_2d_rule_is_mirror_symmetric_with_the_same_object_ids():
+    """Fallback rows keep the 2D rule's possession, so it must flip with the scene: teams
+    swapped and x negated give the other team, the same carrier and the same ball state."""
+    frames, objects, fps = game(1)  # both teams carry in this one
+    a = pm.rule_grid(frames, objects, fps)
+    swapped = objects.with_columns(
+        x=-pl.col("x"),
+        team=pl.col("team").replace_strict({"home": "away", "away": "home"}, default=None),
+    )
+    b = pm.rule_grid(frames, swapped, fps)
+    flip = {"home": "away", "away": "home"}
+    assert b["rule_possession_team"].to_list() == [
+        flip.get(t) for t in a["rule_possession_team"].to_list()
+    ]
+    assert a["rule_possession_team"].drop_nulls().n_unique() == 2
+    assert b.select("ball_carrier_id", "ball_state", "carrier_age_s").equals(
+        a.select("ball_carrier_id", "ball_state", "carrier_age_s")
+    )
 
 
 def test_rule_grid_is_visible_only_and_ignores_height_and_pff_state():
