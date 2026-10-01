@@ -59,8 +59,15 @@ def label_rows(a: pl.DataFrame) -> pl.DataFrame:
     """The ball-visibility, since-change and ball-state buckets. First 3 s is [0, 3) after
     PFF's last change; `> 10 s` includes exactly 10 s; rows before any change are `none`."""
     return a.with_columns(
-        ball=pl.when("seen").then(pl.lit("0 visible")).otherwise(
-            bucket("gap", [0.5, 2, 10, 1e9], ["1 gap<0.5s", "2 gap0.5-2s", "3 gap2-10s", "4 gap>10s"], "5 never")
+        ball=pl.when("seen")
+        .then(pl.lit("0 visible"))
+        .otherwise(
+            bucket(
+                "gap",
+                [0.5, 2, 10, 1e9],
+                ["1 gap<0.5s", "2 gap0.5-2s", "3 gap2-10s", "4 gap>10s"],
+                "5 never",
+            )
         ),
         since_chg=bucket("since", [1, 3, 10, 1e9], ["a <1s", "b 1-3s", "c 3-10s", LATE], "e none"),
         state=pl.col("p_state").fill_null("null"),
@@ -76,11 +83,20 @@ def native_rows(
     native frame, for churn."""
     inf = infer(frames, objects, config)
     vis = (
-        objects.filter(pl.col("object_type") == "ball", pl.col("visible").fill_null(False), pl.col("x").is_not_null())
-        .select("frame_id").unique().with_columns(seen=pl.lit(True)).collect()
+        objects.filter(
+            pl.col("object_type") == "ball",
+            pl.col("visible").fill_null(False),
+            pl.col("x").is_not_null(),
+        )
+        .select("frame_id")
+        .unique()
+        .with_columns(seen=pl.lit(True))
+        .collect()
     )
     j = (
-        frames.select("frame_id", "period", "timestamp_s", p_state="ball_state", p_poss="possession_team")
+        frames.select(
+            "frame_id", "period", "timestamp_s", p_state="ball_state", p_poss="possession_team"
+        )
         .join(inf.select("frame_id", "possession_team", "ball_carrier_id"), on="frame_id")
         .join(vis, on="frame_id", how="left")
         .sort("period", "timestamp_s")
@@ -89,7 +105,9 @@ def native_rows(
             # causal-looking bookkeeping, fine for a diagnostic
             last_seen=pl.when("seen").then("timestamp_s").forward_fill().over("period"),
             chg=pl.when(pl.col("p_poss") != pl.col("p_poss").forward_fill().shift(1).over("period"))
-            .then("timestamp_s").forward_fill().over("period"),
+            .then("timestamp_s")
+            .forward_fill()
+            .over("period"),
         )
         .filter(pl.col("p_poss").is_not_null())
         .with_columns(
@@ -111,9 +129,8 @@ def scored_grid(grid: pl.DataFrame, horizon: str = "h5") -> pl.DataFrame:
     """07's scored rows on the grid (label mask on, not all ESTIMATED): period, k, frame_id
     and pos (the shot label). One row per grid tick, so a native frame reused at two ticks
     appears twice."""
-    return (
-        grid.filter(pl.col(f"label_mask_{horizon}"), ~pl.col("all_estimated"))
-        .select("period", k=tick(), frame_id=pl.col("frame_id"), pos=f"label_shot_{horizon}")
+    return grid.filter(pl.col(f"label_mask_{horizon}"), ~pl.col("all_estimated")).select(
+        "period", k=tick(), frame_id=pl.col("frame_id"), pos=f"label_shot_{horizon}"
     )
 
 
@@ -122,7 +139,10 @@ def join_learned(scored: pl.DataFrame, state: pl.DataFrame) -> pl.DataFrame:
     frame_id must agree; a row the state lacks, or a repeated key, is an error."""
     got = scored.join(
         state.select("period", "k", "frame_id", learned="possession_team", fallback="fallback"),
-        on=["period", "k"], how="left", validate="1:1", suffix="_state",
+        on=["period", "k"],
+        how="left",
+        validate="1:1",
+        suffix="_state",
     )
     if got["frame_id_state"].null_count():
         raise ValueError("scored grid rows the learned state doesn't cover")
@@ -176,7 +196,9 @@ def churn(grid: pl.DataFrame, team: str = "team") -> int:
         .with_columns(t=pl.col(team).forward_fill().over("period"))
         .with_columns(prev=pl.col("t").shift(1).over("period"))
     )
-    return int(d.select((pl.col("prev").is_not_null() & (pl.col("t") != pl.col("prev"))).sum()).item())
+    return int(
+        d.select((pl.col("prev").is_not_null() & (pl.col("t") != pl.col("prev"))).sum()).item()
+    )
 
 
 def check_baseline(default: dict, churns: dict, baseline: dict | None = None) -> None:
@@ -199,15 +221,20 @@ class Bar:
     passed: bool
 
 
-def evaluate(learned: dict, learned_churn: int, default: dict, bars: dict | None = None) -> list[Bar]:
+def evaluate(
+    learned: dict, learned_churn: int, default: dict, bars: dict | None = None
+) -> list[Bar]:
     """The five bars, all inclusive: learned must be at most the limit. Same denominators
     as the default (checked), null already counted as disagreement."""
     b = bars or BARS
     for k in ("rows", "positives", "late_rows", "first3_rows"):
         if learned[k] != default[k]:
-            raise ValueError(f"learned and default denominators differ on {k}: {learned[k]} vs {default[k]}")
-    late_rate = learned["late_dis"] / learned["late_rows"]
-    late_limit = default["late_dis"] / default["late_rows"] + b["late_margin"]
+            raise ValueError(
+                f"learned and default denominators differ on {k}: {learned[k]} vs {default[k]}"
+            )
+    # no late rows is only possible off the real data (the baseline check demands 1,162,041)
+    rate = lambda t: t["late_dis"] / t["late_rows"] if t["late_rows"] else 0.0
+    late_rate, late_limit = rate(learned), rate(default) + b["late_margin"]
     out = [
         ("overall disagreement", learned["overall"], b["overall"]),
         ("first-3-s disagreement", learned["first3"], b["first3"]),
@@ -258,26 +285,38 @@ def run(
             m, config, possession.context_for(fold, fold), gamestate_dir, processed_dir, models_dir
         )
         scored = scored_grid(grid)
-        parts.append(match_rows(m, fold, scored, state, native.select(
-            "frame_id", "p_poss", "p_state", "seen", "gap", "since", "dis")))
+        parts.append(
+            match_rows(
+                m,
+                fold,
+                scored,
+                state,
+                native.select("frame_id", "p_poss", "p_state", "seen", "gap", "since", "dis"),
+            )
+        )
         every = grid.select("period", k=tick(), frame_id="frame_id", pff="possession_team")
         every = every.join(rule, on="frame_id", how="left", validate="m:1")
-        per.append({
-            "match": m,
-            "fold": fold,
-            "churn_learned": churn(state.select("period", "k", team="possession_team")),
-            "churn_pff": churn(every.select("period", "k", team="pff")),
-            "churn_default": churn(every.select("period", "k", team="rule")),
-            "fallback_all": int(state["fallback"].sum()),
-            "grid_rows": state.height,
-        })
+        per.append(
+            {
+                "match": m,
+                "fold": fold,
+                "churn_learned": churn(state.select("period", "k", team="possession_team")),
+                "churn_pff": churn(every.select("period", "k", team="pff")),
+                "churn_default": churn(every.select("period", "k", team="rule")),
+                "fallback_all": int(state["fallback"].sum()),
+                "grid_rows": state.height,
+            }
+        )
         log(f"{m}: fold {fold}, {time.perf_counter() - t0:.1f} s")
     rows = pl.concat(parts)
     per_match = pl.DataFrame(per)
     default = tally(rows, "dis")
     check_baseline(
         default,
-        {"churn_pff": int(per_match["churn_pff"].sum()), "churn_default": int(per_match["churn_default"].sum())},
+        {
+            "churn_pff": int(per_match["churn_pff"].sum()),
+            "churn_default": int(per_match["churn_default"].sum()),
+        },
         baseline,
     )
     learned = tally(rows, "dis_learned")
@@ -286,7 +325,114 @@ def run(
         m: int(g["fallback"].sum()) for (m,), g in rows.partition_by("match", as_dict=True).items()
     }
     return {
-        "rows": rows, "default": default, "learned": learned, "per_match": per_match,
-        "fallback_scored": fallback_scored, "bars": results,
+        "rows": rows,
+        "default": default,
+        "learned": learned,
+        "per_match": per_match,
+        "fallback_scored": fallback_scored,
+        "bars": results,
         "passed": all(b.passed for b in results),
     }
+
+
+def table(t: pl.DataFrame) -> str:
+    with pl.Config(
+        tbl_rows=80,
+        tbl_cols=20,
+        tbl_formatting="MARKDOWN",
+        tbl_hide_dataframe_shape=True,
+        tbl_hide_column_data_types=True,
+        tbl_width_chars=300,
+    ):
+        return str(t)
+
+
+def by(rows: pl.DataFrame, keys: list[str]) -> pl.DataFrame:
+    """Rows and both disagreement counts per group."""
+    return (
+        rows.group_by(keys)
+        .agg(n=pl.len(), default_dis=pl.col("dis").sum(), learned_dis=pl.col("dis_learned").sum())
+        .with_columns(
+            default_rate=(pl.col("default_dis") / pl.col("n")).round(4),
+            learned_rate=(pl.col("learned_dis") / pl.col("n")).round(4),
+        )
+        .sort(keys)
+    )
+
+
+def report(res: dict, model_id: str) -> str:
+    """The gate's markdown report: the five bars, then the saved tables (03: overall,
+    per-fold, positives, ball visibility x change age, fallbacks and churn per match)."""
+    rows, pm = res["rows"], res["per_match"]
+    d, le = res["default"], res["learned"]
+    out = [f"# Possession gate, {model_id}, H = 5\n"]
+    out.append(
+        f"**{'PASS' if res['passed'] else 'FAIL'}**: {sum(b.passed for b in res['bars'])} of "
+        f"{len(res['bars'])} bars. Only these five pooled bars decide.\n"
+    )
+    bars = pl.DataFrame(
+        {
+            "bar": [b.name for b in res["bars"]],
+            "learned": [round(float(b.value), 5) for b in res["bars"]],
+            "limit (<=)": [round(float(b.limit), 5) for b in res["bars"]],
+            "result": ["pass" if b.passed else "FAIL" for b in res["bars"]],
+        }
+    )
+    out += [table(bars), ""]
+    cmp = pl.DataFrame(
+        {
+            "": ["all", "first 3 s", "positives", ">= 10 s"],
+            "rows": [d["rows"], d["first3_rows"], d["positives"], d["late_rows"]],
+            "default": [d["overall"], d["first3"], d["positive_dis"], d["late_dis"]],
+            "learned": [le["overall"], le["first3"], le["positive_dis"], le["late_dis"]],
+        }
+    )
+    out += ["## Disagreement counts, learned vs the default rule", "", table(cmp), ""]
+    out += ["## Per fold", "", table(by(rows, ["fold"])), ""]
+    out += ["## Positives", "", table(by(rows.filter("pos"), ["fold"])), ""]
+    out += [
+        "## Ball visibility x time since PFF's change",
+        "",
+        table(by(rows, ["ball", "since_chg"])),
+        "",
+    ]
+    fb = pl.DataFrame(
+        {
+            "match": list(res["fallback_scored"]),
+            "fallback_scored": list(res["fallback_scored"].values()),
+        }
+    )
+    per = pm.join(fb, on="match", how="left").with_columns(pl.col("fallback_scored").fill_null(0))
+    head = (
+        f"## Fallbacks and churn per match (totals: churn learned {int(pm['churn_learned'].sum())}, "
+        f"PFF {int(pm['churn_pff'].sum())}, default {int(pm['churn_default'].sum())}; fallback rows on "
+        f"scored rows {int(per['fallback_scored'].sum())}, on all grid rows {int(pm['fallback_all'].sum())})"
+    )
+    out += [head, "", table(per.sort("match")), ""]
+    out.append(
+        "Not reported: the S10 oracle-floor windows (03). No code or definition of them exists "
+        "in the repo beyond 07's prose, so none was invented.\n"
+    )
+    return "\n".join(out)
+
+
+def save(res: dict, model_id: str, runs_dir: Path) -> Path:
+    """data/runs/possession-gate-<model>/: the report and the numbers behind it."""
+    d = runs_dir / f"possession-gate-{model_id}"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "gate_h5.md").write_text(report(res, model_id))
+    (d / "gate_h5.json").write_text(
+        json.dumps(
+            {
+                "model_id": model_id,
+                "passed": res["passed"],
+                "bars": [vars(b) for b in res["bars"]],
+                "default": res["default"],
+                "learned": res["learned"],
+                "per_match": res["per_match"].to_dicts(),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return d

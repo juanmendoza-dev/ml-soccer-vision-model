@@ -34,6 +34,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--scored", choices=["h5", "h3"])
 ap.add_argument("--state", action="append", default=[], metavar="KEY=VALUE")
 ap.add_argument("--residual", action="store_true")
+ap.add_argument("--possession-model", metavar="ID", help="run 03's gate on this learned model (needs --scored h5)")
 ap.add_argument("ids", nargs="*")
 opts = ap.parse_args()
 scored = opts.scored
@@ -49,6 +50,16 @@ for pair in opts.state:
 config = StateConfig(**over)
 if opts.residual and (scored != "h5" or over != {"team_near_s": 0.05}):
     ap.error("--residual is 03's diagnosis: --scored h5 --state team_near_s=0.05 and nothing else")
+if opts.possession_model:
+    if scored != "h5" or over or opts.residual or opts.ids:
+        ap.error("--possession-model is the gate: --scored h5 and nothing else")
+    from prediction import possession_gate as gate
+
+    res = gate.run(StateConfig(possession_model=opts.possession_model), GS, PROCESSED,
+                   Path("data/splits/folds.json"))
+    print(gate.report(res, opts.possession_model))
+    print("saved to", gate.save(res, opts.possession_model, Path("data/runs")))
+    sys.exit()
 REACH = config.carrier_radius_m
 WINDOW = (-1.0, 2.0)  # timing window around PFF's change, s
 SEEN_SHARE = 0.5  # ball visible on at least this share of the window's frames to call "no contact"
