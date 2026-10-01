@@ -131,3 +131,33 @@ def player_marker(
         cv2.putText(
             img, label, org, cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1, cv2.LINE_AA
         )
+
+
+LANE_COLORS = {0: (120, 255, 120), 1: (0, 190, 255), 2: (40, 40, 255)}  # open, amber, red
+
+
+def lane_cone(img: np.ndarray, triangle: list[Point], defenders: int) -> None:
+    """The ball-to-posts triangle, filled by how many defenders stand in it (0 open, 1
+    amber, 2+ red), with the count by the ball."""
+    color = LANE_COLORS[min(defenders, 2)]
+    pts = np.array(triangle, dtype=np.int32)
+    x1, y1 = pts.min(axis=0)
+    x2, y2 = pts.max(axis=0)
+    blend(
+        img,
+        lambda L, o: cv2.fillPoly(L, [pts - np.array(o)], color, cv2.LINE_AA),
+        0.3,
+        (int(x1) - 1, int(y1) - 1, int(x2) + 2, int(y2) + 2),
+    )
+    cv2.polylines(img, [pts], True, color, 1, cv2.LINE_AA)
+    bx, by = triangle[0]
+    cv2.putText(
+        img,
+        str(defenders),
+        (bx + 10, by - 10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        color,
+        1,
+        cv2.LINE_AA,
+    )
