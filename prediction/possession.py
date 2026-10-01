@@ -346,3 +346,45 @@ def swap_learned(frames: pl.DataFrame, state: pl.DataFrame) -> pl.DataFrame:
         raise ValueError("learned state's native frame_id differs from the grid's")
     out = frames.with_columns(possession_team=state["possession_team"])
     return out.with_columns(flipped=flipped_expr())
+
+
+def fill(
+    config: StateConfig,
+    gamestate_dir: Path,
+    processed_dir: Path,
+    log=print,
+) -> int:
+    """Build every match's learned state in each of the 5 outer contexts (its test fit and
+    4 inner-OOF fits; final reuses test), so later runs only read caches. Returns the
+    number of states built or rechecked."""
+    _, man = learned_manifest(config)
+    n = 0
+    for m, fold in sorted(man["folds"]["assignments"].items()):
+        t0 = time.perf_counter()
+        for k in range(vpm.N_FOLDS):
+            learned_state(m, config, context_for(k, fold), gamestate_dir, processed_dir)
+            n += 1
+        log(f"{m}: {vpm.N_FOLDS} contexts, {time.perf_counter() - t0:.1f} s")
+    return n
+
+
+def main(argv: list[str]) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Fill the learned-possession state caches for every outer context."
+    )
+    ap.add_argument("--possession-model", required=True, metavar="ID")
+    ap.add_argument("--gamestate", type=Path, default=Path("data/gamestate"))
+    ap.add_argument("--processed", type=Path, default=Path("data/processed"))
+    a = ap.parse_args(argv)
+    t0 = time.perf_counter()
+    n = fill(StateConfig(possession_model=a.possession_model), a.gamestate, a.processed)
+    print(f"{n} learned states in {time.perf_counter() - t0:.0f} s", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main(sys.argv[1:]))

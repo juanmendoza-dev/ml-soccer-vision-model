@@ -309,3 +309,22 @@ def test_cli_refuses_learned_combinations(extra, why, capsys):
     with pytest.raises(SystemExit):
         cv.main(argv + extra)
     assert why in capsys.readouterr().err
+
+
+def test_fill_builds_every_outer_context(copy):
+    for f in copy["proc"].glob("*/state_inferred_age_*"):
+        f.unlink()
+    n = possession.fill(CONFIG, copy["gs"], copy["proc"], log=lambda _: 0)
+    assert n == 5 * len(IDS)
+    for m in IDS:
+        names = {f.name for f in (copy["proc"] / m).glob(f"state_inferred_age_{KEY}_*.parquet")}
+        assert (
+            len(names) == 5 and f"state_inferred_age_{KEY}_outer{fold_of(m)}_test.parquet" in names
+        )
+
+
+def test_cv_refuses_a_model_trained_on_other_folds(w, tmp_path):
+    folds = json.loads(json.dumps(w["folds"]))
+    folds["matches"][0]["fold"], folds["matches"][1]["fold"] = 1, 0
+    with pytest.raises(ValueError, match="folds"):
+        cv.run(run_args(w, tmp_path), [], folds, CONFIG)
