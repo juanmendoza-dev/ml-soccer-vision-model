@@ -61,7 +61,11 @@ def possession_tally(frames: pl.DataFrame, ball: pl.DataFrame) -> pl.DataFrame:
         cols.append(mine.cast(pl.Int64).cum_sum().alias(f"{team}_n"))
         for t in THIRDS:
             cols.append(
-                (mine & (pl.col("third") == t)).cast(pl.Int64).cum_sum().alias(f"{team}_{t}")
+                (mine & (pl.col("third") == t))
+                .fill_null(False)
+                .cast(pl.Int64)
+                .cum_sum()
+                .alias(f"{team}_{t}")
             )
     return f.select("frame_id", *cols)
 
