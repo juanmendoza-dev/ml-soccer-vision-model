@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "clips": [
+    {
+      "clip_id": "vb01-arg-fra",
+      "match_id": "10517",
+      "period": 2,
+      "video_sha256": "0de84e9ce81d0998c6d3a5a9acfe6dc269b57066df21464df77d63d4b2b72ffc",
+      "video_start_s": 60.0,
+      "video_end_s": 120.0,
+      "home_attacks_tv_right_p1": true,
+      "home_cluster": null,
+      "sync_method": "cut edges: 10 hand-marked cut starts/ends vs PFF's all-ESTIMATED switches, offsets 1167.44-1167.52 s; scoreboard 65:26 at 60 s agrees to 1.5 s",
+      "sync": [
+        {"video_s": 83.5, "timestamp_s": 1250.984},
+        {"video_s": 115.0, "timestamp_s": 1282.449}
+      ],
+      "marks": [
+        {"start_s": 83.5, "end_s": 87.8, "label": "closeup"},
+        {"start_s": 92.4, "end_s": 93.467, "label": "closeup"},
+        {"start_s": 97.0, "end_s": 98.667, "label": "closeup"},
+        {"start_s": 105.0, "end_s": 106.533, "label": "closeup"},
+        {"start_s": 115.0, "end_s": 117.8, "label": "closeup"}
+      ],
+      "marks_checked_by_user": false
+    }
+  ]
+}
