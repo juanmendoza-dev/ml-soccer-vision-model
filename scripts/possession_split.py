@@ -55,10 +55,12 @@ if opts.possession_model:
         ap.error("--possession-model is the gate: --scored h5 and nothing else")
     from prediction import possession_gate as gate
 
+    runs = Path("data/runs")
     res = gate.run(StateConfig(possession_model=opts.possession_model), GS, PROCESSED,
                    Path("data/splits/folds.json"))
-    print(gate.report(res, opts.possession_model))
-    print("saved to", gate.save(res, opts.possession_model, Path("data/runs")))
+    earlier = gate.earlier_attempts(res, runs)
+    print(gate.report(res, opts.possession_model, earlier))
+    print("saved to", gate.save(res, opts.possession_model, runs, earlier))
     sys.exit()
 REACH = config.carrier_radius_m
 WINDOW = (-1.0, 2.0)  # timing window around PFF's change, s

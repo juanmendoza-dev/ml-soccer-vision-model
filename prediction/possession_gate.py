@@ -332,6 +332,7 @@ def run(
         "fallback_scored": fallback_scored,
         "bars": results,
         "passed": all(b.passed for b in results),
+        "derived_from": man.get("derived_from"),
     }
 
 
@@ -360,9 +361,22 @@ def by(rows: pl.DataFrame, keys: list[str]) -> pl.DataFrame:
     )
 
 
-def report(res: dict, model_id: str) -> str:
-    """The gate's markdown report: the five bars, then the saved tables (03: overall,
-    per-fold, positives, ball visibility x change age, fallbacks and churn per match)."""
+def earlier_attempts(res: dict, runs_dir: Path) -> list[dict]:
+    """The saved gate result of the version this one was derived from (03's retry cap:
+    every attempt is reported). A derived model with no saved source gate is an error."""
+    src = res.get("derived_from")
+    if src is None:
+        return []
+    path = runs_dir / f"possession-gate-{src['model_id']}" / "gate_h5.json"
+    if not path.exists():
+        raise FileNotFoundError(f"{path}: no gate result for {src['model_id']}, run it first")
+    return [json.loads(path.read_text())]
+
+
+def report(res: dict, model_id: str, earlier: list[dict] | None = None) -> str:
+    """The gate's markdown report: the five bars, every earlier attempt's bars, then the
+    saved tables (03: overall, per-fold, positives, ball visibility x change age,
+    fallbacks and churn per match)."""
     rows, pm = res["rows"], res["per_match"]
     d, le = res["default"], res["learned"]
     out = [f"# Possession gate, {model_id}, H = 5\n"]
@@ -379,6 +393,20 @@ def report(res: dict, model_id: str) -> str:
         }
     )
     out += [table(bars), ""]
+    if earlier:
+        attempts = [(e["model_id"], e["bars"], e["passed"]) for e in earlier]
+        attempts.append((model_id, [vars(b) for b in res["bars"]], res["passed"]))
+        every = pl.DataFrame(
+            {
+                "model": [m for m, _, _ in attempts],
+                **{
+                    b["name"]: [round(float(bs[i]["value"]), 5) for _, bs, _ in attempts]
+                    for i, b in enumerate(attempts[0][1])
+                },
+                "result": ["PASS" if ok else "FAIL" for _, _, ok in attempts],
+            }
+        )
+        out += ["## Every attempt through this gate", "", table(every), ""]
     cmp = pl.DataFrame(
         {
             "": ["all", "first 3 s", "positives", ">= 10 s"],
@@ -416,11 +444,11 @@ def report(res: dict, model_id: str) -> str:
     return "\n".join(out)
 
 
-def save(res: dict, model_id: str, runs_dir: Path) -> Path:
+def save(res: dict, model_id: str, runs_dir: Path, earlier: list[dict] | None = None) -> Path:
     """data/runs/possession-gate-<model>/: the report and the numbers behind it."""
     d = runs_dir / f"possession-gate-{model_id}"
     d.mkdir(parents=True, exist_ok=True)
-    (d / "gate_h5.md").write_text(report(res, model_id))
+    (d / "gate_h5.md").write_text(report(res, model_id, earlier))
     (d / "gate_h5.json").write_text(
         json.dumps(
             {
