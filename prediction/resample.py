@@ -19,6 +19,7 @@ from prediction.labels import HORIZONS, US, add_labels, label_events, shots_with
 
 GAMESTATE_DIR = Path("data/gamestate")
 OUT_DIR = Path("data/processed")
+VISION_CACHE_DIR = Path("data/vision_cache")  # learned possession inputs (03 stage 8)
 
 GRID_US = 100_000  # 10 Hz
 MAX_STALENESS = 1.5  # native intervals; an older frame means a gap
@@ -204,7 +205,10 @@ def build_report(
 
 
 def process_game(
-    match_id: str, gamestate_dir: Path = GAMESTATE_DIR, out_dir: Path = OUT_DIR
+    match_id: str,
+    gamestate_dir: Path = GAMESTATE_DIR,
+    out_dir: Path = OUT_DIR,
+    vision_cache_dir: Path = VISION_CACHE_DIR,
 ) -> dict:
     src = gamestate_dir / match_id
     frames = pl.read_parquet(src / "frames.parquet")
@@ -219,10 +223,20 @@ def process_game(
     dst = out_dir / match_id
     dst.mkdir(parents=True, exist_ok=True)
     # cached features and graphs (prediction.features, prediction.graphs) were built from
-    # the old tables; the inferred state (prediction.possession) from the old game state
-    stale_globs = ("features_v*.parquet", "graphs_v*.npz", "state_inferred_*.parquet")
-    for stale in [p for g in stale_globs for p in dst.glob(g)]:
-        stale.unlink()
+    # the old tables; the inferred state (prediction.possession) and the learned
+    # possession inputs (vision cache) from the old game state. Trained models stay: their
+    # recorded hashes refuse changed inputs
+    stale_globs = (
+        "features_v*.parquet",
+        "features_v*.json",
+        "graphs_v*.npz",
+        "state_inferred_*.parquet",
+        "state_inferred_*.json",
+    )
+    stale = [p for g in stale_globs for p in dst.glob(g)]
+    stale += list((vision_cache_dir / match_id).glob("possession_inputs_*"))
+    for path in stale:
+        path.unlink()
     frames10.write_parquet(dst / "frames_10hz.parquet")
     objects10.write_parquet(dst / "objects_10hz.parquet")
     report = build_report(match_id, frames, objects_in, frames10, objects10, stats)

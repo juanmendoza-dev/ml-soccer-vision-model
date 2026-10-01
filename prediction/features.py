@@ -11,6 +11,7 @@ ESTIMATED positions are filled using later frames (05, Leakage), so they never r
 feature except through ball_source="raw", kept to measure that leak.
 """
 
+import json
 import time
 from pathlib import Path
 
@@ -617,6 +618,7 @@ def load_match(
     state_config=None,
     possession_stats: dict | None = None,
     stale_after: float | None = None,
+    context=None,
 ) -> pl.DataFrame:
     """One match's grid rows with labels and features. Features are cached next to the
     resampled tables, keyed by features_version and ball_source.
@@ -634,7 +636,13 @@ def load_match(
     "Stale possession") makes that possession null where stage 8's carrier is older.
 
     features_version 3 adds stage 8's carrier age, so it runs stage 8 (on gamestate_dir)
-    with either possession, and its cache name carries stage 8's config key."""
+    with either possession, and its cache name carries stage 8's config key.
+
+    Learned possession (state_config.possession_model set, 03 stage 8) needs an explicit
+    context (prediction.possession.Context): the possession comes from that context's
+    fit, joined on the full grid key, and the features are cached under the context's
+    suffix with a hash check on every read. Only test-role loads add to
+    possession_stats. v1, held ball and no stale arm only."""
     if possession not in possession_mod.POSSESSION:
         raise ValueError(f"possession must be one of {possession_mod.POSSESSION}")
     inferred = possession == "inferred"
@@ -647,6 +655,14 @@ def load_match(
         raise ValueError("stage 8 (inferred possession, v3) needs gamestate_dir to run on")
     if stale_after is not None and (not inferred or not stale_after > 0):
         raise ValueError("stale_after needs possession='inferred' and a positive value (05)")
+    config = state_config or possession_mod.StateConfig()
+    learned = config.possession_model is not None
+    if learned and not inferred:
+        raise ValueError("a learned possession model needs possession='inferred' (05)")
+    if learned != (context is not None):
+        raise ValueError("learned possession needs a context, and only it takes one (05)")
+    if learned and (features_version != "1" or ball_source != "held" or stale_after or degrade):
+        raise ValueError("learned possession is v1, held ball, no stale arm or degradation (05)")
     d = processed_dir / match_id
     cols = FRAME_COLS + [f"label_{x}_{h}" for h in horizons for x in ("mask", "shot")]
     read = cols + ["frame_id", "home_attacks_positive_x"] if stage8 else cols
@@ -656,14 +672,26 @@ def load_match(
     objects = pl.scan_parquet(d / "objects_10hz.parquet")
     inputs = frames.select("period", "t_s", "possession_team", "flipped")
     pstats = possession_stats if possession_stats is not None else {}
-    if stage8:
-        config = state_config or possession_mod.StateConfig()
-        key = possession_mod.config_key(config)
+    key = possession_mod.config_key(config)
+    if stage8 and not learned:
         state = possession_mod.inferred_state(
             match_id, gamestate_dir, processed_dir, config, cache, pstats
         )
         age = ["carrier_age_s"] if features_version in STAGE8_VERSIONS else []
-    if inferred:
+    if learned:
+        state = possession_mod.learned_state(
+            match_id, config, context, gamestate_dir, processed_dir, cache=cache
+        )
+        path = d / f"features_v1_held_pinf_{key}_{context.suffix}.parquet"
+        inputs = possession_mod.swap_learned(frames, state).select(inputs.columns)
+        scored = frames.select(
+            pl.col(f"label_mask_{horizons[0]}") & ~pl.col("all_estimated")
+        ).to_series()
+        if context.role == "test":
+            possession_mod.add_stats(pstats, frames, inputs, scored)
+            pstats["fallback_rows"] = pstats.get("fallback_rows", 0) + int(state["fallback"].sum())
+            pstats["grid_rows"] = pstats.get("grid_rows", 0) + state.height
+    elif inferred:
         name = f"features_v{features_version}_{ball_source}_pinf_{key}"
         if stale_after is not None:
             name += f"_unk{stale_after:g}"
@@ -694,7 +722,20 @@ def load_match(
                 acc = degrade_stats.setdefault(arm, [0.0, 0.0])
                 acc[0] += num
                 acc[1] += den
+    if learned and cache:
+        side = path.with_suffix(".json")
+        # what the features came from: this context's learned state and the 10 Hz objects
+        state_file = d / f"state_inferred_age_{key}_{context.suffix}.parquet"
+        want = {
+            "context": context.suffix,
+            "state_sha256": possession_mod.sha256_file(state_file),
+            "objects_10hz_sha256": possession_mod.sha256_file(d / "objects_10hz.parquet"),
+        }
     if cache and path.exists():
+        if learned:
+            if not side.exists():
+                raise ValueError(f"{path}: no provenance; delete it")
+            possession_mod.refuse_stale(path, side, want)
         feats = pl.read_parquet(path)
     else:
         t0 = time.perf_counter()
@@ -703,6 +744,9 @@ def load_match(
             pstats["features_s"] = pstats.get("features_s", 0.0) + time.perf_counter() - t0
         if cache:
             feats.write_parquet(path)
+            if learned:
+                out = want | {"output_sha256": possession_mod.sha256_file(path)}
+                side.write_text(json.dumps(out, indent=2) + "\n")
     if feats.height != frames.height:
         raise ValueError(f"{match_id}: {feats.height} feature rows for {frames.height} grid rows")
     return frames.hstack(feats.drop("period", "t_s"))
