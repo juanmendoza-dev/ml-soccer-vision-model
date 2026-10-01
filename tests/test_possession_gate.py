@@ -3,6 +3,7 @@ bucket edges, the bars' boundaries, the baseline stop and the grid join, then on
 run on the synthetic fold world of test_possession_learned."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -356,7 +357,10 @@ def test_cli_refuses_anything_but_the_gates_own_arguments(args):
         [sys.executable, "scripts/possession_split.py", *args],
         check=False,
         cwd=ROOT,
-        env={"PYTHONPATH": str(ROOT), "PATH": ""},
+        # on Windows platform.machine() reads PROCESSOR_ARCHITECTURE; without it polars'
+        # CPU check fails at import, before argparse runs
+        env={"PYTHONPATH": str(ROOT), "PATH": ""}
+        | {k: os.environ[k] for k in ("SYSTEMROOT", "PROCESSOR_ARCHITECTURE") if k in os.environ},
         capture_output=True,
         text=True,
     )
