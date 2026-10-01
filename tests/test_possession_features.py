@@ -327,3 +327,33 @@ def test_last_contact_team_and_age():
     frames = make_frames([0.0, 0.1, 0.5, 0.6])  # a segment break after 0.1 s
     at = contact_at(frames, [r for f in (0, 1) for r in nearest(f, "home")])
     assert at[1]["last_contact_team"] == 1.0 and missing(at[6]["last_contact_team"])
+
+
+def velocity_at(frames, rows):
+    nat = pf.native(frames, FPS)
+    use = pf.usable(objs(rows))
+    return pf.track_velocity(nat, pf.players(nat, use)).sort("fi")
+
+
+def test_track_velocity_toward_own_goal():
+    rows = [
+        (f, "h1", "player", "home", -1.0 * f / 10, 0.0) for f in range(6)
+    ]  # home retreats 1 m/s
+    rows += [
+        (f, "a1", "player", "away", -2.0 * f / 10, 0.0) for f in range(6)
+    ]  # away advances 2 m/s
+    v = velocity_at(ten_hz(0.5), rows)
+    assert missing(v["home_mean_vx_own"][0])  # one sighting
+    assert v["home_mean_vx_own"][1] == pytest.approx(1.0)  # 0.1 s span is enough
+    assert v["home_mean_vx_own"][5] == pytest.approx(1.0)
+    assert v["away_mean_vx_own"][5] == pytest.approx(-2.0)
+
+
+def test_track_velocity_needs_an_unbroken_track():
+    rows = [(f, "h1", "player", "home", 1.0 * f, 0.0) for f in (0, 1, 3, 4)]  # missing on frame 2
+    v = velocity_at(ten_hz(0.4), rows)
+    assert missing(v["home_mean_vx_own"][3])  # run restarts at frame 3
+    assert v["home_mean_vx_own"][4] == pytest.approx(-10.0)  # 3 -> 4 is 0.1 s
+    rows = [(f, "h1", "player", "home" if f < 2 else "away", 1.0 * f, 0.0) for f in range(4)]
+    v = velocity_at(ten_hz(0.3), rows)
+    assert missing(v["away_mean_vx_own"][2]) and v["away_mean_vx_own"][3] == pytest.approx(10.0)

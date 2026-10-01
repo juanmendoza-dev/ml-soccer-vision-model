@@ -394,18 +394,16 @@ def contact_features(g: pl.DataFrame, cf: pl.DataFrame, native_fps: float) -> pl
     out = {}
     for team in ("home", "away"):
         for wname, w in SHARE_W:
+            a = np.maximum(s0, t - w)
+            ia = np.searchsorted(key, gseg * SEG_KEY + a, "right") - 1
+            dur = t - a
             for reach in ("any", "r15"):
                 wt = cf[f"w_{team}_{reach}"].to_numpy()
-                cb = np.r_[0.0, np.cumsum(wt * hold)[:-1]]
-
-                def integral(x, i):
-                    return cb[i] + wt[i] * np.minimum(x - ts[i], hold[i])
-
-                a = np.maximum(s0, t - w)
-                ia = np.searchsorted(key, gseg * SEG_KEY + a, "right") - 1
-                dur = t - a
+                cb = np.r_[0.0, np.cumsum(wt * hold)[:-1]]  # integral up to each frame's start
+                at_t = cb[fi] + wt[fi] * np.minimum(t - ts[fi], hold[fi])
+                at_a = cb[ia] + wt[ia] * np.minimum(a - ts[ia], hold[ia])
                 with np.errstate(divide="ignore", invalid="ignore"):
-                    share = (integral(t, fi) - integral(a, ia)) / dur
+                    share = (at_t - at_a) / dur
                 out[f"nearest_{team}_{wname}_{reach}"] = np.where(dur > 0, share, np.nan)
     c = cf.filter(pl.col("contact").is_not_null())
     ckey, cts, cseg, code = (c[x].to_numpy() for x in ("key", "ts_us", "seg", "contact"))
@@ -418,3 +416,49 @@ def contact_features(g: pl.DataFrame, cf: pl.DataFrame, native_fps: float) -> pl
     out["last_contact_team"] = np.where(have, code[ic], np.nan)
     out["last_contact_age_s"] = np.where(have, (t - cts[ic]) / US, np.nan)
     return pl.DataFrame(out)
+
+
+TRACK_W_US = 200_000
+TRACK_MIN_US = 100_000
+
+
+def track_velocity(nat: pl.DataFrame, pls: pl.DataFrame) -> pl.DataFrame:
+    """<team>_mean_vx_own per native frame u: the mean of -s_team * VX over the team's
+    players with a velocity. A track's VX runs from its first usable sighting in
+    [u - 0.2 s, u] to u, needs a span of at least 0.1 s, the same team throughout and a
+    sighting on every native frame in between (no gap, same segment)."""
+    ts, key, seg = (nat[c].to_numpy() for c in ("ts_us", "key", "seg"))
+    start = nat.select(
+        "fi", f0=pl.Series(np.searchsorted(key, seg * SEG_KEY + ts - TRACK_W_US, "left"))
+    )
+    by = "object_id"
+    team = pl.col("team").fill_null("?")
+    p = (
+        pls.sort(by, "fi")
+        .with_columns(
+            brk=(
+                (pl.col("fi") - pl.col("fi").shift(1).over(by) != 1)
+                | (pl.col("seg") != pl.col("seg").shift(1).over(by))
+                | (team != team.shift(1).over(by))
+            ).fill_null(True)
+        )
+        .with_columns(run_start=pl.when("brk").then("fi").forward_fill().over(by))
+        .join(start, on="fi")
+        .with_columns(first=pl.max_horizontal("run_start", "f0"))
+    )
+    v = (
+        p.join(p.select(by, first="fi", X_first="X", ts_first="ts_us"), on=[by, "first"])
+        .filter(pl.col("ts_us") - pl.col("ts_first") >= TRACK_MIN_US)
+        .with_columns(
+            vx=(pl.col("X") - pl.col("X_first")) / (pl.col("ts_us") - pl.col("ts_first")) * US
+        )
+    )
+    out = nat.select("fi")
+    for name, sgn in (("home", 1.0), ("away", -1.0)):
+        m = (
+            v.filter(pl.col("team") == name)
+            .group_by("fi")
+            .agg((-sgn * pl.col("vx")).mean().alias(f"{name}_mean_vx_own"))
+        )
+        out = out.join(m, on="fi", how="left")
+    return out
