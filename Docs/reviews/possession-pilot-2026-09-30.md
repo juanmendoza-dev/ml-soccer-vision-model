@@ -71,7 +71,16 @@ Notes:
 - **Mirror and Float32 differences.** `pf.mirror(pf.mirror(x)) != x` bitwise in all 12 `diff_*` columns on every cached match: the cache subtracts in Float64 and rounds once, and M recomputes in Float32. The model now reads every `diff_*` recomputed in Float32 (`possession_model.canonical`), the same way M recomputes it. M is then an exact involution and |p(x) + p(Mx) − 1| ≤ 1e−12 holds. Values move by at most 4e−6. 03 has the clarification, and the `pfeat-v1` cache and contract are unchanged.
 - `all_estimated`, eligibility and the training-row selection match the resampler's `frames_10hz` on all 64 matches (`tests/test_possession_model.py`).
 
+## Checks before the overnight run
+
+- The pilot's `outer_0` is reusable under the full run's inputs (`possession_train.reusable` returns its record).
+- Real-data symmetry with that booster on two fold-0 matches (10505, 10517): max |p(x) + p(Mx) − 1| = 1.1e−16, and the hard labels swap on every row away from 0.5.
+- The provider `features_v1_held` rebuilt with `cache=False` equals the cached file on 10502 and 10517. The old inferred caches (`*_pinf_e737054b5d`, `state_inferred_age_e737054b5d`) aren't on the workstation, so they can't be compared here.
+- `vision.possession_train` now keeps Windows awake like `prediction.cv`.
+
 ## Next
 
-1. Overnight: `python -m vision.possession_train --model-id lgbm-v1-nested5x4-s1`. It runs the 4 other outer fits, `pair_3_4` and its determinism twin, then the other 9 pairs, and seals the manifest. About 3 h.
-2. The gate: `possession_split.py --scored h5 --possession-model <id>`, still to build. It reads the concatenated `test` contexts through `prediction.possession.learned_state`.
+1. Overnight:
+   - `python -m vision.possession_train --model-id lgbm-v1-nested5x4-s1`: about 2.9 h. It runs the other 4 outer fits, `pair_3_4` and its determinism twin, then the other 9 pairs, and seals the manifest.
+   - Then `python -m prediction.possession --possession-model lgbm-v1-nested5x4-s1`: about 0.3 h. It builds all 320 learned states (64 matches × 5 outer contexts), so the gate and `prediction.cv` only read caches.
+2. The gate: `possession_split.py --scored h5 --possession-model <id>`, still to build. It reads the concatenated `test` contexts, reproduces the baseline counts first (1,977,379 rows, 49,812 positives, 281,606 overall and 154,806 first-3-s disagreements; a mismatch stops it), then checks the five bars.
