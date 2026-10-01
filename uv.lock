@@ -380,6 +380,7 @@ prediction = [
     { name = "torch", version = "2.14.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
 ]
 vision = [
+    { name = "lightgbm" },
     { name = "opencv-python" },
     { name = "supervision" },
     { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'win32'" },
@@ -394,6 +395,7 @@ requires-dist = [
     { name = "kloppy", marker = "extra == 'converters'", specifier = ">=3.19" },
     { name = "lightgbm", marker = "extra == 'models'", specifier = ">=4.3" },
     { name = "lightgbm", marker = "extra == 'prediction'", specifier = ">=4.3" },
+    { name = "lightgbm", marker = "extra == 'vision'", specifier = ">=4.3" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python", marker = "extra == 'vision'", specifier = ">=4.9" },
     { name = "polars", specifier = ">=1.0" },
