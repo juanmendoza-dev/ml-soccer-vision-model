@@ -172,6 +172,9 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 
 **Detection review follow-ups** (`Docs/reviews/detection-improvement-spec-2026-09-27.md`, taken in reduced form)
 - [ ] Small vision benchmark: 5–10 labelled clips from different matches (ball, player positions in meters, teams, live vs. replay), scored per clip. Not the review's 30–50 clip set with double annotation; grow it only if results are borderline (W0)
+  - [x] Spec (07 "Vision benchmark (W0)", 03 `keypoints.parquet` + `vision.replay`, 2026-10-01): about 8 World Cup 2022 matches, people truth from PFF `VISIBLE` rows, hand marks only for replay / close-up / other intervals and sync. Ball labels wait for the ball work
+  - [ ] Keypoint cache + `vision.replay` (exact with the run's config), then `vision.bench` scorer, tests on synthetic clips
+  - [ ] Footage: user is collecting 8 WC2022 matches, 3–5 min of continuous broadcast each, outside the repo and OneDrive. Then the hand marks (~30 min), the manifest, and the baseline scorecard on the current thresholds
 - [ ] Camera cuts and replays detected separately from the grass/keypoint gate; reset tracks, teams and ball on a confirmed cut, emit nothing prediction-eligible during a replay (W3)
 - [ ] Record why frames and projections were rejected, plus model settings, in the vision cache (W1, the parts that help debugging; not the full replayable cache yet)
 - [ ] From the sensitivity test, in order: geometry accuracy where attacks happen (W4), detector fine-tuning (W8) for the ball first and then player foot position (0.93 m noise: −0.013, third largest), teams/keepers with an "unknown" option (W5; cheaper than a wrong team at the same share, but only a win if abstentions land on would-be flips, check on the benchmark). Player misses are the smallest measured loss (40% missed: −0.023). ID/tracking quality waits for a rerun on the temporal GNN (the v2 hand features weren't adopted, so no rerun there)

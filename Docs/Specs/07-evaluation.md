@@ -104,6 +104,52 @@ An oracle that outputs 0.9 on every positive row and < 0.3 elsewhere (null where
      - **Only after it passes:** run `prediction.cv --model lgbm --possession inferred --possession-model <id> --features-version 1 --ball-source held --horizons h5 h3` once, using 05's per-fold data assembly. Compare against both `lgbm-held-2026-09-27` and `lgbm-pinf-2026-09-29` with `evaluation.compare` and `scripts/lead_time.py`. Report calibration, alarms/false alarms at each fold's own τ and at matched budgets, and lead-time/5–2–1 s probability checks alongside paired fold metrics. No tuning on PR-AUC.
      - **Decision lines unchanged:** H = 5 mean paired ΔPR-AUC against **provider** above −0.010 is small; at or below −0.018 and worse on at least 4/5 folds is big; otherwise use the in-between action above. Improvement over old inferred possession describes recovery, not acceptance. H = 3 does not pick a different winner. PFF's lag, clean tracking and provider-based alarms remain the same limitations. Expect "in between" or "big" even after a pass: a straight-line read says "small" needs about 3.7% disagreement. The run measures how much better possession recovers. The τ-validation overlap in 03 (inner fits train on some of a fold's τ-validation matches) is accepted; PR-AUC doesn't depend on τ.
 
+## Vision benchmark (W0)
+The reduced W0 from the detection review (roadmap Phase 2): about 8 World Cup 2022 matches, one or two 30–60 s clips of broadcast each, scored per clip and pooled with counts. It's what the homography thresholds and later the ball work get tuned on. No locked check set and no bootstrap intervals (not adopted, roadmap); if a result is borderline, the set grows.
+
+**Truth for people comes from PFF.** PFF's tracking was made from the broadcast: a `VISIBLE` player is on camera, in 02 meters, with a known team, and sits 0.0 m (median) from the event position at shots (06). Cutaway frames have every player `ESTIMATED`. So no person gets hand-labelled. PFF's own error is the floor of what can be measured, and it's reported as is. Humans mark only what PFF can't know: which parts of the clip aren't live wide play, and (later) where the ball is in the image.
+
+**Fold overlap.** All 64 matches are in `folds.json`. The predictor doesn't train on vision output yet, so tuning vision on them leaks nothing today. A later predictor result on vision output from these matches names the matches vision was tuned on (detection review §4).
+
+**Manifest:** `data/splits/vision_benchmark.json`, committed like `folds.json`. Footage never enters the repo or a synced folder (08). No video paths or file names in the manifest: a gitignored `data/vision_bench/videos.json` maps `clip_id` → local path, and the manifest's hash checks it's the right file.
+- `version`, and `clips`, each with:
+  - `clip_id`, `match_id` (PFF), `period`, `video_sha256`
+  - `video_start_s`, `video_end_s`: the clip's range in the source video
+  - `home_attacks_tv_right_p1`, `home_cluster` (null until picked from the debug video, as in the smoke runbook)
+  - `sync`: one or more `{video_s, timestamp_s}` pairs tying source-video time to PFF's `frames.timestamp_s` (seconds since period start). PFF time = `video_s + offset`.
+  - `marks`: `{start_s, end_s, label}` in source-video seconds, label `replay`, `closeup` or `other` (ads, studio, crowd, graphics over the pitch). Anything unmarked is live wide play.
+- **Sync, in this order.** The scoreboard clock gives the first pair to about ±1 s (period clock; the second half's starts at 45:00). Then refine it without vision's homography, which is what's being scored:
+  1. a shot in the clip: its strike frame on video against the shot's `events.parquet` frame;
+  2. else the edges of hand-marked cutaways against PFF's switches to and from all-`ESTIMATED` frames (when the footage is the world feed, they match to a frame);
+  3. else the clip is flagged `sync: coarse` and reported apart.
+
+  A second pair checks drift: if the offsets differ by more than 0.1 s, the source video's frame rate is wrong. The scorer also reports the offset, within ±1 s, that minimizes the median player error. That's a check only, never used to score.
+
+**Scored frames:** every clip frame outside the marks that lands within half a PFF frame (16.7 ms) of a PFF frame. The denominator never comes from vision's view gate.
+
+**Scorecard per clip** (`python -m vision.bench`; it reads the detections cache, or a replay of it, and PFF's game state, so it lives in `vision/` like `vision.state_check`):
+- **Geometry missing:** the share of scored frames where vision has no homography (view `other`, or `homography_ok` false). Roadmap target: at or under smoke04's 17%.
+- **People in meters:**
+  - Truth is PFF's `VISIBLE` players and keepers on the matched PFF frame. Vision is its player and goalkeeper rows that have pitch x/y. Referees are left out, since PFF has none.
+  - Each frame gets a one-to-one match (Hungarian on distance) with a 5 m gate.
+  - **Within 2 m** = matched pairs at ≤ 2 m over all truth rows, so misses and frames without geometry count as failures (detection review target ≥ 90%).
+  - Next to it: the median and p90 error of matched pairs, the same three numbers on frames with geometry only (so accuracy and availability stay separate), and unmatched vision rows per scored frame.
+- **Teams**, on matched pairs, outfield and keepers apart:
+  - accuracy where vision's team isn't null;
+  - coverage (the share that isn't null).
+
+  Teams are read from `team_cluster` and `home_cluster`, so a replay keeps them; keepers get their cluster from position, as the pipeline does. If `home_cluster` is null, the scorer uses whichever mapping agrees more, and says so.
+- **False live:** seconds inside the marks where vision has view `match` and a homography, so the predictor would get positions from a replay or close-up. Per label.
+- **Not scored yet:**
+  - the ball: PFF can't say whether it's visible in the image, so it waits for the ball-click labels with the ball work;
+  - tracking IDs;
+  - possession.
+
+**Homography threshold sweep** (roadmap Phase 2, group 4). The sweep runs offline on the keypoint cache (03 Diagnostics), with no detector rerun. Swept: `ransac_m`, `min_inliers`, `max_homography_err_m`, `max_homography_jump_m`, `homography_max_age_s` and `homography_window`. The gate's `min_keypoint_conf` and `min_keypoints` aren't swept, because they change the view gate, which the replay doesn't simulate.
+- **Pick:** the highest pooled within-2 m with geometry missing ≤ 17%.
+- **Tie-break:** within 0.5 pt, the more permissive setting wins (05: a rejection costs more than 2–4 m of error).
+- Per-clip numbers for the pick and for the current defaults go in the review.
+
 ## Outputs
 
 ### Run format

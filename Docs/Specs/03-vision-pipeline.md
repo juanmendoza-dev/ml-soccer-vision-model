@@ -286,6 +286,18 @@ Debugging works from cached data after the run, not from extra logging during it
 | grass_share | float | 0–1 |
 | keypoints_found | int/null | null on frames where stage 4 didn't run |
 
+`keypoints.parquet` next to it, one row per stage 4 call, so the homography acceptance thresholds can be swept offline (07 Vision benchmark):
+
+| Column | Type | Notes |
+|---|---|---|
+| match_id, frame_id | | A frame can have two rows: a probe in `other`, then the fit on entering `match` |
+| t | float | Seconds, as passed to `step` |
+| used | bool | The fit was allowed into the homography filter (match view). Probe rows are false |
+| segment | int | Match segment; the filter is reset when it changes (`_enter_match`) |
+| kp_x, kp_y, kp_conf | list[float] (32) | Raw keypoint model output, template order |
+
+`python -m vision.replay` reruns stage 4's acceptance and the projection from this cache and the detections cache under other `VisionConfig` values. With the run's own config, it reproduces `homography_ok` and the people's `pitch_x`/`pitch_y` exactly. The ball isn't replayed: its extrapolation depends on earlier geometry. Detected ball rows are reprojected; extrapolated ones are dropped.
+
 Plus `run.json` next to it: config, git commit, model weights hash, video file hash, per-stage wall time, and the 02 validator errors (`vision.run` exits nonzero if there are any; a clip with no match view fails). With the video, this is enough to redraw any moment of the run.
 
 - Anomaly checks (ID switches, ball gaps, homography jumps, ...) are scripts over this cache, written when a real problem shows up. Not part of the pipeline. So far: `python -m vision.offpitch --match-id <id>` (off-pitch rows grouped into runs, with view and keypoint context, plus the count of projections the pipeline rejected).
