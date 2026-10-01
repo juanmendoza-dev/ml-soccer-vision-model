@@ -8,6 +8,10 @@ attacking frame). A row with no held ball has no xG and no P(goal). Writes pgoal
 pgoal.md into the run folder: PR-AUC and calibration against label_goal_*, next to xG and
 P(shot) alone, and how far xG at the ball before a shot undershoots xG at the shot itself.
 Descriptive only.
+
+Recalibration (05): p_goal_cal_<h> = sigmoid(a + b logit(p_goal)), a and b fitted on the
+other outer folds' scored rows (cross-fitted), and pgoal_map.json holds the all-64 map
+live uses.
 """
 
 import argparse
@@ -25,6 +29,69 @@ from prediction.xg import OUT_DIR, XG_FEATURES, table
 
 HORIZONS = ("h5", "h3")
 BEFORE_S = (5, 2, 1)
+CLIP = 1e-6
+FOLDS_PATH = Path("data/splits/folds.json")
+
+
+def logit(p: np.ndarray) -> np.ndarray:
+    p = np.clip(p, CLIP, 1 - CLIP)
+    return np.log(p) - np.log1p(-p)
+
+
+def fit_map(p: np.ndarray, y: np.ndarray, max_iter: int = 100) -> tuple[float, float]:
+    """(a, b) of P(goal) = sigmoid(a + b logit(p)) by plain log loss: Newton steps on two
+    numbers, halved until the loss goes down. b <= 0 would reverse the order: an error."""
+    X = np.column_stack([np.ones(len(p)), logit(p)])
+    w = np.array([0.0, 1.0])
+
+    def loss(w):
+        z = X @ w
+        return np.sum(np.logaddexp(0, z) - y * z)
+
+    cur = loss(w)
+    for _ in range(max_iter):
+        q = sigmoid(X @ w)
+        step = np.linalg.solve((X * (q * (1 - q))[:, None]).T @ X, X.T @ (q - y))
+        for _ in range(40):
+            new = loss(w - step)
+            if new <= cur:
+                break
+            step /= 2
+        w, cur = w - step, new
+        if np.abs(step).max() < 1e-10:
+            break
+    if w[1] <= 0:
+        raise ValueError(f"recalibration slope b = {w[1]:.4f} <= 0 would reverse P(goal)'s order")
+    return float(w[0]), float(w[1])
+
+
+def apply_map(p: np.ndarray, ab: tuple[float, float]) -> np.ndarray:
+    return sigmoid(ab[0] + ab[1] * logit(p))
+
+
+def scored(h: str) -> pl.Expr:
+    return pl.col(f"label_mask_{h}") & ~pl.col("all_estimated") & pl.col(f"p_goal_{h}").is_not_null()
+
+
+def recalibrate(rows: pl.DataFrame, fold_of: dict[str, int]) -> tuple[pl.DataFrame, dict]:
+    """p_goal_cal_<h> on every row with a p_goal: each outer fold's rows mapped by the fit on
+    the other folds' scored rows. Returns the rows and {h: {"folds": {k: (a, b)}, "all":
+    all-64 map, counts}}."""
+    rows = rows.with_columns(fold=pl.col("match_id").replace_strict(fold_of, return_dtype=pl.Int64))
+    maps = {}
+    for h in HORIZONS:
+        sc = rows.filter(scored(h))
+        p, y, f = (sc[c].to_numpy().astype(float) for c in (f"p_goal_{h}", f"label_goal_{h}", "fold"))
+        folds = {int(k): fit_map(p[f != k], y[f != k]) for k in sorted(set(f.astype(int)))}
+        cal = np.full(rows.height, np.nan)
+        raw = rows[f"p_goal_{h}"].fill_null(np.nan).to_numpy()
+        rf = rows["fold"].to_numpy()
+        for k, ab in folds.items():
+            m = (rf == k) & ~np.isnan(raw)
+            cal[m] = apply_map(raw[m], ab)
+        rows = rows.with_columns(pl.Series(f"p_goal_cal_{h}", cal).fill_nan(None))
+        maps[h] = {"folds": folds, "all": fit_map(p, y), "rows": len(y), "goal_rows": int(y.sum())}
+    return rows, maps
 
 
 def xg_model(model_dir: Path):
@@ -108,7 +175,7 @@ def shot_ratios(rows: pl.DataFrame, gamestate_dir: Path) -> pl.DataFrame:
     return long.filter(pl.col("before_s") > 0).join(at, on=["match_id", "shot"])
 
 
-def render(run: Path, rows: pl.DataFrame, ratios: pl.DataFrame, man: dict) -> str:
+def render(run: Path, rows: pl.DataFrame, ratios: pl.DataFrame, man: dict, maps: dict) -> str:
     out = [f"# P(goal) v1 on {run.name}", "",
            f"xG model `{man['model_id']}` ({man['model']}), trained on {man['train_shots']} StatsBomb "
            "shots, never World Cup 2022. P(goal) = P(shot) x xG on rows with a held ball.", ""]
@@ -123,13 +190,30 @@ def render(run: Path, rows: pl.DataFrame, ratios: pl.DataFrame, man: dict) -> st
                 f"{lost_goals:,} goal-positive rows). Goal-positive rows with a ball: {int(y.sum()):,} "
                 f"(base rate {y.mean():.4f}).", ""]
         res = []
-        for name, col in ((f"P(goal) = P(shot) x xG", f"p_goal_{h}"), ("P(shot) alone", f"p_{h}"),
+        for name, col in (("P(goal) recalibrated (cross-fitted)", f"p_goal_cal_{h}"),
+                          ("P(goal) = P(shot) x xG", f"p_goal_{h}"), ("P(shot) alone", f"p_{h}"),
                           ("xG alone", "xg")):
             p = ok[col].to_numpy().astype(float)
             res.append({"score": name, "PR-AUC vs goal": pr_auc(y, p), "Brier": brier(y, p),
                         "sum p": float(p.sum()), "goal rows": int(y.sum())})
-        out += [table(pl.DataFrame(res)), "", "Calibration of P(goal), 10 quantile bins:", "",
-                table(calibration(y, ok[f"p_goal_{h}"].to_numpy().astype(float), 10)), ""]
+        per_fold = (
+            ok.group_by("fold")
+            .agg(goal_rows=pl.col(f"label_goal_{h}").sum(), sum_raw=pl.col(f"p_goal_{h}").sum(),
+                 sum_cal=pl.col(f"p_goal_cal_{h}").sum())
+            .sort("fold")
+            .with_columns(
+                a=pl.col("fold").replace_strict({k: v[0] for k, v in maps[h]["folds"].items()}),
+                b=pl.col("fold").replace_strict({k: v[1] for k, v in maps[h]["folds"].items()}),
+            )
+        )
+        a64, b64 = maps[h]["all"]
+        out += [table(pl.DataFrame(res)), "",
+                "Per outer fold: the map fitted on the other four folds, and the sums it gives:", "",
+                table(per_fold), "", f"All-64 map for live: a = {a64:.4f}, b = {b64:.4f}.", "",
+                "Calibration, 10 quantile bins, before:", "",
+                table(calibration(y, ok[f"p_goal_{h}"].to_numpy().astype(float), 10)), "",
+                "and after recalibration:", "",
+                table(calibration(y, ok[f"p_goal_cal_{h}"].to_numpy().astype(float), 10)), ""]
     r = ratios.filter(pl.col("xg").is_not_null(), pl.col("xg_shot").is_not_null(), pl.col("xg_shot") > 0)
     summary = (
         r.with_columns(ratio=pl.col("xg") / pl.col("xg_shot"))
@@ -149,6 +233,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--xg", type=Path, default=OUT_DIR)
     ap.add_argument("--processed", type=Path, default=Path("data/processed"))
     ap.add_argument("--gamestate", type=Path, default=Path("data/gamestate"))
+    ap.add_argument("--folds", type=Path, default=FOLDS_PATH)
     a = ap.parse_args(argv)
     man, predict = xg_model(a.xg)
     pred = pl.read_parquet(a.run / "predictions.parquet").with_columns(k=tick()).drop("t_s")
@@ -158,9 +243,15 @@ def main(argv: list[str]) -> int:
     rows = rows.with_columns(
         (pl.col(f"p_{h}") * pl.col("xg")).alias(f"p_goal_{h}") for h in HORIZONS
     )
+    fold_of = {m["match_id"]: m["fold"] for m in json.loads(a.folds.read_text())["matches"]}
+    rows, maps = recalibrate(rows, fold_of)
     ratios = shot_ratios(rows, a.gamestate)
     rows.write_parquet(a.run / "pgoal.parquet")
-    text = render(a.run, rows, ratios, man)
+    live = {h: {"a": m["all"][0], "b": m["all"][1], "rows": m["rows"], "goal_rows": m["goal_rows"],
+                "map": "sigmoid(a + b * logit(clip(P(shot) * xG, 1e-6, 1 - 1e-6)))", "xg_model": man["model_id"]}
+            for h, m in maps.items()}
+    (a.run / "pgoal_map.json").write_text(json.dumps(live, indent=2) + "\n")
+    text = render(a.run, rows, ratios, man, maps)
     (a.run / "pgoal.md").write_text(text, encoding="utf-8")
     print(text)
     return 0
