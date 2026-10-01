@@ -413,6 +413,12 @@ Everything below fixes how xG is trained and applied so the StatsBomb side and t
 - **The v1 underestimate.** For every open-play shot, xG(t) at 5, 2 and 1 s before it vs xG at the shot's own grid row: the median ratio, and how it splits by goal vs no goal. That's how much "xG at the ball now" undershoots the shot that follows, which v2 is for.
 - The first run is on `lgbm-held-2026-09-27` (provider possession, the baseline everything else compares to).
 
+**Recalibration (added 2026-10-01).** P(goal) v1 runs about 2.4× low at H = 5 (`Docs/reviews/xg-pgoal-2026-10-01.md`), since xG at the ball undershoots the shot that follows. The overlay shows a probability, so P(goal) gets one monotone map per horizon.
+- **Map:** `P(goal) = sigmoid(a + b · logit(p))` with `p = P(shot) × xG` clipped to [1e−6, 1 − 1e−6]. Two numbers, fitted by plain log loss on the scored rows (label `label_goal_h`). It's smooth and keeps the order whenever b > 0. If a fit gives b ≤ 0, that's an error, not something to repair. Nothing else is tried.
+- **Out of fold, cross-fitted:** a row in outer fold k gets the map fitted on the scored rows of the other four folds. Fold k's own goal labels never reach its map. Those four folds' P(shot) came from models that trained on fold k's matches, so the map isn't fully nested. That's accepted for a two-number map, and the review says so.
+- **Live:** the map fitted on all 64 matches' out-of-fold rows, stored next to the run's `pgoal.parquet` as `pgoal_map.json`, with a, b and the row and goal counts per horizon.
+- **Checks (report only):** per fold and pooled, summed calibrated P(goal) vs goal rows, calibration in 10 bins and Brier, before and after. PR-AUC is reported but isn't the point: one map per fold barely changes the ranking.
+
 ## Class imbalance
 - **No class weights and no focal loss** (decided 2026-09-28; this replaces "weighted or focal loss"). Plain log loss keeps p calibrated, which the alarms and P(goal) = P(shot) × xG both need. LightGBM showed it works at a ~2.5% base rate: the top decile predicts 0.186 and sees 0.185. Reweighting inflates p, and undoing that is another calibration step to get right. The GNNs use the same loss.
 - Evaluate with PR-AUC, not accuracy.
