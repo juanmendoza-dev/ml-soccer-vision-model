@@ -14,38 +14,19 @@ import cv2
 import numpy as np
 import polars as pl
 
-from gamestate.schema import PITCH_LENGTH, PITCH_WIDTH
+from demo.pitch import BALL, REFEREE, UNKNOWN, Pitch
 
-# BGR
+# BGR, vision's team clusters
 CLUSTER_COLORS = {0: (60, 60, 230), 1: (230, 140, 40)}
-UNKNOWN = (180, 180, 180)
-REFEREE = (0, 215, 255)
-BALL = (255, 255, 255)
-MAP_SCALE = 3  # minimap px per meter
-MAP_PAD = 8
+MINIMAP = Pitch(scale=3, pad=8)  # px per meter, px of grass around
 
 
 def draw_minimap(rows: pl.DataFrame) -> np.ndarray:
-    w = int(PITCH_LENGTH * MAP_SCALE) + 2 * MAP_PAD
-    h = int(PITCH_WIDTH * MAP_SCALE) + 2 * MAP_PAD
-    img = np.full((h, w, 3), (40, 110, 40), dtype=np.uint8)
-
-    def px(x, y):  # 02 meters -> minimap pixels (+y up)
-        return (
-            int(MAP_PAD + (x + PITCH_LENGTH / 2) * MAP_SCALE),
-            int(MAP_PAD + (PITCH_WIDTH / 2 - y) * MAP_SCALE),
-        )
-
-    line = (230, 230, 230)
-    cv2.rectangle(img, px(-52.5, 34), px(52.5, -34), line, 1)
-    cv2.line(img, px(0, 34), px(0, -34), line, 1)
-    cv2.circle(img, px(0, 0), int(9.15 * MAP_SCALE), line, 1)
-    for s in (-1, 1):
-        cv2.rectangle(img, px(s * 52.5, 20.16), px(s * (52.5 - 16.5), -20.16), line, 1)
+    img = MINIMAP.blank()
+    MINIMAP.draw_lines(img)
     for r in rows.filter(pl.col("pitch_x").is_not_null()).iter_rows(named=True):
-        color = _color(r)
         size = 3 if r["class"] == "ball" else 5
-        cv2.circle(img, px(r["pitch_x"], r["pitch_y"]), size, color, -1)
+        cv2.circle(img, MINIMAP.px(r["pitch_x"], r["pitch_y"]), size, _color(r), -1)
     return img
 
 
