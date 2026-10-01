@@ -148,6 +148,19 @@ def test_replay_that_misses_the_cache_is_refused(bench_dirs):
         bench.Clip(clip(), cache_dir, gs_dir)
 
 
+def test_clip_without_pff_is_scored_on_geometry_only(bench_dirs):
+    cache_dir, gs_dir = bench_dirs
+    fake_pff(gs_dir)
+    no_pff = bench.Clip(clip(match_id=None, sync=[]), cache_dir, gs_dir).score([])
+    assert no_pff["n_scored"] == 70 and no_pff["n_geometry"] == 60 and no_pff["n_truth"] == 0
+    assert no_pff["false_live_s"] == {"other": pytest.approx(0.5)}
+    with_pff = bench.Clip(clip(), cache_dir, gs_dir).score([])
+    h = bench.headline(bench.pooled([with_pff, no_pff]))
+    assert h["within_2m"] == pytest.approx(300 / 350)  # people only from the PFF clip
+    assert h["geometry_missing"] == pytest.approx(20 / 140)  # geometry from both
+    assert h["unmatched_per_frame"] == 0
+
+
 def test_run_must_be_the_manifest_video(bench_dirs):
     cache_dir, gs_dir = bench_dirs
     fake_pff(gs_dir)

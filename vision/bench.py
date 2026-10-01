@@ -45,7 +45,8 @@ def load_manifest(path: Path) -> list[dict]:
         name = c["clip_id"]
         if not c["video_start_s"] < c["video_end_s"]:
             raise ValueError(f"{name}: video_start_s must be before video_end_s")
-        if not c["sync"]:
+        # match_id null: footage PFF doesn't have, scored on geometry and marks only
+        if c["match_id"] is not None and not c["sync"]:
             raise ValueError(f"{name}: needs at least one sync pair")
         for mk in c["marks"]:
             if mk["label"] not in MARK_LABELS:
@@ -104,12 +105,14 @@ def align(
     times: dict[int, float],
     video_start_s: float,
     offset: float,
-    pff: pl.DataFrame,
+    pff: pl.DataFrame | None,
 ) -> pl.DataFrame:
     """Vision frames + video_s and the nearest PFF frame (null if none within half a frame)."""
     out = frames.with_columns(
         video_s=pl.col("frame_id").replace_strict(times, return_dtype=pl.Float64) + video_start_s
     ).with_columns(pff_t=pl.col("video_s") + offset)
+    if pff is None:
+        return out.with_columns(pff_frame_id=pl.lit(None, pl.Int64))
     return (
         out.sort("pff_t")
         .join_asof(pff, on="pff_t", strategy="nearest", tolerance=0.5 / PFF_FPS + 1e-6)
@@ -126,11 +129,26 @@ def match_people(truth: np.ndarray, vis: np.ndarray) -> list[tuple[int, int, flo
     return [(int(i), int(j), float(d[i, j])) for i, j in zip(rows, cols) if d[i, j] <= GATE_M]
 
 
-def frame_pairs(aligned: pl.DataFrame, det: pl.DataFrame, truth: pl.DataFrame) -> dict:
-    """Per scored frame: truth count, vision count and the matched pairs."""
-    scored = aligned.filter(
-        pl.col("in_clip") & pl.col("mark").is_null() & pl.col("pff_frame_id").is_not_null()
-    )
+def frame_pairs(aligned: pl.DataFrame, det: pl.DataFrame, truth: pl.DataFrame | None) -> dict:
+    """Per scored frame: truth count, vision count and the matched pairs. Without truth
+    (no PFF match), every unmarked clip frame is scored for geometry only."""
+    scored = aligned.filter(pl.col("in_clip") & pl.col("mark").is_null())
+    if truth is None:
+        return {
+            "n_scored": scored.height,
+            "frames": [
+                {
+                    "geometry": ok,
+                    "match_view": view == MATCH,
+                    "truth": False,
+                    "n_truth": 0,
+                    "n_vis": 0,
+                    "pairs": [],
+                }
+                for ok, view in scored.select("geometry", "view").iter_rows()
+            ],
+        }
+    scored = scored.filter(pl.col("pff_frame_id").is_not_null())
     people = det.filter(
         pl.col("class").is_in([PLAYER, GOALKEEPER]) & pl.col("pitch_x").is_not_null()
     )
@@ -149,6 +167,7 @@ def frame_pairs(aligned: pl.DataFrame, det: pl.DataFrame, truth: pl.DataFrame) -
             {
                 "geometry": ok,
                 "match_view": view == MATCH,
+                "truth": True,
                 "n_truth": len(t_xy),
                 "n_vis": len(v_xy),
                 "pairs": [
@@ -203,10 +222,14 @@ def score_clip(
     fps: float,
     offset_check: bool = False,
 ) -> dict:
-    offset = sync_offset(clip)
-    t0 = clip["video_start_s"] + offset - 2
-    t1 = clip["video_end_s"] + offset + 2
-    pff, truth = load_truth(gamestate, clip["period"], t0, t1)
+    if gamestate is None:
+        pff = truth = None
+        offset = 0.0
+    else:
+        offset = sync_offset(clip)
+        t0 = clip["video_start_s"] + offset - 2
+        t1 = clip["video_end_s"] + offset + 2
+        pff, truth = load_truth(gamestate, clip["period"], t0, t1)
 
     def pairs_at(off):
         aligned = align(frames, times, run_start_s, off, pff)
@@ -224,7 +247,7 @@ def score_clip(
 
     aligned, fp = pairs_at(offset)
     out = summarize(clip, aligned, fp, fps)
-    if offset_check:
+    if offset_check and truth is not None:
         out["offset_check_s"] = best_offset(pairs_at, offset) - offset
     return out
 
@@ -257,6 +280,7 @@ def summarize(clip: dict, aligned: pl.DataFrame, fp: dict, fps: float) -> dict:
         "clip_id": clip["clip_id"],
         "sync_coarse": clip.get("sync_coarse", False),
         "n_scored": fp["n_scored"],
+        "n_truth_frames": sum(f["truth"] for f in fr),
         "n_match_view": sum(f["match_view"] for f in fr),
         "n_geometry": len(geo),
         "n_truth": sum(f["n_truth"] for f in fr),
@@ -277,6 +301,7 @@ def pooled(scores: list[dict]) -> dict:
         k: sum(c[k] for c in scores)
         for k in (
             "n_scored",
+            "n_truth_frames",
             "n_match_view",
             "n_geometry",
             "n_truth",
@@ -311,7 +336,7 @@ def headline(s: dict) -> dict:
         "within_2m_geo": frac(s["n_near_geo"], s["n_truth_geo"]),
         "median_geo_m": q(s["errors_geo"], 0.5),
         "p90_geo_m": q(s["errors_geo"], 0.9),
-        "unmatched_per_frame": frac(s["n_vis"] - s["n_pairs"], s["n_scored"]),
+        "unmatched_per_frame": frac(s["n_vis"] - s["n_pairs"], s["n_truth_frames"]),
     }
 
 
@@ -350,7 +375,7 @@ class Clip:
         vision_gs = gamestate_dir / clip["clip_id"]
         self.inputs = replay.load(self.cache, vision_gs)
         self.fps = pl.read_parquet(vision_gs / "match.parquet")["native_fps"][0]
-        self.pff = gamestate_dir / clip["match_id"]
+        self.pff = gamestate_dir / clip["match_id"] if clip["match_id"] is not None else None
         self._check_replay()
 
     def _check_replay(self) -> None:
@@ -425,6 +450,8 @@ def main(argv: list[str] | None = None) -> None:
         for c in run["clips"]:
             t = c["teams"]
             flag = " [coarse sync]" if c["sync_coarse"] else ""
+            if not c["n_truth_frames"]:
+                flag = " [no PFF: geometry and marks only]"
             print(f"{c['clip_id']}{flag}: {fmt(headline(c))}")
             if "offset_check_s" in c:
                 print(f"    best offset is {c['offset_check_s']:+.3f} s from the sync's")

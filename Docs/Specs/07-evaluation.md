@@ -114,6 +114,7 @@ The reduced W0 from the detection review (roadmap Phase 2): about 8 World Cup 20
 **Manifest:** `data/splits/vision_benchmark.json`, committed like `folds.json`. Footage never enters the repo or a synced folder (08). No video paths or file names in the manifest: a gitignored `data/vision_bench/videos.json` maps `clip_id` → local path, and the manifest's hash checks it's the right file.
 - `version`, and `clips`, each with:
   - `clip_id`, `match_id` (PFF), `period`, `video_sha256`
+  - `match_id` may be null, for footage PFF doesn't cover (other tournaments). Such a clip needs no sync, and scores only geometry missing, the gate and false live; people and team numbers come from PFF clips only. It still counts toward the pooled homography-rejected share that the sweep keeps under 17%, which is why it's worth having: different stadiums and lighting.
   - `video_start_s`, `video_end_s`: the clip's range in the source video
   - `home_attacks_tv_right_p1`, `home_cluster` (null until picked from the debug video, as in the smoke runbook)
   - `sync`: one or more `{video_s, timestamp_s}` pairs tying source-video time to PFF's `frames.timestamp_s` (seconds since period start). PFF time = `video_s + offset`.
