@@ -206,6 +206,129 @@ def test_symmetrized_probability_sums_to_one_under_the_mirror(synthetic, tmp_pat
     assert p.std() > 0  # the synthetic label is learnable, so p isn't constant
 
 
+FOLDS = {f"g{i:02d}": i % 5 for i in range(20)}
+
+
+def hand_manifest(folds=FOLDS, dedup=True):
+    """A sealed manifest for `folds` with placeholder model hashes (structure only)."""
+    fits = pm.plan(folds, dedup)
+    trs = {
+        name: {
+            "dir": f"fits/{name}",
+            "training_ids": ids,
+            "training_sha256": pm.ids_sha256(ids),
+            "model_sha256": "-",
+        }
+        for name, ids in pm.trainings(fits).items()
+    }
+    logical = {
+        lid: {k: f[k] for k in ("training", "role", "outer", "fold", "predicts")}
+        | {"training_sha256": trs[f["training"]]["training_sha256"]}
+        for lid, f in fits.items()
+    }
+    return {
+        "sealed": True,
+        "dedup_pairs": dedup,
+        "folds": {"assignments": folds},
+        "trainings": trs,
+        "logical": logical,
+    }
+
+
+def test_plan_is_25_logical_fits_over_15_trainings():
+    fits = pm.plan(FOLDS)
+    assert len(fits) == 25 and len(pm.trainings(fits)) == 15
+    assert len(pm.trainings(pm.plan(FOLDS, dedup=False))) == 25
+    users = {}
+    for lid, f in fits.items():
+        users.setdefault(f["training"], []).append(lid)
+        outer = {m for m, j in FOLDS.items() if j == f["outer"]}
+        assert not set(f["training_ids"]) & (outer | set(f["predicts"])), lid
+        assert set(f["predicts"]) == {m for m, j in FOLDS.items() if j == f["fold"]}
+    for name, lids in users.items():
+        if name.startswith("pair_"):
+            a, b = map(int, name.split("_")[1:])
+            assert sorted(lids) == [f"outer_{a}_inner_{b}", f"outer_{b}_inner_{a}"]
+            assert fits[lids[0]]["training_ids"] == fits[lids[1]]["training_ids"]
+    # final aliases outer_j's test output: every match is predicted once, out of fold
+    tests = [m for k in range(5) for m in fits[f"outer_{k}"]["predicts"]]
+    assert sorted(tests) == sorted(FOLDS)
+
+
+def test_manifest_check_accepts_the_plan_and_fails_closed():
+    pm.check_manifest(hand_manifest())
+    pm.check_manifest(hand_manifest(dedup=False))
+
+    def broken(edit):
+        man = hand_manifest()
+        edit(man)
+        with pytest.raises(ValueError, match="manifest"):
+            pm.check_manifest(man)
+
+    broken(lambda m: m.update(sealed=False))
+    broken(lambda m: m["logical"].pop("outer_3_inner_1"))
+    broken(lambda m: m["trainings"].pop("pair_1_3"))
+    broken(lambda m: m["logical"]["outer_0"].update(predicts=m["logical"]["outer_1"]["predicts"]))
+    broken(lambda m: m["logical"]["outer_2_inner_4"].update(training="outer_2"))
+    broken(lambda m: m["logical"]["outer_1_inner_0"].update(training_sha256="-"))
+
+    def leak(m):  # outer 0's test match sneaks into a training set, hash updated to match
+        tr = m["trainings"]["pair_1_2"]
+        tr["training_ids"] = sorted([*tr["training_ids"], "g00"])
+        tr["training_sha256"] = pm.ids_sha256(tr["training_ids"])
+
+    broken(leak)
+
+
+def test_rule_grid_matches_the_cached_rule_columns(synthetic):
+    gs, _, tables = synthetic
+    for m in ("m0", "m1"):
+        frames = pl.read_parquet(gs / m / "frames.parquet")
+        rule = pm.rule_grid(frames, pl.read_parquet(gs / m / "objects.parquet"), 10.0)
+        t = tables[m]
+        assert rule.select("period", "k", "frame_id").equals(t.select("period", "k", "frame_id"))
+        code = rule["rule_possession_team"].replace_strict(
+            {"home": 1.0, "away": -1.0}, default=None, return_dtype=pl.Float64
+        )
+        np.testing.assert_array_equal(code.fill_null(np.nan), t["rule_team"].cast(pl.Float64))
+        np.testing.assert_allclose(
+            rule["carrier_age_s"].fill_null(np.nan),
+            t["rule_carrier_age_s"].cast(pl.Float64),
+            rtol=1e-6,
+            equal_nan=True,
+        )
+        assert rule["ball_carrier_id"].is_not_null().any()
+        assert rule["ball_state"].is_in(["alive", "dead"]).any()
+
+
+def scramble_hidden(frames, objects, seed=0):
+    """Scramble what a VISIBLE-only consumer must never read: invisible objects'
+    position, team and identity, every z, and PFF's possession and ball state."""
+    rng = np.random.default_rng(seed)
+    n = objects.height
+    hidden = ~objects["visible"]
+    objects = objects.with_columns(
+        x=pl.when(hidden).then(pl.Series(rng.uniform(-50, 50, n))).otherwise("x"),
+        y=pl.when(hidden).then(pl.Series(rng.uniform(-30, 30, n))).otherwise("y"),
+        team=pl.when(hidden).then(pl.lit("away")).otherwise("team"),
+        object_id=pl.when(hidden)
+        .then(pl.lit("ghost") + pl.int_range(n).cast(pl.String))
+        .otherwise("object_id"),
+        z=pl.Series(rng.uniform(0, 3, n)),
+    )
+    frames = frames.with_columns(
+        possession_team=pl.lit("away"), ball_state=pl.lit("dead"), set_play_phase=pl.lit(True)
+    )
+    return frames, objects
+
+
+def test_rule_grid_is_visible_only_and_ignores_height_and_pff_state():
+    frames, objects, fps = game(4)
+    a = pm.rule_grid(frames, objects, fps)
+    b = pm.rule_grid(*scramble_hidden(frames, objects), fps)
+    assert a.equals(b)
+
+
 def test_vision_model_modules_never_import_prediction():
     tree = ast.parse(Path(pm.__file__).read_text(encoding="utf-8"))
     names = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
