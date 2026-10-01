@@ -369,11 +369,11 @@ Every xG feature must be (a) computable at frame t from game state (02), before 
 | Play pattern (open play / set piece) | Yes | Yes | Yes | Filter only: train on open play, matching 05's labels |
 
 ### Training data
-- **Primary: StatsBomb 360 open data.** 300 men's matches have 360 freeze frames (~7,500 shots, estimated at ~25/match; checked 2026-09-25). Freeze frames only include players visible on the broadcast, like our vision output.
+- **Primary: StatsBomb 360 open data.** 300 men's matches have 360 freeze frames: 7,589 shots, 4,507 in the training population (open play, no set-play phase, 360 frame, World Cup 2022 dropped) with 508 goals (counted 2026-10-01, `Docs/reviews/xg-pgoal-2026-10-01.md`). Freeze frames only include players visible on the broadcast, like our vision output.
 - **Wyscout (defcon CSV):** location-only xG (distance + angle). A baseline and sanity check, not the production model.
 - Convert StatsBomb coordinates (120 × 80 yards, origin top-left) to 02's meters.
 - **Leakage:** PFF World Cup 2022 is in every CV fold, so StatsBomb's World Cup 2022 (the same 64 matches) is always dropped from xG training.
-- **Check calibration on our own data:** apply the xG model at the shot frame to PFF shots (129 goals in the 51 tracked games, 06) and SkillCorner shots (61 goals), and compare. Report it; don't retrain on it.
+- **Check calibration on our own data:** apply the xG model at the shot frame to PFF shots (1,154 open-play shots outside set-play phases with 126 goals on all 64, counted 2026-10-01) and SkillCorner shots (61 goals), and compare. Report it; don't retrain on it.
 
 ### Combining with P(shot)
 xG at the carrier's current position is an approximation. The shot usually happens later, from somewhere closer to goal. Build in order:
