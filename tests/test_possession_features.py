@@ -254,3 +254,76 @@ def test_heads_angle_needs_a_moving_ball():
         8.0 - 0.02 - 0.03
     )
     assert missing(h["heads_away_03_m"])  # nobody on away
+
+
+def contact_at(frames, rows):
+    nat = pf.native(frames, FPS)
+    g = pf.grid(nat, FPS)
+    use = pf.usable(objs(rows))
+    cf = pf.contacts(nat, pf.players(nat, use), pf.balls(nat, use))
+    return dict(zip(g["k"].to_list(), pf.contact_features(g, cf, FPS).iter_rows(named=True)))
+
+
+def nearest(f, team, x=0.5, other=5.0):
+    """Ball at 0, `team`'s player x m away, the other team's `other` m away."""
+    rival = "away" if team == "home" else "home"
+    return [
+        (f, "ball", "ball", None, 0.0, 0.0),
+        (f, "p", "player", team, x, 0.0),
+        (f, "q", "player", rival, other, 0.0),
+    ]
+
+
+def test_shares_are_elapsed_time_in_the_window():
+    rows = [r for f in range(11) for r in nearest(f, "home" if f < 5 else "away")]
+    at = contact_at(ten_hz(1), rows)
+    assert at[5]["nearest_home_1_any"] == pytest.approx(1.0)  # window clipped to the segment start
+    assert at[10]["nearest_home_05_any"] == pytest.approx(0.0)
+    assert at[10]["nearest_away_05_r15"] == pytest.approx(1.0)
+    assert at[10]["nearest_home_1_any"] == pytest.approx(0.5)
+    assert at[10]["nearest_home_1_any"] + at[10]["nearest_away_1_any"] == pytest.approx(1.0)
+    assert missing(at[0]["nearest_home_05_any"])  # zero-length window
+
+
+def test_shares_count_the_partial_first_interval():
+    frames = make_frames([0.05 + i / 10 for i in range(11)])  # 0.05 .. 1.05
+    rows = [r for f in range(11) for r in nearest(f, "home" if f == 4 else "away")]
+    at = contact_at(frames, rows)
+    # t = 1.0, window (0.5, 1.0]: frame 0.45 holds until 0.55, so 0.05 s of home
+    assert at[10]["nearest_home_05_any"] == pytest.approx(0.1)
+
+
+def test_shares_ties_reach_and_unseen_time():
+    rows = [r for f in range(11) for r in nearest(f, "home", x=2.0, other=2.0)]
+    at = contact_at(ten_hz(1), rows)
+    assert at[10]["nearest_home_1_any"] == pytest.approx(0.5)  # tie split
+    assert at[10]["nearest_home_1_r15"] == 0.0  # 2 m is out of reach
+    rows = [r for f in range(5) for r in nearest(f, "home")] + [
+        (f, "p", "player", "home", 0.5, 0.0) for f in range(5, 11)
+    ]
+    at = contact_at(ten_hz(1), rows)
+    assert at[10]["nearest_home_1_any"] == pytest.approx(
+        0.5
+    )  # no ball: weight 0, time still counts
+    unk = [(f, "ball", "ball", None, 0.0, 0.0) for f in range(11)]
+    unk += [(f, "h", "player", "home", 1.0, 0.0) for f in range(11)]
+    unk += [(f, "u", "player", None, -1.0, 0.0) for f in range(11)]
+    at = contact_at(ten_hz(1), unk)
+    assert at[10]["nearest_home_1_any"] == pytest.approx(0.5)  # unknown's half goes to nobody
+    assert at[10]["nearest_away_1_any"] == 0.0
+
+
+def test_last_contact_team_and_age():
+    rows = [r for f in range(4) for r in nearest(f, "away")]
+    rows += [
+        r for f in range(4, 11) for r in nearest(f, "home", x=3.0, other=6.0)
+    ]  # nobody in reach
+    at = contact_at(ten_hz(1), rows)
+    assert at[10]["last_contact_team"] == -1.0
+    assert at[10]["last_contact_age_s"] == pytest.approx(0.7)
+    tie = [r for f in range(2) for r in nearest(f, "home", x=1.0, other=1.0)]
+    at = contact_at(ten_hz(0.1), tie)
+    assert at[1]["last_contact_team"] == 0.0 and at[1]["last_contact_age_s"] == 0.0
+    frames = make_frames([0.0, 0.1, 0.5, 0.6])  # a segment break after 0.1 s
+    at = contact_at(frames, [r for f in (0, 1) for r in nearest(f, "home")])
+    assert at[1]["last_contact_team"] == 1.0 and missing(at[6]["last_contact_team"])

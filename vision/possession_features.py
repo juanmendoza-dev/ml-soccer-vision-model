@@ -331,3 +331,90 @@ def heads(rows: pl.DataFrame, pls: pl.DataFrame) -> pl.DataFrame:
         .sort("row")
         .drop("row")
     )
+
+
+SHARE_W = (("05", 500_000), ("1", 1_000_000))
+
+
+def contacts(nat: pl.DataFrame, pls: pl.DataFrame, bl: pl.DataFrame) -> pl.DataFrame:
+    """Per native frame: each team's weight as nearest to the ball (any distance, and
+    within 1.5 m), ties within 1e-9 m split across the tied team values (unknown's share
+    goes to nobody), and the last-contact team code where the nearest is within 1.5 m
+    (0 for an unknown team or a tie between teams). Frames without ball or players get
+    weight 0 and no contact."""
+    near = (
+        pls.join(bl.select("fi", "bX", "bY"), on="fi")
+        .with_columns(dist=dist("bX", "bY"), label=pl.col("team").fill_null("?"))
+        .with_columns(dmin=pl.col("dist").min().over("fi"))
+        .filter(pl.col("dist") <= pl.col("dmin") + TIE_M)
+        .group_by("fi")
+        .agg(dmin=pl.col("dmin").first(), labels=pl.col("label").unique())
+        .with_columns(n=pl.col("labels").list.len())
+    )
+    cols = []
+    for team in ("home", "away"):
+        w = pl.when(pl.col("labels").list.contains(team)).then(1.0 / pl.col("n")).otherwise(0.0)
+        cols += [
+            w.alias(f"w_{team}_any"),
+            pl.when(pl.col("dmin") <= REACH_M).then(w).otherwise(0.0).alias(f"w_{team}_r15"),
+        ]
+    near = near.with_columns(
+        *cols,
+        contact=pl.when(pl.col("dmin") <= REACH_M).then(
+            pl.when(pl.col("n") == 1)
+            .then(
+                pl.col("labels")
+                .list.first()
+                .replace_strict(CODE, default=0.0, return_dtype=pl.Float64)
+            )
+            .otherwise(0.0)
+        ),
+    )
+    return (
+        nat.select("fi", "seg", "ts_us", "key")
+        .join(near.drop("labels", "n", "dmin"), on="fi", how="left")
+        .with_columns(pl.col("^w_.*$").fill_null(0.0))
+        .sort("fi")
+    )
+
+
+def contact_features(g: pl.DataFrame, cf: pl.DataFrame, native_fps: float) -> pl.DataFrame:
+    """nearest_<team>_<window>_<reach> elapsed-time shares over (max(segment start, t - W), t]
+    and last_contact_team / last_contact_age_s, per grid row. Each native frame's weights
+    hold until the next native frame, at most 1.5 native intervals, and never past t."""
+    tol = tolerance_us(native_fps)
+    key, ts, seg = (cf[c].to_numpy() for c in ("key", "ts_us", "seg"))
+    nxt = np.r_[ts[1:], 0]
+    same = np.r_[seg[1:] == seg[:-1], False]
+    hold = np.where(same, np.minimum(nxt - ts, tol), tol)
+    start = cf.group_by("seg").agg(pl.col("ts_us").min()).sort("seg")
+    seg_start = dict(zip(start["seg"].to_list(), start["ts_us"].to_list()))
+    gseg, t, fi = (g[c].to_numpy() for c in ("seg", "t_us", "fi"))
+    s0 = np.array([seg_start[s] for s in gseg], dtype=np.int64)
+    out = {}
+    for team in ("home", "away"):
+        for wname, w in SHARE_W:
+            for reach in ("any", "r15"):
+                wt = cf[f"w_{team}_{reach}"].to_numpy()
+                cb = np.r_[0.0, np.cumsum(wt * hold)[:-1]]
+
+                def integral(x, i):
+                    return cb[i] + wt[i] * np.minimum(x - ts[i], hold[i])
+
+                a = np.maximum(s0, t - w)
+                ia = np.searchsorted(key, gseg * SEG_KEY + a, "right") - 1
+                dur = t - a
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    share = (integral(t, fi) - integral(a, ia)) / dur
+                out[f"nearest_{team}_{wname}_{reach}"] = np.where(dur > 0, share, np.nan)
+    c = cf.filter(pl.col("contact").is_not_null())
+    ckey, cts, cseg, code = (c[x].to_numpy() for x in ("key", "ts_us", "seg", "contact"))
+    if not len(ckey):
+        out["last_contact_team"] = out["last_contact_age_s"] = np.full(len(g), np.nan)
+        return pl.DataFrame(out)
+    i = np.searchsorted(ckey, key[fi], "right") - 1
+    ic = np.clip(i, 0, None)
+    have = (i >= 0) & (cseg[ic] == gseg)
+    out["last_contact_team"] = np.where(have, code[ic], np.nan)
+    out["last_contact_age_s"] = np.where(have, (t - cts[ic]) / US, np.nan)
+    return pl.DataFrame(out)
