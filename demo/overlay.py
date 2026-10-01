@@ -138,7 +138,7 @@ LANE_COLORS = {0: (120, 255, 120), 1: (0, 190, 255), 2: (40, 40, 255)}  # open, 
 
 def lane_cone(img: np.ndarray, triangle: list[Point], defenders: int) -> None:
     """The ball-to-posts triangle, filled by how many defenders stand in it (0 open, 1
-    amber, 2+ red), with the count by the ball."""
+    amber, 2+ red), with the count by the ball in white."""
     color = LANE_COLORS[min(defenders, 2)]
     pts = np.array(triangle, dtype=np.int32)
     x1, y1 = pts.min(axis=0)
@@ -151,15 +151,10 @@ def lane_cone(img: np.ndarray, triangle: list[Point], defenders: int) -> None:
     )
     cv2.polylines(img, [pts], True, color, 1, cv2.LINE_AA)
     bx, by = triangle[0]
+    org = (bx + 10, by - 10)
+    cv2.putText(img, str(defenders), org, cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3, cv2.LINE_AA)
     cv2.putText(
-        img,
-        str(defenders),
-        (bx + 10, by - 10),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        color,
-        1,
-        cv2.LINE_AA,
+        img, str(defenders), org, cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA
     )
 
 
