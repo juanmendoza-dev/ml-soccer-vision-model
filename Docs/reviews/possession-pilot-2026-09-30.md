@@ -78,9 +78,45 @@ Notes:
 - The provider `features_v1_held` rebuilt with `cache=False` equals the cached file on 10502 and 10517. The old inferred caches (`*_pinf_e737054b5d`, `state_inferred_age_e737054b5d`) aren't on the workstation, so they can't be compared here.
 - `vision.possession_train` now keeps Windows awake like `prediction.cv`.
 
+## Overnight run (2026-09-30 22:35 to 2026-10-01 01:38)
+
+`python -m vision.possession_train --model-id lgbm-v1-nested5x4-s1`, then `python -m prediction.possession --possession-model lgbm-v1-nested5x4-s1`. Both exited 0. Training wasn't looked at beyond what is shown here: no agreement, no log loss, no shot metric.
+
+- **Sealed:** `data/models/possession/lgbm-v1-nested5x4-s1/manifest.json`, with 25 logical fits over 15 trainings. `check_manifest` passes, and every `model.txt` and `fit.json` matches its recorded SHA256.
+- **Determinism:** `pair_3_4` trained twice from scratch gave the same `model.txt` SHA256. Pairs are deduplicated, as 03 planned.
+- **Time:**
+  - trainings: 10,117 s (2.81 h, `outer_0` from the pilot included), plus 597 s for the twin
+  - learned states: 1,065 s (0.30 h)
+  - whole stage: 3.27 h, against the 3.19 h projection and the 10 h budget
+- **Peak RSS:** 7.2 GiB.
+
+| training | matches | mirrored rows | rounds | s |
+|---|---|---|---|---|
+| outer_0 | 52 | 3,320,746 | 2,000 | 801 |
+| outer_1 | 51 | 3,208,552 | 1,994 | 817 |
+| outer_2 | 51 | 3,209,142 | 1,986 | 808 |
+| outer_3 | 51 | 3,222,586 | 1,991 | 905 |
+| outer_4 | 51 | 3,216,734 | 1,974 | 879 |
+| pair_0_1 | 39 | 2,484,858 | 1,721 | 552 |
+| pair_0_2 | 39 | 2,485,448 | 1,991 | 614 |
+| pair_0_3 | 39 | 2,498,892 | 1,995 | 617 |
+| pair_0_4 | 39 | 2,493,040 | 1,934 | 619 |
+| pair_1_2 | 38 | 2,373,254 | 1,623 | 509 |
+| pair_1_3 | 38 | 2,386,698 | 2,000 | 602 |
+| pair_1_4 | 38 | 2,380,846 | 1,992 | 600 |
+| pair_2_3 | 38 | 2,387,288 | 1,992 | 595 |
+| pair_2_4 | 38 | 2,381,436 | 1,947 | 592 |
+| pair_3_4 | 38 | 2,394,880 | 1,995 | 608 |
+
+Most fits run to near the 2,000-round cap. Three stop clearly earlier (`pair_0_1` 1,721, `pair_1_2` 1,623, `pair_0_4` 1,934).
+
+**Learned states, verified after the run:**
+- All 320 (64 matches × 5 outer contexts) re-read through `prediction.possession.learned_state`, with every hash check, in 24 s.
+- Every state has 03's columns and its context's `fit_id`, and its rows and native `frame_id` equal `frames_10hz`'s.
+- `p_home` is non-null exactly where fallback is false, and possession there is home or away.
+- **Fallback:** 1,570,118 of 3,912,924 outer-test grid rows (40.1%). These are exactly the `all_estimated` rows (1,570,118, all overlapping), where no player is visible. On the 1,977,379 H = 5 scored rows there are **0** fallbacks. That row count is also the gate's expected baseline.
+
 ## Next
 
-1. Overnight:
-   - `python -m vision.possession_train --model-id lgbm-v1-nested5x4-s1`: about 2.9 h. It runs the other 4 outer fits, `pair_3_4` and its determinism twin, then the other 9 pairs, and seals the manifest.
-   - Then `python -m prediction.possession --possession-model lgbm-v1-nested5x4-s1`: about 0.3 h. It builds all 320 learned states (64 matches × 5 outer contexts), so the gate and `prediction.cv` only read caches.
+1. ~~Overnight training and learned states~~: done, see above.
 2. The gate: `possession_split.py --scored h5 --possession-model <id>`, still to build. It reads the concatenated `test` contexts, reproduces the baseline counts first (1,977,379 rows, 49,812 positives, 281,606 overall and 154,806 first-3-s disagreements; a mismatch stops it), then checks the five bars.
