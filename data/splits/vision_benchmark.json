@@ -22,7 +22,7 @@
         {"start_s": 105.0, "end_s": 106.533, "label": "closeup"},
         {"start_s": 115.0, "end_s": 117.8, "label": "closeup"}
       ],
-      "marks_checked_by_user": false
+      "marks_checked_by_user": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 # Vision benchmark, first clip (2026-10-01)
 
-First real run of the W0 benchmark (07 "Vision benchmark (W0)"). One clip, so this is a baseline and a check that the tooling works on real footage, not a result to tune on. **The marks aren't checked by the user yet.**
+First real run of the W0 benchmark (07 "Vision benchmark (W0)"). One clip, so this is a baseline and a check that the tooling works on real footage, not a result to tune on. Marks checked by the user 2026-10-01.
 
 ## Clip
 `vb01-arg-fra`: PFF 10517 (Argentina v France, final), second half, video 1:00–2:00 (match clock 65:26–66:26), 1080p30. Vision ran from 0:52 (8 s pre-roll), roboflow weights, `--detect-every 1`, RTX 2060 at 5.0 fps.
