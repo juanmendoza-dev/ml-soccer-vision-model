@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from prediction.possession_gate import label_rows, native_rows
 from vision.state import PLAYER_TYPES, StateConfig, StateMachine, infer, is_out
 from vision.state_check import OBJECT_COLS
 
@@ -225,32 +226,7 @@ for i in ids:
     if frames["possession_team"].is_null().all():
         continue
     objects = pl.scan_parquet(d / "objects.parquet").select(OBJECT_COLS)
-    inf = infer(frames, objects, config)
-    vis = (
-        objects.filter(pl.col("object_type") == "ball", pl.col("visible").fill_null(False),
-                       pl.col("x").is_not_null())
-        .select("frame_id").unique().with_columns(seen=pl.lit(True)).collect()
-    )
-    j = (
-        frames.select("frame_id", "period", "timestamp_s", p_state="ball_state", p_poss="possession_team")
-        .join(inf.select("frame_id", "possession_team", "ball_carrier_id"), on="frame_id")
-        .join(vis, on="frame_id", how="left")
-        .sort("period", "timestamp_s")
-        .with_columns(seen=pl.col("seen").fill_null(False))
-        .with_columns(
-            # causal-looking bookkeeping, fine for a diagnostic
-            last_seen=pl.when("seen").then("timestamp_s").forward_fill().over("period"),
-            chg=pl.when(pl.col("p_poss") != pl.col("p_poss").forward_fill().shift(1).over("period"))
-            .then("timestamp_s").forward_fill().over("period"),
-        )
-        .filter(pl.col("p_poss").is_not_null())
-        .with_columns(
-            match=pl.lit(i),
-            dis=(pl.col("p_poss") != pl.col("possession_team")).fill_null(True),
-            gap=pl.col("timestamp_s") - pl.col("last_seen"),
-            since=pl.col("timestamp_s") - pl.col("chg"),
-        )
-    )
+    j, _ = native_rows(i, frames, objects, config)
     if scored:
         rows = (
             pl.read_parquet(PROCESSED / i / "frames_10hz.parquet",
@@ -270,20 +246,7 @@ for i in ids:
 a = pl.concat(parts)
 
 
-def bucket(col, edges, labels, none):
-    e = pl.when(pl.col(col).is_null()).then(pl.lit(none))
-    for hi, lab in zip(edges, labels):
-        e = e.when(pl.col(col) < hi).then(pl.lit(lab))
-    return e.otherwise(pl.lit(labels[-1]))
-
-
-a = a.with_columns(
-    ball=pl.when("seen").then(pl.lit("0 visible")).otherwise(
-        bucket("gap", [0.5, 2, 10, 1e9], ["1 gap<0.5s", "2 gap0.5-2s", "3 gap2-10s", "4 gap>10s"], "5 never")
-    ),
-    since_chg=bucket("since", [1, 3, 10, 1e9], ["a <1s", "b 1-3s", "c 3-10s", "d >10s"], "e none"),
-    state=pl.col("p_state").fill_null("null"),
-)
+a = label_rows(a)
 
 
 def summary(a, what):
