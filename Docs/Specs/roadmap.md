@@ -184,9 +184,9 @@ Skipped for now: schema 0.7 for empty runs, shootout (period 5) handling in visi
 - [ ] Feed vision game state into trained predictor
 - [ ] Compare predictor accuracy on vision vs. dataset tracking
 - [ ] Offline overlay renderer, with debug mode (08)
-  - [ ] Ball highlight ring + velocity arrow (08; uses existing ball position/vx,vy, no new inference)
-  - [ ] Possession % and territorial/attacking-third % panels (08; aggregates possession_team + pitch_x over time, no new inference)
-  - [ ] Sprint highlight, ball trail, confidence/uncertainty tint, event ticker, shooting-lane cone (08; all rendering over existing fields, no new inference)
+  - [x] Ball highlight ring + velocity arrow (08; uses existing ball position/vx,vy, no new inference) **Done 2026-10-01 in the pitch view (`python -m demo.render`, 08 "Element definitions"); on video once vision output has screen positions**
+  - [x] Possession % and territorial/attacking-third % panels (08; aggregates possession_team + pitch_x over time, no new inference) **Done 2026-10-01: cumulative from kickoff, thirds by each frame's attacking direction**
+  - [x] Sprint highlight, ball trail, confidence/uncertainty tint, event ticker, shooting-lane cone (08; all rendering over existing fields, no new inference) **Done 2026-10-01: cone counts 05's `lane_defenders` via `in_lane`; all four goals of 10502 render (20 s in about 7 s on the M1)**
   - [ ] Offside line (08; geometry off team + x-positions, needs solid homography accuracy on the defensive line)
   - [ ] Pitch control / space heatmap (08; Voronoi over player positions, CPU-only, no new inference)
 - [ ] Benchmark each vision stage on the 2060 (FP16 / TensorRT) and pick the live config (09)
