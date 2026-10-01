@@ -161,3 +161,103 @@ def lane_cone(img: np.ndarray, triangle: list[Point], defenders: int) -> None:
         1,
         cv2.LINE_AA,
     )
+
+
+PANEL_BG = (28, 28, 28)
+TEXT = (235, 235, 235)
+MUTED = (150, 150, 150)
+GOLD = (0, 200, 255)
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+
+def text(img, s: str, org: Point, scale=0.5, color=TEXT, thick=1, align="left") -> None:
+    """putText with left/center/right alignment on org's x."""
+    w = cv2.getTextSize(s, FONT, scale, thick)[0][0]
+    x = {"left": org[0], "center": org[0] - w // 2, "right": org[0] - w}[align]
+    cv2.putText(img, s, (x, org[1]), FONT, scale, color, thick, cv2.LINE_AA)
+
+
+def split_bar(img, x: int, y: int, w: int, h: int, parts: list[tuple[float, tuple]]) -> None:
+    """A horizontal bar cut into (share, color) parts left to right; shares sum to 1."""
+    cv2.rectangle(img, (x, y), (x + w, y + h), (70, 70, 70), -1)
+    at = x
+    for i, (share, color) in enumerate(parts):
+        end = x + w if i == len(parts) - 1 else at + round(share * w)
+        cv2.rectangle(img, (at, y), (end, y + h), color, -1)
+        at = end
+
+
+def pct(v: float | None) -> str:
+    return "--" if v is None else f"{round(100 * v)}%"
+
+
+def possession_panel(
+    img: np.ndarray,
+    box: tuple[int, int, int, int],
+    names: dict[str, str],
+    colors: dict[str, tuple],
+    sh: dict,
+    goals: tuple[int, int],
+    clock: str,
+) -> None:
+    """Header strip in box (x, y, w, h): teams and score with the clock, the possession
+    bar, and each team's thirds (share of its possession with the ball in its own
+    defensive, middle and attacking third). `sh` is demo.tally.shares()."""
+    x, y, w, h = box
+    cv2.rectangle(img, (x, y), (x + w, y + h), PANEL_BG, -1)
+    mid = x + w // 2
+    for team, side in (("home", -1), ("away", 1)):
+        edge = mid + side * 90
+        chip = (edge, y + 14) if side > 0 else (edge - 14, y + 14)
+        cv2.rectangle(img, chip, (chip[0] + 14, chip[1] + 14), colors[team], -1)
+        nx = edge + 22 if side > 0 else edge - 22
+        text(img, names[team], (nx, y + 27), 0.6, align="left" if side > 0 else "right")
+    text(img, f"{goals[0]} - {goals[1]}", (mid, y + 30), 0.9, thick=2, align="center")
+    text(img, clock, (mid, y + 48), 0.45, MUTED, align="center")
+
+    bw = w // 2
+    bx = mid - bw // 2
+    hp, ap = sh["home_pct"], sh["away_pct"]
+    if hp is None:
+        split_bar(img, bx, y + 58, bw, 10, [(1.0, (70, 70, 70))])
+    else:
+        split_bar(img, bx, y + 58, bw, 10, [(hp, colors["home"]), (ap, colors["away"])])
+    text(img, pct(hp), (bx - 10, y + 68), 0.5, align="right")
+    text(img, pct(ap), (bx + bw + 10, y + 68), 0.5)
+    text(img, "possession", (mid, y + 84), 0.4, MUTED, align="center")
+
+    tw = w // 2 - 120
+    for team, tx in (("home", x + 40), ("away", mid + 80)):
+        thirds = [sh[f"{team}_{t}"] for t in ("def", "mid", "att")]
+        if None in thirds:
+            split_bar(img, tx, y + 96, tw, 6, [(1.0, (70, 70, 70))])
+        else:
+            c = colors[team]
+            split_bar(
+                img, tx, y + 96, tw, 6, list(zip(thirds, [dimmed(c, 0.4), dimmed(c, 0.7), c]))
+            )
+        label = "own third {}   middle {}   final third {}".format(*map(pct, thirds))
+        text(img, label, (tx, y + 92), 0.38, MUTED)
+
+
+def ticker_strip(
+    img: np.ndarray, box: tuple[int, int, int, int], lines: list[tuple[str, bool]], flash: bool
+) -> None:
+    """Footer strip: the newest lines first, a goal's line in gold; `flash` fills the
+    strip gold (the renderer toggles it while a goal is up)."""
+    x, y, w, h = box
+    cv2.rectangle(img, (x, y), (x + w, y + h), GOLD if flash else PANEL_BG, -1)
+    at = x + 16
+    for s, is_goal in lines:
+        color = PANEL_BG if flash else (GOLD if is_goal else TEXT)
+        scale, thick = (0.7, 2) if is_goal else (0.55, 1)
+        text(img, s, (at, y + h // 2 + 8), scale, color, thick)
+        at += cv2.getTextSize(s, FONT, scale, thick)[0][0] + 40
+        if at > x + w:
+            break
+
+
+def event_marker(img: np.ndarray, center: Point, is_goal: bool) -> None:
+    """An X where the shot was taken, gold for a goal."""
+    c = GOLD if is_goal else TEXT
+    cv2.drawMarker(img, center, c, cv2.MARKER_TILTED_CROSS, 16, 2, cv2.LINE_AA)
