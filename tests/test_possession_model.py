@@ -1,4 +1,6 @@
 import ast
+import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +11,7 @@ from prediction.lgbm import PARAMS as BASELINE
 from prediction.resample import add_frame_flags, build_grid
 from vision import possession_features as pf
 from vision import possession_model as pm
+from vision import possession_train as pt
 
 GS = Path("data/gamestate")
 PROCESSED = Path("data/processed")
@@ -329,8 +332,172 @@ def test_rule_grid_is_visible_only_and_ignores_height_and_pff_state():
     assert a.equals(b)
 
 
-def test_vision_model_modules_never_import_prediction():
-    tree = ast.parse(Path(pm.__file__).read_text(encoding="utf-8"))
+@pytest.mark.parametrize("module", [pm, pt])
+def test_vision_model_modules_never_import_prediction(module):
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
     names = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
     names += [n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
     assert not [m for m in names if m.split(".")[0] in ("prediction", "evaluation")]
+
+
+MODEL_ID = "lgbm-v1-nested5x4-s1"
+
+
+@pytest.fixture(scope="module")
+def trained(tmp_path_factory):
+    """Ten cached synthetic matches, two per fold, trained and sealed by the driver."""
+    root = tmp_path_factory.mktemp("pt")
+    gs, cache, models = root / "gs", root / "cache", root / "models"
+    folds = {f"g{i:02d}": i % 5 for i in range(10)}
+    for i, m in enumerate(folds):
+        write_game(gs, m, *game(100 + i))
+        pf.build(m, gs, cache)
+    spec = {
+        "n_folds": 5,
+        "seed": 0,
+        "frozen": {"pff": "test"},
+        "matches": [{"match_id": m, "source": "pff", "fold": f} for m, f in folds.items()],
+    }
+    folds_path = root / "folds.json"
+    folds_path.write_text(json.dumps(spec))
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(pt, "FOLD_SIZES", [2] * 5)
+        man = pt.run(MODEL_ID, None, gs, cache, models, folds_path, log=lambda _: None)
+        yield {
+            "gs": gs,
+            "cache": cache,
+            "models": models,
+            "folds_path": folds_path,
+            "folds": folds,
+            "dir": models / MODEL_ID,
+            "manifest": man,
+        }
+
+
+def test_driver_seals_25_logical_fits_over_15_trainings(trained):
+    man = json.loads((trained["dir"] / pm.MANIFEST).read_text())
+    assert man == json.loads(json.dumps(trained["manifest"]))
+    pm.check_manifest(man)
+    assert man["sealed"] and man["dedup_pairs"] and man["determinism"]["same"]
+    assert len(man["logical"]) == 25 and len(man["trainings"]) == 15
+    assert sorted(man["inputs"]) == sorted(trained["folds"])
+    for name, tr in man["trainings"].items():
+        fit_dir = trained["dir"] / tr["dir"]
+        assert pf.sha256_file(fit_dir / "model.txt") == tr["model_sha256"], name
+        assert pf.sha256_file(fit_dir / "fit.json") == tr["fit_sha256"], name
+        assert set(tr["es_ids"]) <= set(tr["training_ids"])
+
+
+def test_a_sealed_model_id_is_never_retrained(trained):
+    t = trained
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(pt, "FOLD_SIZES", [2] * 5)
+        with pytest.raises(ValueError, match="sealed"):
+            pt.run(MODEL_ID, None, t["gs"], t["cache"], t["models"], t["folds_path"])
+
+
+def files_under(root):
+    return sorted(p for p in root.rglob("*") if p.is_file())
+
+
+def test_predict_match_uses_the_right_fit_per_context(trained):
+    d, gs, cache = trained["dir"], trained["gs"], trained["cache"]
+    before = files_under(gs.parent)
+    out = pm.predict_match(d, "outer_0", "g00", gs, cache)
+    assert files_under(gs.parent) == before  # writes nothing
+    assert out.columns == pm.STATE_COLUMNS
+    assert (out["fit_id"] == "outer_0").all()
+    fb = out.filter("fallback")
+    assert fb.height and fb["p_home"].is_null().all()
+    assert fb["possession_team"].to_list() == fb["rule_possession_team"].to_list()
+    live = out.filter(~pl.col("fallback"))
+    assert live["p_home"].is_not_null().all()
+    assert live["possession_team"].to_list() == pm.team(live["p_home"].to_numpy()).tolist()
+    # one match, two outer contexts: test under outer_0, inner-oof under outer_1
+    inner = pm.predict_match(d, "outer_1_inner_0", "g00", gs, cache)
+    assert not inner["p_home"].equals(out["p_home"])
+    man = trained["manifest"]  # both inner IDs of a pair are one booster
+    assert man["logical"]["outer_1_inner_0"]["training"] == "pair_0_1"
+    assert man["logical"]["outer_0_inner_1"]["training"] == "pair_0_1"
+
+
+def test_predict_match_fails_closed(trained, tmp_path):
+    d, gs, cache = trained["dir"], trained["gs"], trained["cache"]
+    with pytest.raises(ValueError, match="doesn't predict"):
+        pm.predict_match(d, "outer_0", "g01", gs, cache)
+    with pytest.raises(ValueError, match="no logical fit"):
+        pm.predict_match(d, "live_all64", "g00", gs, cache)
+
+    def tampered(name, edit):
+        copy = tmp_path / name / MODEL_ID
+        shutil.copytree(d, copy)
+        man = json.loads((copy / pm.MANIFEST).read_text())
+        edit(copy, man)
+        (copy / pm.MANIFEST).write_text(json.dumps(man))
+        return copy
+
+    def append_line(copy, man):
+        with open(copy / "fits/outer_0/model.txt", "a") as fh:
+            fh.write("\n")
+
+    with pytest.raises(ValueError, match="model hash"):
+        pm.predict_match(tampered("model", append_line), "outer_0", "g00", gs, cache)
+    stale = tampered("inputs", lambda c, m: m["inputs"]["g00"].update(grid_sha256="-"))
+    with pytest.raises(ValueError, match="grid_sha256"):
+        pm.predict_match(stale, "outer_0", "g00", gs, cache)
+    unsealed = tampered("unsealed", lambda c, m: m.update(sealed=False))
+    with pytest.raises(ValueError, match="not sealed"):
+        pm.predict_match(unsealed, "outer_0", "g00", gs, cache)
+
+
+def test_outer_test_labels_cannot_change_that_contexts_weights(trained, tmp_path):
+    gs, cache, folds = trained["gs"], trained["cache"], trained["folds"]
+    tables, _ = pt.load_tables(sorted(folds), gs, cache)
+    flipped = {
+        m: t.with_columns(label=1.0 - pl.col("label")) if folds[m] == 0 else t
+        for m, t in tables.items()
+    }
+    ids = trained["manifest"]["trainings"]["outer_0"]["training_ids"]
+    rec = pm.fit(flipped, ids, tmp_path)
+    assert rec["model_sha256"] == trained["manifest"]["trainings"]["outer_0"]["model_sha256"]
+
+
+def test_tie_goes_home_and_hard_labels_swap_away_from_it():
+    p = np.array([0.5, 0.2, 0.8, 0.5 - 1e-12])
+    assert pm.team(p).tolist() == ["home", "away", "home", "away"]
+    assert pm.team(1.0 - p[1:3]).tolist() == ["home", "away"]
+
+
+def test_learned_output_is_causal(trained):
+    """Fixed weights; frames after the cut are scrambled or dropped. Every grid row up to
+    the cut keeps its features, rule state and probability."""
+    import lightgbm as lgb
+
+    frames, objects, fps = game(7)
+    cut = 250  # grid tick k == native frame id here (10 fps from t = 0)
+    later = objects["frame_id"] > cut
+    rng = np.random.default_rng(1)
+    noisy = objects.with_columns(
+        x=pl.when(later).then(pl.Series(rng.uniform(-50, 50, objects.height))).otherwise("x")
+    )
+    short = (
+        frames.filter(pl.col("frame_id") <= cut + 40),
+        objects.filter(pl.col("frame_id") <= cut + 40),
+    )
+    booster = lgb.Booster(model_file=str(trained["dir"] / "fits/outer_0/model.txt"))
+    base = pf.extract(frames, objects, fps)
+    p0 = pm.p_home(booster, base)
+    r0 = pm.rule_grid(frames, objects, fps)
+    for f, o in ((frames, noisy), short):
+        x = pf.extract(f, o, fps)
+        n = int((x["k"] <= cut).sum())
+        assert x.head(n).equals(base.head(n))
+        np.testing.assert_array_equal(pm.p_home(booster, x)[:n], p0[:n])
+        assert pm.rule_grid(f, o, fps).head(n).equals(r0.head(n))
+
+
+def test_learned_inputs_ignore_everything_invisible_and_pff_state():
+    frames, objects, fps = game(5)
+    a = pf.extract(frames, objects, fps)
+    f2, o2 = scramble_hidden(frames, objects, seed=3)
+    assert pf.extract(f2, o2, fps).equals(a)

@@ -199,12 +199,13 @@ def fit(
     out_dir: Path,
     stride: int = 1,
     params: dict | None = None,
+    extra: dict | None = None,
 ) -> dict:
     """Probe + refit on one training-match set; writes out_dir/model.txt and fit.json and
     returns the fit record. The probe trains on the non-ES matches (strided) and stops on
     the ES matches at full 10 Hz; the refit trains on all of them (strided) for
     max(1, best) rounds. Mirroring happens after the split, so a match's two copies
-    stay on one side. `params` overrides are for tests only."""
+    stay on one side. `params` overrides are for tests only; `extra` joins the record."""
     params = {**PARAMS, **(params or {})}
     ids = sorted(train_ids)
     es = es_split(ids)
@@ -258,6 +259,7 @@ def fit(
         "model_sha256": pf.sha256_file(out_dir / "model.txt"),
         "versions": versions(),
         "git_commit": git_commit(),
+        **(extra or {}),
     }
     (out_dir / "fit.json").write_text(json.dumps(record, indent=2) + "\n")
     return record
@@ -407,6 +409,11 @@ def rule_grid(
     )
 
 
+def team(p: np.ndarray) -> np.ndarray:
+    """Hard possession from p_home: home at p >= 0.5, so an exact 0.5 goes home."""
+    return np.where(p >= 0.5, "home", "away")
+
+
 STATE_COLUMNS = [
     "period",
     "k",
@@ -456,7 +463,7 @@ def predict_match(
         raise ValueError(f"{match_id}: rule grid differs from the cached input grid")
     p = p_home(lgb.Booster(model_file=str(path)), feats)
     fallback = (feats["players_n"] == 0).to_numpy()
-    learned = pl.Series(np.where(p >= 0.5, "home", "away"))
+    learned = pl.Series(team(p))
     return rule.with_columns(
         t_s=feats["t_s"],
         possession_team=pl.when(pl.Series(fallback))
