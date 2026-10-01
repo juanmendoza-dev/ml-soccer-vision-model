@@ -502,3 +502,25 @@ def test_vision_never_imports_prediction():
     names = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
     names += [n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
     assert not [m for m in names if m.split(".")[0] in ("prediction", "evaluation")]
+
+
+def test_extractor_hash_ignores_line_endings(tmp_path):
+    lf, crlf = tmp_path / "lf.py", tmp_path / "crlf.py"
+    lf.write_bytes(b"a = 1\nb = 2\n")
+    crlf.write_bytes(b"a = 1\r\nb = 2\r\n")
+    assert pf.extractor_hash(lf) == pf.extractor_hash(crlf)
+
+
+def test_interpolated_rows_change_nothing():
+    frames, objects, fps = random_scene(seed=6)
+    rng = np.random.default_rng(6)
+    flagged = objects.with_columns(interpolated=pl.Series(rng.random(objects.height) < 0.2))
+    filled = pl.concat(
+        [
+            objects,
+            flagged.filter("interpolated").with_columns(
+                x=pl.col("x") + 3.0, object_id=pl.col("object_id") + "_fill"
+            ),
+        ]
+    )
+    assert_same(pf.extract(frames, objects, fps), pf.extract(frames, filled, fps))

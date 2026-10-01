@@ -603,6 +603,12 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def extractor_hash(path: Path = Path(__file__)) -> str:
+    """SHA256 of this module's source with line endings normalized, so a CRLF checkout
+    of the same commit hashes the same."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def grid_hash(keys: pl.DataFrame) -> str:
     """SHA256 of the grid keys (period, k, frame_id) in order."""
     h = hashlib.sha256()
@@ -641,7 +647,7 @@ def build(
         "contract": CONTRACT,
         "match_id": match_id,
         "grid_sha256": grid_hash(f),
-        "extractor_sha256": sha256_file(Path(__file__)),
+        "extractor_sha256": extractor_hash(),
         "output_sha256": sha256_file(path),
         "rows": f.height,
         "columns": COLUMNS,
@@ -664,7 +670,7 @@ def load(
     now = native_inputs(match_id, gamestate_dir)
     frames = pl.read_parquet(gamestate_dir / match_id / "frames.parquet")
     now["grid_sha256"] = grid_hash(grid(native(frames, now["native_fps"]), now["native_fps"]))
-    now["extractor_sha256"] = sha256_file(Path(__file__))
+    now["extractor_sha256"] = extractor_hash()
     now["output_sha256"] = sha256_file(path)
     now["contract"], now["columns"] = CONTRACT, COLUMNS
     stale = [k for k, v in now.items() if meta.get(k) != v]
