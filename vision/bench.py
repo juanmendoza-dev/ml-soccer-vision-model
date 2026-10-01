@@ -22,7 +22,7 @@ import polars as pl
 from scipy.optimize import linear_sum_assignment
 
 from vision import replay
-from vision.types import GOALKEEPER, MATCH, PLAYER
+from vision.types import BALL, GOALKEEPER, MATCH, PLAYER
 
 MANIFEST = Path("data/splits/vision_benchmark.json")
 MARK_LABELS = ("replay", "closeup", "other")
@@ -31,6 +31,7 @@ GATE_M = 5.0  # one-to-one matches further apart than this aren't the same perso
 NEAR_M = 2.0
 MAX_DRIFT_S = 0.1  # sync pairs disagreeing by more: the source video's fps is off
 GEOMETRY_TARGET = 0.17  # roadmap: frames without geometry at or under smoke04's
+MAX_PREROLL_S = 30.0  # vision may start this much before the clip, unscored
 TIE_PT = 0.005  # within this much of the best within-2 m, less geometry missing wins
 
 
@@ -127,14 +128,18 @@ def match_people(truth: np.ndarray, vis: np.ndarray) -> list[tuple[int, int, flo
 
 def frame_pairs(aligned: pl.DataFrame, det: pl.DataFrame, truth: pl.DataFrame) -> dict:
     """Per scored frame: truth count, vision count and the matched pairs."""
-    scored = aligned.filter(pl.col("mark").is_null() & pl.col("pff_frame_id").is_not_null())
+    scored = aligned.filter(
+        pl.col("in_clip") & pl.col("mark").is_null() & pl.col("pff_frame_id").is_not_null()
+    )
     people = det.filter(
         pl.col("class").is_in([PLAYER, GOALKEEPER]) & pl.col("pitch_x").is_not_null()
     )
     vis_by = people.partition_by("frame_id", as_dict=True)
     truth_by = truth.partition_by("pff_frame_id", as_dict=True)
     out = {"n_scored": scored.height, "frames": []}
-    for frame_id, pff_id, ok in scored.select("frame_id", "pff_frame_id", "geometry").iter_rows():
+    for frame_id, pff_id, ok, view in scored.select(
+        "frame_id", "pff_frame_id", "geometry", "view"
+    ).iter_rows():
         t = truth_by.get((pff_id,))
         v = vis_by.get((frame_id,))
         t_xy = t.select("x", "y").to_numpy() if t is not None else np.zeros((0, 2))
@@ -143,6 +148,7 @@ def frame_pairs(aligned: pl.DataFrame, det: pl.DataFrame, truth: pl.DataFrame) -
         out["frames"].append(
             {
                 "geometry": ok,
+                "match_view": view == MATCH,
                 "n_truth": len(t_xy),
                 "n_vis": len(v_xy),
                 "pairs": [
@@ -209,6 +215,10 @@ def score_clip(
                 mark_labels(aligned["video_s"].to_numpy(), clip["marks"]), dtype=pl.String
             ),
             geometry=(pl.col("view") == MATCH) & pl.col("homography_ok"),
+            # pre-roll before video_start_s lets the gate and team warmup settle unscored
+            in_clip=pl.col("video_s").is_between(
+                clip["video_start_s"], clip["video_end_s"], closed="left"
+            ),
         )
         return aligned, frame_pairs(aligned, det, truth)
 
@@ -239,12 +249,15 @@ def summarize(clip: dict, aligned: pl.DataFrame, fp: dict, fps: float) -> dict:
     d_all = np.array([p[0] for p in pairs])
     d_geo = np.array([p[0] for f in geo for p in f["pairs"]])
     false_live = (
-        aligned.filter(pl.col("mark").is_not_null() & pl.col("geometry")).group_by("mark").len()
+        aligned.filter(pl.col("in_clip") & pl.col("mark").is_not_null() & pl.col("geometry"))
+        .group_by("mark")
+        .len()
     )
     return {
         "clip_id": clip["clip_id"],
         "sync_coarse": clip.get("sync_coarse", False),
         "n_scored": fp["n_scored"],
+        "n_match_view": sum(f["match_view"] for f in fr),
         "n_geometry": len(geo),
         "n_truth": sum(f["n_truth"] for f in fr),
         "n_truth_geo": sum(f["n_truth"] for f in geo),
@@ -264,6 +277,7 @@ def pooled(scores: list[dict]) -> dict:
         k: sum(c[k] for c in scores)
         for k in (
             "n_scored",
+            "n_match_view",
             "n_geometry",
             "n_truth",
             "n_truth_geo",
@@ -287,6 +301,10 @@ def headline(s: dict) -> dict:
 
     return {
         "geometry_missing": 1 - frac(s["n_geometry"], s["n_scored"]),
+        # the two parts: the view gate said other, or match view with no accepted fit.
+        # The second is smoke04's 17% (65 of 375 match-view frames) and what the sweep moves
+        "view_other": 1 - frac(s["n_match_view"], s["n_scored"]),
+        "homography_rejected": 1 - frac(s["n_geometry"], s["n_match_view"]),
         "within_2m": frac(s["n_near"], s["n_truth"]),
         "median_m": q(s["errors"], 0.5),
         "p90_m": q(s["errors"], 0.9),
@@ -298,14 +316,15 @@ def headline(s: dict) -> dict:
 
 
 def pick(results: list[tuple[dict, dict]]) -> tuple[dict, dict] | None:
-    """(config overrides, pooled headline) with the highest within-2 m and geometry
-    missing at or under the target; within TIE_PT of it, the least geometry missing."""
-    ok = [r for r in results if r[1]["geometry_missing"] <= GEOMETRY_TARGET]
+    """(config overrides, pooled headline) with the highest within-2 m and match-view
+    frames without an accepted homography at or under the target; within TIE_PT of it,
+    the fewest of those."""
+    ok = [r for r in results if r[1]["homography_rejected"] <= GEOMETRY_TARGET]
     if not ok:
         return None
     best = max(r[1]["within_2m"] for r in ok)
     close = [r for r in ok if r[1]["within_2m"] >= best - TIE_PT]
-    return min(close, key=lambda r: r[1]["geometry_missing"])
+    return min(close, key=lambda r: r[1]["homography_rejected"])
 
 
 class Clip:
@@ -318,16 +337,33 @@ class Clip:
         if run.get("video_sha256") != clip["video_sha256"]:
             raise SystemExit(f"{clip['clip_id']}: the run's video isn't the manifest's (sha256)")
         self.run_start_s = run.get("video_start_s", 0.0)
-        if abs(self.run_start_s - clip["video_start_s"]) > 0.1:
+        if not 0 <= clip["video_start_s"] - self.run_start_s <= MAX_PREROLL_S:
             raise SystemExit(
-                f"{clip['clip_id']}: run starts at {self.run_start_s} s, manifest at "
-                f"{clip['video_start_s']} s"
+                f"{clip['clip_id']}: run starts at {self.run_start_s} s; the clip starts at "
+                f"{clip['video_start_s']} s (run 0-{MAX_PREROLL_S:.0f} s before it)"
             )
         self.config = replay.run_config(self.cache)
+        if self.config.home_attacks_tv_right_p1 != clip["home_attacks_tv_right_p1"]:
+            raise SystemExit(
+                f"{clip['clip_id']}: the run's attacking direction isn't the manifest's"
+            )
         vision_gs = gamestate_dir / clip["clip_id"]
         self.inputs = replay.load(self.cache, vision_gs)
         self.fps = pl.read_parquet(vision_gs / "match.parquet")["native_fps"][0]
         self.pff = gamestate_dir / clip["match_id"]
+        self._check_replay()
+
+    def _check_replay(self) -> None:
+        """Every score is a replay, so the run config's replay must be what the run wrote."""
+        det, _ = replay.replay(*self.inputs, self.config)
+        cols = ["frame_id", "object_id", "pitch_x", "pitch_y", "homography_ok", "team_cluster"]
+
+        def people(d):
+            return d.filter(pl.col("class") != BALL).select(cols).sort("frame_id", "object_id")
+
+        cached = pl.read_parquet(self.cache / "detections.parquet")
+        if not people(det).equals(people(cached)):
+            raise SystemExit(f"{self.clip['clip_id']}: replay doesn't reproduce the run's cache")
 
     def score(self, sets: list[str], offset_check: bool = False) -> dict:
         det, frames = replay.replay(*self.inputs, replay.with_overrides(self.config, sets))
@@ -345,7 +381,8 @@ class Clip:
 
 def fmt(h: dict) -> str:
     return (
-        f"geometry missing {h['geometry_missing']:.1%}  within 2 m {h['within_2m']:.1%}  "
+        f"geometry missing {h['geometry_missing']:.1%} (view other {h['view_other']:.1%}, "
+        f"rejected {h['homography_rejected']:.1%} of match view)  within 2 m {h['within_2m']:.1%}  "
         f"median {h['median_m']:.2f} m  p90 {h['p90_m']:.2f} m  "
         f"(with geometry: {h['within_2m_geo']:.1%}, {h['median_geo_m']:.2f} / {h['p90_geo_m']:.2f} m)  "
         f"unmatched/frame {h['unmatched_per_frame']:.2f}"

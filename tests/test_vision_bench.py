@@ -87,6 +87,7 @@ def test_scorecard_on_a_clean_clip(bench_dirs):
     assert s["n_truth"] == 350 and s["n_near"] == 300  # 5 people, every one exact
     h = bench.headline(s)
     assert h["geometry_missing"] == pytest.approx(10 / 70)
+    assert h["view_other"] == pytest.approx(10 / 70) and h["homography_rejected"] == 0
     assert h["within_2m"] == pytest.approx(300 / 350) and h["within_2m_geo"] == 1.0
     assert h["median_m"] < 1e-3 and h["unmatched_per_frame"] == 0
     # the ad's first half-second is still match view with a homography
@@ -115,6 +116,36 @@ def test_sync_offset_moves_the_truth_window(bench_dirs):
     # truth is static, so a shifted sync still lines up; frames past PFF's end aren't scored
     s = score(bench_dirs, clip(sync=[{"video_s": 0.0, "timestamp_s": PFF_T0 + 6}]))
     assert 0 < s["n_scored"] < 70
+
+
+def test_pre_roll_before_the_clip_isnt_scored(bench_dirs):
+    s = score(bench_dirs, clip(video_start_s=1.5))
+    # 1.5-3.9 s and 7-9.9 s; the gate's first second is in the pre-roll
+    assert s["n_scored"] == 55 and s["n_geometry"] == 55
+
+
+def test_run_starting_after_the_clip_is_refused(bench_dirs):
+    cache_dir, gs_dir = bench_dirs
+    fake_pff(gs_dir)
+    with pytest.raises(SystemExit, match="starts"):
+        bench.Clip(clip(video_start_s=-1.0), cache_dir, gs_dir)
+
+
+def test_direction_must_match_the_run(bench_dirs):
+    cache_dir, gs_dir = bench_dirs
+    fake_pff(gs_dir)
+    with pytest.raises(SystemExit, match="direction"):
+        bench.Clip(clip(home_attacks_tv_right_p1=False), cache_dir, gs_dir)
+
+
+def test_replay_that_misses_the_cache_is_refused(bench_dirs):
+    cache_dir, gs_dir = bench_dirs
+    fake_pff(gs_dir)
+    path = cache_dir / "synth" / "detections.parquet"
+    det = pl.read_parquet(path)
+    det.with_columns(pitch_x=pl.col("pitch_x") + 0.5).write_parquet(path)
+    with pytest.raises(SystemExit, match="reproduce"):
+        bench.Clip(clip(), cache_dir, gs_dir)
 
 
 def test_run_must_be_the_manifest_video(bench_dirs):
@@ -159,7 +190,7 @@ def test_best_offset_finds_the_lowest_median_error():
 
 def test_pick_keeps_geometry_under_target_and_leans_permissive():
     def r(name, missing, within):
-        return ({"sets": [name]}, {"geometry_missing": missing, "within_2m": within})
+        return ({"sets": [name]}, {"homography_rejected": missing, "within_2m": within})
 
     results = [r("strict", 0.30, 0.95), r("a", 0.15, 0.80), r("b", 0.05, 0.798), r("c", 0.02, 0.70)]
     assert bench.pick(results)[0]["sets"] == ["b"]  # a and b tie within 0.5 pt; b keeps more
