@@ -21,6 +21,7 @@ from demo.render import open_writer
 FIT_MAX_PX = 2.0  # worst refit error on the people it was fit to
 MIN_POINTS = 4
 MIN_SPREAD_M = 1.0  # people nearly on one line leave the mapping undetermined
+MAX_BALL_SPEED = 40.0  # m/s, past the hardest shots: faster is a detection jump
 
 
 def to_screen(H: np.ndarray, x: float, y: float) -> tuple[float, float] | None:
@@ -68,8 +69,8 @@ class BallVideo:
         views = pl.read_parquet(cache / "view.parquet")
         self.first, self.last = int(views["frame_id"].min()), int(views["frame_id"].max())
         view = dict(views.select("frame_id", "view").iter_rows())
-        fps = float(pl.read_parquet(gamestate / "match.parquet")["native_fps"][0])
-        self.trail_n = round(ov.TRAIL_S * fps)
+        self.fps = float(pl.read_parquet(gamestate / "match.parquet")["native_fps"][0])
+        self.trail_n = round(ov.TRAIL_S * self.fps)
         gs = pl.read_parquet(gamestate / "objects.parquet").filter(pl.col("object_type") == "ball")
         self.ball_gs = {(r["frame_id"], r["object_id"]): r for r in gs.iter_rows(named=True)}
         self.ball_det = {
@@ -96,17 +97,29 @@ class BallVideo:
         H = self.mapping.get(frame_id)
         g = self.ball_xy(frame_id)
         if H is not None:
-            trail = []
+            trail, newer = [], None  # newer: (frame_id, x, y) of the last position kept
             for k in range(frame_id, frame_id - self.trail_n, -1):
                 if self.mapping.get(k) is None:
                     break  # a cut or close-up: the trail doesn't reach past it
                 b = self.ball_xy(k)
+                if b is not None and newer is not None:
+                    dt = (newer[0] - k) / self.fps
+                    if np.hypot(newer[1] - b["x"], newer[2] - b["y"]) / dt > MAX_BALL_SPEED:
+                        break  # a detection jump: older positions belong to another "ball"
+                if b is not None:
+                    newer = (k, b["x"], b["y"])
                 trail.append(None if b is None else as_point(to_screen(H, b["x"], b["y"]), w, h))
             ov.ball_trail(out, trail[::-1])
         center = (round((d["x1"] + d["x2"]) / 2), round((d["y1"] + d["y2"]) / 2))
         radius = max(round((d["x2"] - d["x1"]) * 0.9), 6)
         tip = None
-        if H is not None and g is not None and g["vx"] is not None and g["vy"] is not None:
+        if (
+            H is not None
+            and g is not None
+            and g["vx"] is not None
+            and g["vy"] is not None
+            and np.hypot(g["vx"], g["vy"]) <= MAX_BALL_SPEED
+        ):
             tip = as_point(
                 to_screen(H, g["x"] + ov.ARROW_S * g["vx"], g["y"] + ov.ARROW_S * g["vy"]), w, h
             )
