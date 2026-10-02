@@ -184,5 +184,5 @@ All three clips at 7.2: vb01 20.9%, vb02 32.4%, vb03 15.3%; pooled 22.1% within 
 
 **What it means:**
 - Geometry is the problem again, on a new stadium and more so. A per-frame fit from 5–8 keypoints can't reject a pair of confident wrong points that agree with each other.
-- Step b (PTZ camera model) helps directly here: a fixed camera position per match rules out a fit that moves the camera to fit a stripe. Keep vb03 in the set as the hard case.
+- Keep vb03 in the set as the hard case. **Later the same day:** PnLCalib gets 84.1% within 2 m here, against 15.8% for our fit, on the same foot points. Replacing the keypoint model beats a PTZ solver on top of it (`Docs/reviews/pnlcalib-2026-10-02.md`).
 - Teams 73% is likely downstream of positions (pairs land on the wrong player when positions are 3 m off, as on vb01 before the fix). Recheck once geometry is better.
