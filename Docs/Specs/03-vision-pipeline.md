@@ -10,8 +10,8 @@ Turn broadcast video into game state (02) for each frame.
 ## Stages
 0. **View gate** — decides per frame whether it's a usable match view, before any GPU work. Broadcasts cut to ads, studio, crowd and close-ups; detection on those wastes time and produces junk.
    - **Grass share:** downscale to 160×90, share of pixels in a green HSV range. Below `min_grass` (~0.3) → `other`. ~1 ms on CPU, every frame.
-   - **Keypoints:** when stage 4 runs, fewer than `min_keypoints` (~4) pitch keypoints found → `other`, even if green (close-ups on grass, green ads).
-     The last count holds until stage 4 runs again, so failures on keypoint frames add up across the frames between them. While `other`, a green frame gets a keypoint probe every `keypoints_every` frames (feeds the gate only, no homography), so a view comes back on grass and lines, not grass alone.
+   - **Pitch check:** when stage 4 runs and finds no pitch → `other`, even if green (close-ups on grass, green ads). What counts as no pitch depends on the backend: for `pnlcalib`, no camera that passes the per-call checks (Pitch calibration → PnLCalib); for `roboflow`, fewer than `min_keypoints` (~4) keypoints.
+     The last result holds until stage 4 runs again, so failures on stage 4 frames add up across the frames between them. While `other`, a green frame gets a probe every `keypoints_every` frames (feeds the gate only, no homography), so a view comes back on grass and lines, not grass alone.
    - **Hysteresis:** switch to `other` after `off_after_s` (~0.5 s) of failing frames; back to `match` after `on_after_s` (~1 s) of passing frames. Causal: uses frames `<= t` only.
    - **While `other`:** stages 1–7 don't run. Game state still gets a `frames` row with `ball_state`, `possession_team`, `ball_carrier_id` and `view_polygon` null (02: can't decide → null), and no `objects` rows.
    - **Back to `match`:** reset the tracker (IDs don't survive a cut). Keep the team assignment fit; refit if the break was longer than `refit_after_s` (~120 s, e.g. half-time). A refit matches its clusters to the old ones by kit color, so `home_cluster` keeps pointing at the same kit.
@@ -24,7 +24,7 @@ Turn broadcast video into game state (02) for each frame.
    - **Feature:** mean CIELAB (L, a, b) of the shirt pixels, in CIELAB units (OpenCV's 8-bit L divided by 2.55), so the 2-means distance is plain color difference (ΔE76). Fixed weights, nothing fitted, so a refit compares its centers with the old ones directly (F4).
    - **Track team:** the majority of every prediction for the track so far (causal; a tie keeps its first prediction). Each confident detection votes, so a track's team can still change after its first few frames.
    - **Why (2026-10-01):** the old feature was mean chroma (a, b) only, with L dropped because lighting split smoke03's 2-means, and the team was fixed by the first 5 votes. It fails when kits differ mainly in lightness: vb01 (navy France vs white / sky-blue Argentina) scored 52% outfield. Offline test (`scripts/team_crops.py`, the pipeline's own warmup fit, tracks labeled by majority PFF team after removing each frame's affine, 109 tracks): per crop 53% → 97.4% in CIELAB units. Any L weight from 0.1 to 1.0 × OpenCV's L gives 97.1–97.4% (CIELAB is 0.39), and median instead of mean is the same. Dividing each channel by its warmup spread ties on vb01 but fails the synthetic smoke03 case (a few bright yellow crops split off from both kits, 20 of 20 seeds), so it was dropped. Track team: first 5 votes 97.0%, running majority 97.6%; with the spread scaling the first 5 votes fell to 93.9% while the running majority held, so the running majority is the safer rule (a few tracks start occluded). smoke03 (red vs blue, no truth) splits cleanly by eye. SigLIP (GPU) only if the benchmark clips fall short of the > 95% target.
-4. **Pitch homography** — pitch keypoint model → per-frame homography → pixel to meters. Smooth over time to reduce jitter. Fits are accepted or rejected as in Pitch template → Homography acceptance.
+4. **Pitch calibration** — PnLCalib (a SoccerNet camera calibration model) every `keypoints_every` frames → a full camera → its ground-plane homography → pixel to meters. Calls are accepted, held and smoothed as in Pitch calibration below. Planned 2026-10-02, not built: until it passes the bench, runs use the old backend, roboflow's 32-keypoint model with a RANSAC homography per call (`calib_backend = "roboflow"`, Pitch calibration → Roboflow keypoints). That backend stays for replaying old runs.
 5. **Ball tracking** — dedicated detector at higher input resolution; interpolate short gaps (< 1 s) and mark `interpolated=True`.
 6. **Jersey OCR** — read numbers over multiple frames, vote per track, link to roster → `player_id`. Borrow approach from sn-gamestate.
 7. **Velocities** — backward differences on trailing-smoothed positions (causal, frames `<= t` only; see 02 `vx, vy`). A centered window would leak future frames into the features.
@@ -232,28 +232,88 @@ One stateful object, one frame at a time. Offline is a loop over it, so live (so
     writer.close()
 
 - `VisionFrame`: `frame_id`, `t`, `view` (stage 0), `homography_ok`, `objects` (object_id, class, team, pitch x/y or null, confidence, `tracked_only`, display box), `ball` (same, or null), `view_polygon`.
-- Stages are injected (detector, tracker, team assigner, keypoint model), so tests run with fakes and live mode can swap in smaller models.
+- Stages are injected (detector, tracker, team assigner, keypoint or camera model), so tests run with fakes and live mode can swap in smaller models.
 - Live forms of stages that are batch-style in roboflow/sports:
   - **Teams:** fit on a warmup window (the first `team_warmup_s` of `match` frames), then assign. `team = null` until fitted.
   - **Ball gaps:** extrapolated forward from the last velocity, `interpolated=True`, never filled from later frames. History older than `ball_max_gap_s` is dropped before a new detection uses it (no velocity measured across a gap), and the ball isn't extrapolated while the homography is invalid or after a detection that has no pitch position.
   - **`visible`:** detections are visible. A filled-in box (tracker fill or ball extrapolation) that has drifted entirely out of the frame is written `visible=False` (it's already `interpolated=True`, 02).
-  - **Homography:** smoothed over a trailing window only, and only across fits that agree with each other (no averaging across a camera cut).
+  - **Homography:** smoothed over a trailing window only, and only across fits that agree with each other (no averaging across a camera cut). With PnLCalib, the nets run on their own worker and the frame loop uses the last accepted camera (Pitch calibration → Speed).
 
-## Pitch template
-The keypoint model is roboflow/sports' `football-pitch-detection` (32 keypoints). Its template (`SoccerPitchConfiguration`) is 120 × 70 m in centimetres, origin at a corner, y growing toward the near touchline, with a 20.15 m deep penalty box. We keep its **keypoint order** (that's what the weights predict) but put each landmark at its **real** position in 02's frame (except 31/32, below): meters, center origin, 105 × 68, penalty area 16.5 × 40.32, goal area 5.5 × 18.32, penalty spot 11, center circle 9.15. The homography then outputs 02 coordinates directly, nothing gets rescaled.
-- Keypoint 1 (roboflow `(0, 0)`) is the far-left corner as seen on TV → `(-52.5, 34)` in the TV frame (+x right, +y toward the far touchline, as in 02).
-- Keypoints 9 / 22 (penalty spots) → `(∓41.5, 0)`; 31 / 32 ("circle left / right of the centre spot") → `(∓circle_kp_x_m, 0)`, default **7.2 m**.
-  - **31/32 sit where the model puts them, not at the real circle edge (9.15 m).** On vb01 (`scripts/keypoint_check.py`, ~100 frames each, a homography from the PFF players' feet), the model's 31/32 land at about ±7.2 m (dx +2.13 / −1.75 against 9.15, spread ~1.1 m), while the halfway points next to them land right. Forcing them out to 9.15 stretches the middle of the pitch along x. Replayed on vb01: within 2 m 14.0% → 20.9%, median 2.81 → 2.43 m, homography rejected unchanged (10.1%). Dropping 31/32 instead is worse (rejected 17.6%). `Docs/reviews/vision-bench-2026-10-01.md`.
-  - **Confirmed on a second clip (vb02, NED–ARG, marks checked by the user):** 31/32 at about −8.0 / +7.5 m; the bench is best at 7.0–7.2 on both clips (vb02: 25.3% → 32.4%, median 2.54 → 2.25 m). It stays a config value (`VisionConfig.circle_kp_x_m`). It goes into `run.json` with the rest of the config, so the replay check still holds and the bench can score 9.15 and 7.2 side by side (`--grid circle_kp_x_m=9.15,7.2`). A `run.json` without the field ran on 9.15 (runs before 2026-10-01).
-  - **Not a fixed property of the template (vb03, JPN–ESP, Khalifa International, 2026-10-02):** circle left lands at +0.18 m off 9.15 and circle right at −2.06 m, and 7.2 vs 9.15 barely moves the bench (15.0% → 15.3%). The pull-in is model bias that varies by stadium. 7.2 stays as the default since it doesn't hurt anywhere. The fix is replacing the keypoint model: PnLCalib gets 82–91% within 2 m on all three bench clips (`Docs/reviews/pnlcalib-2026-10-02.md`). On this pitch the keypoints also land box-front points on mowing stripes (vision bench review, clip 3).
-- The corner assignment is read from roboflow's radar drawing (y down = toward the camera). Check it on the first real clip: the center spot and a penalty spot should land where they are on screen.
-- Keypoints below `min_keypoint_conf` are dropped; at least 4 are needed for a homography (stage 0 counts them).
+## Pitch calibration
+Stage 4 turns an image into a ground-plane homography, pixels → TV-frame meters (+x right on screen, +y toward the far touchline, center origin, 105 × 68; `to_02` then applies the match direction). Two backends, picked by `VisionConfig.calib_backend`. Both end in one homography per accepted call; the across-call filter and the per-position check (Shared, below) are the same for both.
 
-### Homography acceptance
-The first 2060 smoke test (`Docs/reviews/smoke-test-2026-09-27.md`) put objects more than 15 m off the pitch. When a fit can't be trusted, positions go null. They are never clamped or guessed. All thresholds are in `VisionConfig`, and they are guesses until they're tuned on real clips.
-- **Per fit:** RANSAC at `ransac_m` on the template. A fit needs `min_inliers` inliers and a mean inlier reprojection error ≤ `max_homography_err_m`. Stage 0 still gets the count of confident keypoints, not inliers. Four inliers always fit exactly (error 0), so the next two checks are what catch a bad four-point fit.
-- **Across fits:** a new fit is compared with the one in use at its own inlier keypoints. If the mean distance is ≤ `max_homography_jump_m`, it joins the trailing average. If not, it waits and the homography isn't ok until the next fit. If that next fit agrees with the waiting one, the camera changed and the two start a new window. If it agrees with the old one, the waiting fit is dropped. Once the fit in use is older than `homography_max_age_s`, any fit that passes the per-fit checks is taken. Frames already emitted are never rewritten.
+### PnLCalib (`calib_backend = "pnlcalib"`, planned 2026-10-02, not built)
+**Why.** The roboflow keypoints are the reason geometry fails, not the fit: on vb03 they put box-front points on a mowing stripe and the fit passes its own check while being wrong (vision bench review, clip 3). PnLCalib (github.com/mguti97/PnLCalib, upstream commit `8c87391`) on the same vision foot points and PFF truth, every 5th frame, no gate or filter: within 2 m vb01 81.7%, vb02 91.2%, vb03 84.1%, median 0.45–0.60 m, against 14.8 / 32.5 / 15.8% for the current stage 4. With the WC14 finetune: 82.7 / 92.1 / 91.8%, pooled 89.2% (`Docs/reviews/pnlcalib-2026-10-02.md`, both sections). It replaces the keypoint model; a PTZ solver on top of the roboflow keypoints would be fixing the wrong input.
+
+**Integration: vendored, behind a stage class.**
+- Copy the inference path into `vision/pnlcalib/`: the two HRNet definitions (`model/cls_hrnet.py`, `cls_hrnet_l.py`, with their yaml configs), `utils/utils_calib.py`, `utils_heatmap.py`, `utils_optimize.py` and the world-coordinate tables they import. Add upstream's GPL-2.0 `LICENSE` and a README naming the commit. Changes: package-relative imports and dropping plotting imports (matplotlib), nothing else, so a diff against upstream stays readable.
+- **Why vendor, not import `../PnLCalib`:** replay reruns PnLCalib's voting on CPU (Cache, below), so bench numbers depend on that code. In the repo, `run.json`'s git commit pins it. An outside checkout isn't pinned, and the bench couldn't run without it. **Why not call upstream's `inference.inference`:** it reads module globals (`device`, `transform2`), and it thresholds the heatmap peaks before we can cache them. Its 20 lines get rewritten in our wrapper. The calibration size must be the video's frame size, not a hardcoded 1920 × 1080; the bench videos are 1080p, so today's numbers aren't affected.
+- `vision/stages.py`: `PnLCalibCamera(weights_dir, prefix, device, fp16)` next to `YoloKeypoints`. `detect(image) -> CalibPeaks` resizes to 960 × 540, runs both nets and takes the max-pool peak per channel: 57 keypoints and 23 lines × 2 ends, each x, y, score in net pixels. GPU work ends there.
+- `vision/calib.py` (CPU, used by the pipeline and replay): `camera_from_peaks(peaks, image_size, config) -> Camera | None` applies `pnl_kp_threshold` / `pnl_line_threshold`, `complete_keypoints`, then `FramebyFrameCalib(iwidth, iheight).heuristic_voting(refine_lines=True)`. That's upstream's `inference(..., pnl_refine=True)`. The same module holds the ground homography and the per-call checks below.
+- **Weights:** the WC14 finetune, `SV_FT_WC14_kp` / `SV_FT_WC14_lines` (`pnl_weights = "SV_FT_WC14"`, the prefix). Against the base `SV` it's better on all three clips and cuts vb03's no-fit frames 35 → 3; `SV_FT_TSWC` is worse on vb01/vb02 (review). 265 MB each, outside git, in `--weights-dir` next to roboflow's. `run.json` `weights` hashes the files stage 4 actually loads, by name. Today's `*.pt` glob would skip them, since PnLCalib's files have no extension.
+- **Dependencies:** `shapely` (imported by `utils_optimize`) goes into the `vision` extra, and `scipy` gets a direct pin, since `least_squares` is now in our code path. lsq-ellipse is only used by upstream's training and evaluation code, so it stays out unless a vendored import proves otherwise.
+
+**Output per call: the full camera.** `Camera`: fx, fy, principal point, position (x, y, z), rotation (3 × 3), reprojection error (px), voting mode, and the keypoint and line counts after thresholds.
+- Keep it whole. A ball in the air isn't on the ground plane, so placing it later (stage 5, height) needs the camera ray, not a homography. The per-call checks below also use camera parameters.
+- Pixel → pitch for people stays a ground homography: `H = inv(P[:, [0, 1, 3]])`, where `P` is upstream's `projection_from_cam_params`. In PnLCalib's world it gives centered meters with y toward the near touchline, so the TV frame is (x, −y). That holds on all three bench clips. Its z points down (the crossbar is at z = −2.44), so camera height is −z.
+
+**Cadence and the view gate.**
+- **Keep `keypoints_every` (5) as stage 4's cadence for both backends.** It's one call that feeds both the gate and the camera, as the probe in `other` already does. Old runs keep their field. Decoupling the two only buys anything live, and live needs a lower rate anyway (Speed).
+- **Gate signal for `pnlcalib`:** a call passes when it returns a camera that passes the per-call checks. `min_keypoints` and `min_keypoint_conf` become roboflow-only. With WC14 (review): a camera on 1 of 98 sampled close-up frames (vb01 1 / 70, vb02 0 / 28) and 928 of 930 wide frames. The roboflow count drops to 0–3 on 5 s of vb01's wide play (78–83 s) and sends the gate to `other`. PnLCalib has a camera on every one of those frames. The one close-up camera is a single frame, which the gate's `on_after_s` (1 s) absorbs.
+
+**No camera on a call: hold the last one.** A call with no camera, or one that fails the checks, leaves the camera in use until it's older than `homography_max_age_s` (1 s, unchanged). That's the existing filter behavior; nothing new is built for it.
+- **Why that's enough** (review, last section): with WC14, vb01 and vb02 have no no-fit calls and vb03 has 3 of 360, one 0.4 s run. A 1 s hold gives vb03 92.5% within 2 m, the same as a low-threshold retry (92.6%). The 3–5 s runs in the first PnLCalib look were the base weights on vb03 (35 frames) and, on vb01/vb02, the vision run's own gate dropping to `other`, not PnLCalib.
+- **Not done:** falling back to the roboflow fit (worst of the options on vb03, and a second model on the GPU); interpolating between calls (needs the next call, not causal); a longer hold (5 s drifts in a pan: p90 0.98 → 1.48 m on base vb03); a retry at lower thresholds (no gain with WC14; with the base weights the retried fits were 45% within 2 m). Lower thresholds stay available as a replay sweep (`--revote`).
+
+**Per-call checks** (replace roboflow's per-fit checks). A call is rejected, and stage 0 sees a failure, when:
+- PnLCalib returns no camera;
+- the reprojection error isn't finite or is above `max_calib_err_px`. Upstream's voting keeps a result whose error is NaN (`if ret:`), so this has to be checked here;
+- the camera height (−z) is outside `camera_min_height_m`–`camera_max_height_m` (start at 5–60 m), or the camera isn't behind the near touchline (PnLCalib's y ≤ 34 m, i.e. on or over the pitch).
+
+Starting values from the review's WC14 runs on wide play: error p95 4.8–5.5 px at 1920 × 1080, height 13.5–23.9 m, 67–113 m behind the center spot. `max_calib_err_px` starts at 10. These bounds catch broken cameras (below ground, inside the pitch, a reverse angle from the far side), not a good camera that's slightly off; they're guesses to look at on the bench, not tuned.
+
+**Filtering.** Accepted cameras go to `HomographyFilter` as ground homographies (Shared, below). Average homographies, not camera parameters: positions are what get used, and averaging rotations and focal lengths isn't linear. The jump check moves from the fit's inlier keypoints, which a camera doesn't have, to a fixed grid of image points: 5 × 3 points over the lower two thirds of the frame, keeping those that project onto the pitch under both homographies. `homography_window` starts at 3 as now; PnLCalib's ~0.5 m per call may not need averaging, and a window lags a pan, so the sweep tries 1–3.
+- **Per-match camera position (PTZ):** the main camera doesn't move during a match, so a call whose position is far from the running median of accepted positions is suspect. Not in v1. The cache records every position, so the bench review can look at the spread first. Add it only if accepted bad calls show up.
+
+**Config** (`VisionConfig`):
+- **New:** `calib_backend` (`"roboflow"` until the bar below passes, then `"pnlcalib"`), `pnl_weights` (`"SV_FT_WC14"`), `pnl_kp_threshold` (0.3434) and `pnl_line_threshold` (0.7867, upstream `inference.py`'s defaults, used for every number above), `max_calib_err_px` (10), `camera_min_height_m` (5), `camera_max_height_m` (60), `pnl_fp16` (false).
+- **Shared:** `keypoints_every`, `homography_window`, `homography_max_age_s`, `max_homography_jump_m`, `max_off_pitch_m`.
+- **Roboflow-only:** `min_keypoints`, `min_keypoint_conf`, `circle_kp_x_m`, `ransac_m`, `min_inliers`, `max_homography_err_m`. They stay in `VisionConfig` and `run.json`, validated as now. PnLCalib ignores them.
+- **Old runs:** a `run.json` without `calib_backend` replays as roboflow (`replay.run_config`, like `circle_kp_x_m`). The new fields take their defaults, which roboflow ignores.
+
+**Speed** (RTX 2060, `Docs/reviews/pnlcalib-2026-10-02.md`): ~420 ms a call end to end, nets 305 ms fp32 / 185 ms fp16 autocast, voting and refinement ~60 ms CPU, peak GPU memory 1.9 GB.
+- **Offline:** every 5th frame adds ~85 ms a frame on average, so the pipeline goes from ~0.25 to ~0.33 s a frame (4.0 → ~3 fps). fp16 brings that to ~+50 ms. It's a config flag (`pnl_fp16`), off until the bench shows it costs nothing on within 2 m.
+- **Live (09):** every 5th frame at 30 fps is 6 calls a second, ~1.5 s of GPU a second even in fp16. Not possible. The plan: calls at 1–2 Hz on their own worker (nets on GPU, voting on a CPU thread), with the frame loop holding the last accepted camera. That's still ~20–40% of the GPU in fp16, so live also needs TensorRT or a smaller input (nets trained at 960 × 540; untested). Neither is benchmarked here. The cost of a lower rate can be measured on the bench before any live work: replay with every 3rd or 6th cached call (Cache, below).
+
+**Implementation acceptance** (the next session):
+- Fresh `vision.run` on vb01–vb03 with `calib_backend=pnlcalib`, same pre-roll as the reviewed runs, then `python -m vision.bench` on all three. The replay check passes. Per clip and pooled: within 2 m, median / p90, geometry missing split into view `other` and homography rejected, false live and teams.
+- **Bar:** pooled within 2 m ≥ **80%**, and every clip ≥ 75%; geometry missing pooled ≤ **10.4%** (now); false live per clip not above now (vb01 1.5 s). Expect around the review's pooled 89% (WC14, every 5th frame, vb01's gate frames as misses), and more on vb01 if the new gate signal keeps its wide play in `match`. The bar is set lower because the bench scores every frame and runs the gate and the filter. The default flips to `pnlcalib` when the bar passes.
+- **If it falls short:** in this order, all replays or reruns, no new design. (1) The 07 sweep: `homography_max_age_s`, `homography_window`, `max_calib_err_px`, and the thresholds via `--revote`. (2) A low-threshold retry or `SV_FT_TSWC`, if the misses are no-fit runs on one clip. (3) The per-match camera position check.
+- **Tests:** a synthetic camera (known K, R, position) through the ground homography and the (x, −y) mapping lands known pitch points; each per-call check rejects its case (NaN error, camera below ground, inside the pitch); stage 0 gets a failure on a rejected call; the replay at the run config reproduces the detections cache with a fake camera stage; an old `run.json` without `calib_backend` replays as roboflow and matches its cache; `run.json` `weights` lists both PnLCalib files; `--revote` on a cached call reproduces the cached camera; `keypoints_every=10` on a run at 5 uses every 2nd call.
+
+**Open questions:**
+- **Per-match camera position (PTZ).** vb03's estimated position spreads 70–113 m deep and 16–24 m high (depth and focal trade off when zoomed in), against a few meters on vb01/vb02. Does pinning it per match improve vb03, or is the homography fine either way?
+- **Replays and other cameras.** PnLCalib calibrates any camera, so a replay from another angle passes the gate with a valid camera, as roboflow's keypoints did (Open questions below). A reverse angle fails the near-touchline check; a high behind-the-goal camera doesn't. Worth counting once a clip with replays is in the bench.
+- **Ball height.** The camera is kept for it. Which stage uses it, and how (ball size, trajectory), is stage 5's question.
+- **Lens distortion.** PnLCalib fixes it at zero. Wide views put players at the frame edges; check the error by image position once the bench runs.
+- **Other stadiums and resolutions.** Three clips at two stadiums, all 1080p World Cup 2022. The geometry-only clips (2014/2018, `match_id` null) are the next test of the WC14 pick.
+- **Live:** rate, fp16, input size, TensorRT (Speed).
+
+### Shared: across calls and per position
+The first 2060 smoke test (`Docs/reviews/smoke-test-2026-09-27.md`) put objects more than 15 m off the pitch. When geometry can't be trusted, positions go null. They are never clamped or guessed. All thresholds are in `VisionConfig`, and they are guesses until they're tuned on real clips.
+- **Across calls:** a new homography is compared with the one in use: at the new fit's inlier keypoints (roboflow) or at the image grid (PnLCalib, above). If the mean distance is ≤ `max_homography_jump_m`, it joins the trailing average of `homography_window`. If not, it waits and the homography isn't ok until the next call. If that next one agrees with the waiting one, the camera changed and the two start a new window. If it agrees with the old one, the waiting one is dropped. Once the one in use is older than `homography_max_age_s`, any call that passes the per-call checks is taken. Frames already emitted are never rewritten.
 - **Per position:** a projection more than `max_off_pitch_m` (10 m, under the validator's 15) outside the lines, or not finite, gets null x/y. The detections cache keeps the row, with `homography_ok` true and a null `pitch_x`. An extrapolated ball that crosses that bound is dropped, and its motion is forgotten. Genuine out-of-play balls within the margin are kept for stage 8.
+
+### Roboflow keypoints (`calib_backend = "roboflow"`, old runs)
+Kept so old runs replay and the bench can score both backends. Not developed further.
+
+The keypoint model is roboflow/sports' `football-pitch-detection` (32 keypoints). Its template (`SoccerPitchConfiguration`) is 120 × 70 m in centimetres, origin at a corner, y growing toward the near touchline, with a 20.15 m deep penalty box. We keep its **keypoint order** (that's what the weights predict) but put each landmark at its **real** position in 02's frame (except 31/32, below): meters, center origin, 105 × 68, penalty area 16.5 × 40.32, goal area 5.5 × 18.32, penalty spot 11, center circle 9.15. The homography then outputs 02 coordinates directly, nothing gets rescaled.
+- Keypoint 1 (roboflow `(0, 0)`) is the far-left corner as seen on TV → `(-52.5, 34)` in the TV frame.
+- Keypoints 9 / 22 (penalty spots) → `(∓41.5, 0)`; 31 / 32 ("circle left / right of the centre spot") → `(∓circle_kp_x_m, 0)`, default **7.2 m**.
+  - **31/32 sit where the model puts them, not at the real circle edge (9.15 m).** On vb01 (`scripts/keypoint_check.py`) they land at about ±7.2 m; on vb02 at about −8.0 / +7.5 m. The bench is best at 7.0–7.2 on both (vb01 14.0% → 20.9%, vb02 25.3% → 32.4% within 2 m). On vb03 one side lands near 9.15 and 7.2 barely matters (15.0% → 15.3%): a model bias that varies by stadium, which is part of why the model is replaced. `Docs/reviews/vision-bench-2026-10-01.md`.
+  - It's in `run.json` with the rest of the config, so the replay check holds and `--grid circle_kp_x_m=9.15,7.2` scores both. A `run.json` without the field ran on 9.15 (runs before 2026-10-01). It goes away with this backend.
+- Keypoints below `min_keypoint_conf` are dropped; at least 4 are needed for a homography (stage 0 counts them against `min_keypoints`).
+- **Per fit:** RANSAC at `ransac_m` on the template. A fit needs `min_inliers` inliers and a mean inlier reprojection error ≤ `max_homography_err_m`. Stage 0 still gets the count of confident keypoints, not inliers. Four inliers always fit exactly (error 0), so the across-call check is what catches a bad four-point fit.
 
 ## Teams and direction
 Clustering gives cluster 0 / 1, and the homography gives the TV frame. 02 needs `team` as home/away and +x toward the goal home attacks in period 1. Two config inputs:
@@ -282,7 +342,7 @@ Debugging works from cached data after the run, not from extra logging during it
 | tracked_only | bool | True if the tracker filled this frame, no detection |
 | pitch_x, pitch_y | float/null | Box anchor through the homography; null without a valid homography |
 | homography_ok | bool | Per frame (repeated on each row) |
-| homography_err_m | float/null | Mean reprojection error of this frame's RANSAC inliers in meters; null when stage 4 didn't run or nothing could be fit |
+| homography_err_m | float/null | Roboflow: mean reprojection error of this frame's RANSAC inliers in meters; null when stage 4 didn't run or nothing could be fit. PnLCalib: always null (its error is in pixels, in `camera.parquet`) |
 
 `view.parquet` next to it, one row per frame (stage 0), so gate thresholds can be tuned after a run:
 
@@ -291,9 +351,9 @@ Debugging works from cached data after the run, not from extra logging during it
 | match_id, frame_id | | |
 | view | enum | match, other (after hysteresis) |
 | grass_share | float | 0–1 |
-| keypoints_found | int/null | null on frames where stage 4 didn't run |
+| keypoints_found | int/null | null on frames where stage 4 didn't run. Roboflow: confident keypoints. PnLCalib: keypoints after thresholds and line completion |
 
-`keypoints.parquet` next to it, one row per stage 4 call, so the homography acceptance thresholds can be swept offline (07 Vision benchmark):
+`keypoints.parquet` (roboflow) or `camera.parquet` (PnLCalib) next to it, one row per stage 4 call, so the acceptance thresholds can be swept offline (07 Vision benchmark). `keypoints.parquet`:
 
 | Column | Type | Notes |
 |---|---|---|
@@ -303,9 +363,27 @@ Debugging works from cached data after the run, not from extra logging during it
 | segment | int | Match segment; the filter is reset when it changes (`_enter_match`) |
 | kp_x, kp_y, kp_conf | list[float] (32) | Raw keypoint model output, template order |
 
-`python -m vision.replay` reruns stage 4's acceptance and the projection from this cache and the detections cache under other `VisionConfig` values. With the run's own config, it reproduces `homography_ok` and the people's `pitch_x`/`pitch_y` exactly. The ball isn't replayed: its extrapolation depends on earlier geometry. Detected ball rows are reprojected; extrapolated ones are dropped.
+`camera.parquet` holds both what the nets saw (so replay can redo thresholds and voting on CPU) and the camera the run voted (so replay can be exact without redoing them):
 
-Plus `run.json` next to it: config, git commit, model weights hash, video file hash, per-stage wall time, and the 02 validator errors (`vision.run` exits nonzero if there are any; a clip with no match view fails). With the video, this is enough to redraw any moment of the run.
+| Column | Type | Notes |
+|---|---|---|
+| match_id, frame_id, t, used, segment | | As in `keypoints.parquet` |
+| kp_x, kp_y, kp_score | list[float] (57) | Max-pool peak per keypoint channel, before any threshold, in net pixels (960 × 540) |
+| line_x1, line_y1, line_s1, line_x2, line_y2, line_s2 | list[float] (23) | Both ends of each line channel, same |
+| found | bool | Voting returned a camera (before the per-call checks) |
+| fx, fy, cx, cy | float/null | Intrinsics, pixels at the video's size |
+| cam_x, cam_y, cam_z | float/null | Position in PnLCalib's world (centered meters, y toward the near touchline, z down) |
+| rot | list[float] (9)/null | Rotation, row-major |
+| err_px | float/null | Voting's reprojection error; can be NaN |
+| mode | str/null | Voting's winning mode (`full`, `ground_plane`, `main`) and RANSAC setting, e.g. `full/0` |
+| n_kp, n_lines | int | After thresholds and completion: what voting had to work with |
+
+`python -m vision.replay` reruns stage 4's acceptance and the projection from this cache and the detections cache under other `VisionConfig` values. With the run's own config, it reproduces `homography_ok` and the people's `pitch_x`/`pitch_y` exactly. The ball isn't replayed: its extrapolation depends on earlier geometry. Detected ball rows are reprojected; extrapolated ones are dropped.
+- **PnLCalib runs:** by default replay reads the cached cameras and redoes the per-call checks, the hold, the filter and the projection. That's what the bench's replay check uses, so it's exact without depending on voting's numerics. `--revote` recomputes the cameras from the cached peaks first (~60 ms a call on CPU, ~30 s a clip), so `pnl_kp_threshold` / `pnl_line_threshold` become sweepable. The implementation checks that `--revote` at the run's thresholds reproduces the cached cameras (bit for bit on the same machine). If it doesn't, `--revote` stays a sweep tool and is reported as such; the replay check never depends on it.
+- **Sparser cadence:** a `keypoints_every` that's a multiple of the run's uses every k-th cached call, so the cost of calibrating less often (live, Speed above) can be measured. The gate still saw every call of the run, so `view` stays the run's; it's an approximation and says so.
+- **Old runs:** a `run.json` without `calib_backend` is roboflow and replays from `keypoints.parquet` (`replay.run_config` sets the default, as for `circle_kp_x_m`).
+
+Plus `run.json` next to it: config, git commit, model weights hash (each file stage 1–5 loads, by name), video file hash, per-stage wall time, and the 02 validator errors (`vision.run` exits nonzero if there are any; a clip with no match view fails). With the video, this is enough to redraw any moment of the run.
 
 - Anomaly checks (ID switches, ball gaps, homography jumps, ...) are scripts over this cache, written when a real problem shows up. Not part of the pipeline. So far: `python -m vision.offpitch --match-id <id>` (off-pitch rows grouped into runs, with view and keypoint context, plus the count of projections the pipeline rejected).
 - The overlay renderer's debug mode (08) draws boxes, IDs and teams for a frame range from this cache.
