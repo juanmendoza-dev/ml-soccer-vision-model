@@ -83,8 +83,9 @@ def remove_affine(v_xy: np.ndarray, t_xy: np.ndarray, pairs: list) -> np.ndarray
     return np.c_[v_xy, np.ones(len(v_xy))] @ a
 
 
-def track_truth(clip: dict) -> dict[str, str]:
-    """object_id -> PFF team, by majority over the frames where the track matched someone."""
+def matched_frames(clip: dict):
+    """Per scored frame with PFF truth: (frame_id, vision people, PFF people, pairs). Pairs
+    are (PFF i, vision j, m), matched after removing the frame's affine."""
     cache = CACHE / clip["clip_id"]
     det, _, view, times = replay.load(cache, GS / clip["clip_id"])
     run = json.loads((cache / "run.json").read_text())
@@ -104,7 +105,6 @@ def track_truth(clip: dict) -> dict[str, str]:
     )
     vis_by = people.partition_by("frame_id", as_dict=True)
     truth_by = truth.partition_by("pff_frame_id", as_dict=True)
-    seen: dict[str, Counter] = {}
     for frame_id, pff_id in aligned.select("frame_id", "pff_frame_id").iter_rows():
         t, v = truth_by.get((pff_id,)), vis_by.get((frame_id,))
         if t is None or v is None:
@@ -116,6 +116,13 @@ def track_truth(clip: dict) -> dict[str, str]:
                 break
             v_xy = remove_affine(v_xy, t_xy, pairs)
             pairs = [p for p in bench.match_people(t_xy, v_xy) if p[2] <= LABEL_GATE_M]
+        yield frame_id, v, t, pairs
+
+
+def track_truth(clip: dict) -> dict[str, str]:
+    """object_id -> PFF team, by majority over the frames where the track matched someone."""
+    seen: dict[str, Counter] = {}
+    for _, v, t, pairs in matched_frames(clip):
         for i, j, _ in pairs:
             seen.setdefault(v["object_id"][j], Counter())[t["team"][i]] += 1
     out = {}
