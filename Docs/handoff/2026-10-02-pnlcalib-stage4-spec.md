@@ -62,7 +62,7 @@ Also:
 ## Working rules (the user's)
 - Concise, direct writing in the specs and reviews: numbers, short bullets, no filler. Match the existing tone of 03 and the reviews.
 - Commit and push in small logical steps as you go (script change, review section, 03, 07, roadmap), with short, casual, human-sounding commit messages and no AI attribution. Commits are signed already; never disable signing. End the session with a clean, pushed tree.
-- Spec before code: no `vision/` changes in this session except `scripts/pnl_compare.py`.
+- Spec before code: no code changes in this session except the weights argument in `scripts/pnl_compare.py`.
 - If something in this prompt contradicts what you find in the files, trust the files and say so.
 
 ## Done when
