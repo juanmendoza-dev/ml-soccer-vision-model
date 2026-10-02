@@ -177,9 +177,9 @@ All three clips at 7.2: vb01 20.9%, vb02 32.4%, vb03 15.3%; pooled 22.1% within 
 
 **It's the keypoints, not the sync or PFF:**
 - The offset doesn't matter: from −6 to +3 s within 2 m stays at 10–15% (peak 15% at −1 to +0.5 s, where the kicks put it). `--offset-check` runs to the edge of its ±1 s window because the curve is flat (slow midfield possession), not because the sync is off. Flipping x or y drops it to 1% / 10%.
-- PFF is consistent: keypoint_check fits vision feet → PFF positions with a median residual ≤ 0.6 m on 140 frames, and PFF's extents for 3854 match the other matches (players ±51 × ±33.7 m).
+- PFF is consistent: 140 frames pass keypoint_check's feet → PFF fit (median residual ≤ 0.6 m, its acceptance filter), and PFF's extents for 3854 match the other matches (players ±51 × ±33.7 m).
 - keypoint_check: every landmark is off by **+3 to +8 m in y** with ~1 m spread (vb01/vb02: mostly ≤ 2 m). Box front far / at 6-yd far (10/11) are +5 / +7 m, and the pen spot is +6.8 m.
-- Overlaying a frame (250 s) shows why. The model puts the left box-front points on a **mowing stripe**: there's no painted line there. Fed into a fit of 6 inliers at 0.33 m error, this tilts the halfway line and lifts the circle. The fit passes its own check and is wrong, as on vb01, but worse. This pitch has strong diagonal and straight stripes.
+- Overlaying a frame (250 s, frame 1165) shows why. The pipeline used keypoints 1, 10, 11, 14–16 and 31 there and accepted the fit at 0.27–0.28 m error (run config: ransac 2.0 m, window 3). A full-res crop has no paint at 10's or 11's pixels (294, 288 / 125, 373), only the edge of a diagonal **mowing stripe**. A short piece of paint at the frame's left edge (~5, 325) may be the real box line. Point 1 (far goal-line corner) can't be on screen with halfway at x ≈ 1450. Refitting those points (9.15 template) tilts the halfway line and lifts the circle off the painted one. The fit passes its own check and is wrong, as on vb01 but worse. This pitch has strong diagonal and straight stripes.
 - 31/32 here: circle left +0.18 m off 9.15, circle right −2.06 m. So the 7.2 shift isn't a fixed property of the template. On vb01/vb02 the model pulled 31/32 in by ~2 m; here it doesn't on one side. 7.2 still doesn't hurt (15.0 → 15.3%).
 
 **What it means:**
