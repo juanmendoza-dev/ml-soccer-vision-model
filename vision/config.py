@@ -31,6 +31,9 @@ class VisionConfig:
     # Stage 4: homography
     keypoints_every: int = 5
     min_keypoint_conf: float = 0.5
+    # where the model puts keypoints 31/32 ("circle left/right"), not the real 9.15
+    # (03 Pitch template; measured on vb01, a candidate until a second clip agrees)
+    circle_kp_x_m: float = 7.2
     # Homography acceptance. Guesses until they're tuned on real clips
     ransac_m: float = 2.0  # RANSAC inlier distance on the template, meters
     min_inliers: int = 4  # RANSAC inliers a fit needs
@@ -77,6 +80,7 @@ class VisionConfig:
             "max_homography_err_m",
             "max_homography_jump_m",
             "max_off_pitch_m",
+            "circle_kp_x_m",
         ):
             if not getattr(self, name) > 0:
                 errors.append(f"{name} must be > 0")

@@ -11,7 +11,7 @@ from typing import Protocol
 import numpy as np
 
 from vision.config import VisionConfig
-from vision.pitch import HomographyFilter, fit_homography, on_pitch, project, to_02
+from vision.pitch import HomographyFilter, fit_homography, on_pitch, project, template, to_02
 from vision.types import (
     BALL,
     GOALKEEPER,
@@ -84,6 +84,7 @@ class VisionPipeline:
         self.config = config
         self.stages = stages
         self.gate = ViewGate(config)
+        self.pitch = template(config.circle_kp_x_m)
         self.homography = HomographyFilter(
             config.homography_window, config.max_homography_jump_m, config.homography_max_age_s
         )
@@ -246,7 +247,7 @@ class VisionPipeline:
         cfg = self.config
         kp = self.stages.keypoints.detect(image)
         self._kp_calls.append(KeypointCall(t, use, self._segment, kp))
-        fit = fit_homography(kp.xy, kp.conf, cfg.min_keypoint_conf, cfg.ransac_m)
+        fit = fit_homography(kp.xy, kp.conf, cfg.min_keypoint_conf, cfg.ransac_m, self.pitch)
         self._kp_seen = fit.n_confident
         if (
             use

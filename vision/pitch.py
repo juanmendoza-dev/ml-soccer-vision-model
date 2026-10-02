@@ -1,7 +1,7 @@
 """Stage 4: pitch keypoints -> homography -> 02 meters (03 Pitch template).
 
 TEMPLATE keeps roboflow/sports' keypoint order (what their pitch model predicts)
-with each landmark at its real position, in the TV frame: meters, center origin,
+with each landmark at its real position (31/32 at circle_kp_x_m, 03), in the TV frame: meters, center origin,
 +x to the right on screen, +y toward the far touchline. to_02() then applies
 the match direction.
 """
@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from gamestate.schema import PITCH_LENGTH, PITCH_WIDTH
+from vision.config import VisionConfig
 
 HALF_L, HALF_W = PITCH_LENGTH / 2, PITCH_WIDTH / 2  # 52.5, 34
 PENALTY_DEPTH, PENALTY_HALF_W = 16.5, 40.32 / 2
@@ -20,7 +21,8 @@ PENALTY_SPOT = 11.0
 CIRCLE_R = 9.15
 
 
-def _template() -> np.ndarray:
+def template(circle_kp_x_m: float) -> np.ndarray:
+    """(32, 2), index i = roboflow keypoint i + 1."""
     L, W = HALF_L, HALF_W
     left, right = -L, L
     # roboflow y grows toward the near touchline; ours grows toward the far one
@@ -37,11 +39,11 @@ def _template() -> np.ndarray:
         (right - GOAL_AREA_DEPTH, -GOAL_AREA_HALF_W),
     ]
     pts += [(right, y) for y in ys_edge]  # 25-30: right goal line
-    pts += [(-CIRCLE_R, 0.0), (CIRCLE_R, 0.0)]  # 31-32
+    pts += [(-circle_kp_x_m, 0.0), (circle_kp_x_m, 0.0)]  # 31-32
     return np.array(pts, dtype=np.float64)
 
 
-TEMPLATE = _template()  # (32, 2), index i = roboflow keypoint i + 1
+TEMPLATE = template(VisionConfig.circle_kp_x_m)  # the default
 
 
 @dataclass(frozen=True)
@@ -57,16 +59,21 @@ class Fit:
 
 
 def fit_homography(
-    xy_px: np.ndarray, conf: np.ndarray, min_conf: float, ransac_m: float = 2.0
+    xy_px: np.ndarray,
+    conf: np.ndarray,
+    min_conf: float,
+    ransac_m: float = 2.0,
+    pitch: np.ndarray = TEMPLATE,
 ) -> Fit:
-    """Pixels -> TV-frame meters from the confident keypoints, RANSAC at ransac_m."""
+    """Pixels -> TV-frame meters from the confident keypoints onto `pitch` (a template),
+    RANSAC at ransac_m."""
     keep = conf >= min_conf
     n = int(keep.sum())
     empty = np.zeros((0, 2))
     if n < 4:
         return Fit(None, n, 0, None, empty, empty)
     src = xy_px[keep].astype(np.float64)
-    dst = TEMPLATE[keep]
+    dst = pitch[keep]
     H, mask = cv2.findHomography(src, dst, cv2.RANSAC, ransac_m)
     if H is None or not np.isfinite(H).all() or abs(H[2, 2]) < 1e-12:
         return Fit(None, n, 0, None, empty, empty)

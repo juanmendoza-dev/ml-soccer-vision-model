@@ -17,12 +17,14 @@ import numpy as np
 import polars as pl
 
 from vision.config import VisionConfig
-from vision.pitch import HomographyFilter, fit_homography, on_pitch, project, to_02
+from vision.pitch import HomographyFilter, fit_homography, on_pitch, project, template, to_02
 from vision.types import BALL, GOALKEEPER, MATCH, PLAYER
 
 
 def run_config(cache: Path) -> VisionConfig:
-    return VisionConfig(**json.loads((cache / "run.json").read_text())["config"])
+    config = json.loads((cache / "run.json").read_text())["config"]
+    config.setdefault("circle_kp_x_m", 9.15)  # runs before the field existed (03 Pitch template)
+    return VisionConfig(**config)
 
 
 def with_overrides(config: VisionConfig, sets: list[str]) -> VisionConfig:
@@ -47,6 +49,7 @@ def frame_homographies(
     calls: dict[int, list[dict]] = {}
     for row in keypoints.iter_rows(named=True):
         calls.setdefault(row["frame_id"], []).append(row)
+    pitch = template(config.circle_kp_x_m)
     segment = None
     out = {}
     for frame_id, view in views.select("frame_id", "view").sort("frame_id").iter_rows():
@@ -58,7 +61,7 @@ def frame_homographies(
                 segment = c["segment"]
             xy = np.column_stack([c["kp_x"], c["kp_y"]])
             fit = fit_homography(
-                xy, np.array(c["kp_conf"]), config.min_keypoint_conf, config.ransac_m
+                xy, np.array(c["kp_conf"]), config.min_keypoint_conf, config.ransac_m, pitch
             )
             if (
                 fit.H is not None
