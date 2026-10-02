@@ -22,7 +22,7 @@ import numpy as np
 import polars as pl
 
 from vision import bench, replay
-from vision.pipeline import TEAM_VOTES, torso_crop
+from vision.pipeline import torso_crop
 from vision.types import GOALKEEPER, PLAYER
 
 CACHE = Path("data/vision_cache")
@@ -34,6 +34,7 @@ AFFINE_ROUNDS = 2
 LABEL_GATE_M = 1.5  # after the affine is removed
 N_INIT = 10
 SHEET_N = 48
+FIRST_VOTES = 5  # the old rule: a track's team fixed by its first 5 predictions
 
 
 def not_grass_lab(crop: np.ndarray) -> np.ndarray:
@@ -148,6 +149,9 @@ VARIANTS = {
     "Lab mean, scaled, L x0.5": (["L", "a", "b"], True, 0.5),
     "Lab median, scaled, L x0.5": (["L_med", "a_med", "b_med"], True, 0.5),
     "Lab mean, unscaled": (["L", "a", "b"], False, 1.0),
+    # OpenCV's 8-bit L is CIELAB L * 2.55; this is plain CIELAB distance (delta E 76)
+    "Lab mean, CIELAB units": (["L", "a", "b"], False, 1 / 2.55),
+    "Lab median, unscaled": (["L_med", "a_med", "b_med"], False, 1.0),
 }
 
 
@@ -166,7 +170,7 @@ def run_variant(stats: pl.DataFrame, fit_before: int, cols, scaled, l_weight, se
     votes = (
         after.sort("frame_id")
         .group_by("object_id", maintain_order=True)
-        .head(TEAM_VOTES)
+        .head(FIRST_VOTES)
         .group_by("object_id")
         .agg(vote=pl.col("cluster").mode().sort().first())  # ties: lower number, deterministic
     )
@@ -254,7 +258,7 @@ def main() -> None:
         print(
             f"  {vname:28s} warmup {n_warm:4d}  smaller cluster {small.mean():.1%}"
             f"  per crop {np.mean(crop_acc):.1%} (min {np.min(crop_acc):.1%})"
-            f"  first {TEAM_VOTES} votes {np.mean(vote_acc):.1%} (min {np.min(vote_acc):.1%})"
+            f"  first {FIRST_VOTES} votes {np.mean(vote_acc):.1%} (min {np.min(vote_acc):.1%})"
             f"  running majority {np.mean(run_acc):.1%} (min {np.min(run_acc):.1%})"
         )
         if args.sheets:
