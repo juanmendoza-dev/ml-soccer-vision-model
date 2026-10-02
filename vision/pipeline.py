@@ -10,6 +10,7 @@ from typing import Protocol
 
 import numpy as np
 
+from vision.ball import BallTrack
 from vision.calib import accept, camera_fit, camera_from_peaks
 from vision.config import VisionConfig
 from vision.pitch import HomographyFilter, fit_homography, on_pitch, project, template, to_02
@@ -90,6 +91,7 @@ class VisionPipeline:
         self.stages = stages
         self.gate = ViewGate(config)
         self.pitch = template(config.circle_kp_x_m)
+        self.ball = BallTrack(config)
         self.homography = HomographyFilter(
             config.homography_window, config.max_homography_jump_m, config.homography_max_age_s
         )
@@ -111,9 +113,7 @@ class VisionPipeline:
         self._track_seen: dict[int, tuple[int, np.ndarray]] = {}
         self._team_votes: dict[int, list[int]] = {}  # per track: predictions of cluster 0, 1
         self._first_vote: dict[int, int] = {}  # breaks a tie
-        self._ball: tuple[float, np.ndarray, np.ndarray, Box, float] | None = (
-            None  # t xy v box conf
-        )
+        self.ball.reset()
 
     # --- stage 0 transitions ---------------------------------------------
 
@@ -181,11 +181,10 @@ class VisionPipeline:
         step = self._steps
         detect_now = step % cfg.detect_every == 0
         self._steps += 1
-        ball_det = None
+        balls = []  # every candidate: stage 5 picks, the cache keeps them all (03 balls.parquet)
         if detect_now:
             dets = self.stages.detector.detect(image)
-            balls = [d for d in dets if d.cls == BALL and d.confidence >= cfg.min_det_conf]
-            ball_det = max(balls, key=lambda d: d.confidence) if balls else None
+            balls = [d for d in dets if d.cls == BALL]
             # low-confidence people too: the tracker only uses them to extend existing tracks
             people = [d for d in dets if d.cls != BALL and d.confidence >= cfg.track_min_conf]
             tracks = self.stages.tracker.update(people)
@@ -225,7 +224,22 @@ class VisionPipeline:
                 )
             )
         objects = self._goalkeeper_teams(objects)
-        ball = self._ball_object(t, ball_det, to_pitch, w, h, h_ok)
+        b = self.ball.update(t, balls, to_pitch, h_ok)
+        ball = None
+        if b is not None:
+            ball = VisionObject(
+                f"{self._segment}-ball",
+                BALL,
+                None,
+                None,
+                b.x,
+                b.y,
+                b.confidence,
+                b.interpolated,
+                b.interpolated,
+                b.box,
+                frac_box(b.box, w, h),
+            )
 
         polygon = None
         if h_ok:
@@ -244,6 +258,7 @@ class VisionPipeline:
             ball,
             self._kp_calls,
             self._calib_calls,
+            balls,
         )
 
     # --- homography (stage 4) --------------------------------------------
@@ -367,64 +382,3 @@ class VisionPipeline:
                 o = VisionObject(**{**o.__dict__, "cluster": cluster, "team": team_of[cluster]})
             out.append(o)
         return out
-
-    # --- ball (stage 5) --------------------------------------------------
-
-    def _ball_object(
-        self, t, det: Detection | None, to_pitch, w: int, h: int, h_ok: bool = True
-    ) -> VisionObject | None:
-        oid = f"{self._segment}-ball"
-        # expire old history before anything uses it: a ball seen 3 s ago must not give
-        # the next detection a velocity measured across the gap
-        if self._ball is not None and t - self._ball[0] > self.config.ball_max_gap_s:
-            self._ball = None
-        if det is not None:
-            x1, y1, x2, y2 = det.box
-            x, y = to_pitch(((x1 + x2) / 2, (y1 + y2) / 2))
-            if x is not None:
-                xy = np.array([x, y])
-                v = np.zeros(2)
-                if self._ball is not None and t > self._ball[0]:
-                    v = (xy - self._ball[1]) / (t - self._ball[0])
-                self._ball = (t, xy, v, det.box, det.confidence)
-            else:
-                # seen but no pitch position (bad geometry, off the pitch): the old track
-                # can't bridge this, start over from the next good fix
-                self._ball = None
-            return VisionObject(
-                oid,
-                BALL,
-                None,
-                None,
-                x,
-                y,
-                det.confidence,
-                False,
-                False,
-                det.box,
-                frac_box(det.box, w, h),
-            )
-        if self._ball is None:
-            return None
-        if not h_ok:
-            self._ball = None  # no valid geometry now: don't keep guessing in meters
-            return None
-        t0, xy0, v, box, conf = self._ball
-        # Extrapolate forward only; never filled from later frames (03)
-        x, y = xy0 + v * (t - t0)
-        if not on_pitch(np.array([x, y]), self.config.max_off_pitch_m):
-            self._ball = None  # flew off with a bad velocity: stop guessing
-            return None
-        return VisionObject(
-            oid,
-            BALL,
-            None,
-            None,
-            float(x),
-            float(y),
-            conf,
-            True,
-            True,
-            box,
-            frac_box(box, w, h),
-        )

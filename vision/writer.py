@@ -49,6 +49,11 @@ KEYPOINTS_SCHEMA = {
     "kp_y": pl.List(pl.Float64),
     "kp_conf": pl.List(pl.Float64),
 }
+BALLS_SCHEMA = {
+    "match_id": pl.String,
+    "frame_id": pl.Int64,
+    **{c: pl.Float64 for c in ("x1", "y1", "x2", "y2", "det_confidence")},
+}
 LIST = pl.List(pl.Float64)
 CAMERA_SCHEMA = {
     "match_id": pl.String,
@@ -142,6 +147,7 @@ class GameStateWriter:
         self._views: list[dict] = []
         self._keypoints: list[dict] = []
         self._cameras: list[dict] = []
+        self._balls: list[dict] = []
         self._started = time.time()
         self.errors: list[str] = []  # 02 validator output, set by close()
 
@@ -187,6 +193,19 @@ class GameStateWriter:
                 }
             )
         self._cameras += [camera_row(self.match_id, vf.frame_id, c) for c in vf.calib_calls]
+        for d in vf.ball_candidates:
+            x1, y1, x2, y2 = d.box
+            self._balls.append(
+                {
+                    "match_id": self.match_id,
+                    "frame_id": vf.frame_id,
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
+                    "det_confidence": d.confidence,
+                }
+            )
         for o in [*vf.objects, *([vf.ball] if vf.ball else [])]:
             self._detections.append(
                 {
@@ -316,6 +335,9 @@ class GameStateWriter:
                 self.cache / "detections.parquet"
             )
             pl.DataFrame(self._views, schema=VIEW_SCHEMA).write_parquet(self.cache / "view.parquet")
+            pl.DataFrame(self._balls, schema=BALLS_SCHEMA).write_parquet(
+                self.cache / "balls.parquet"
+            )
             # the backend's stage 4 cache only: replay reads by the run's calib_backend
             if self.config.calib_backend == "pnlcalib":
                 pl.DataFrame(self._cameras, schema=CAMERA_SCHEMA).write_parquet(

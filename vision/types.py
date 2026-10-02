@@ -115,3 +115,4 @@ class VisionFrame:
     ball: VisionObject | None = None
     keypoint_calls: list[KeypointCall] = field(default_factory=list)  # keypoints cache only
     calib_calls: list[CalibCall] = field(default_factory=list)  # camera cache only
+    ball_candidates: list[Detection] = field(default_factory=list)  # balls.parquet only
