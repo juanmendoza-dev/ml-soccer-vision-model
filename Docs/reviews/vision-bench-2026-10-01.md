@@ -103,3 +103,51 @@ These are per crop; per-track votes come on top.
 - Same as the monkeypatched replay above, so the wiring is right.
 - Still a candidate: measured and scored on the same clip. Confirm on clip 2 (NED–ARG, 10511) with `keypoint_check` (do 31/32 sit near ±7.2 again?) and the bench grid.
 - Far from the 90% target either way: the per-frame fit is the bigger problem (step b, PTZ camera model).
+
+## Clip 2: vb02-ned-arg, and 31/32 confirmed (2026-10-01)
+`vb02-ned-arg`: PFF 10511 (Netherlands v Argentina, QF), second half, video 0:08–0:59.2 (clock 78:19–79:10), 1080p30. Vision ran from 0:00 (8 s pre-roll), on the new default (`circle_kp_x_m` 7.2), RTX 2060 at 4.1 fps. Home (Netherlands) attacks TV right in period 1: with the TV-left goal on screen, PFF's visible players are at x ≈ −40.
+- **Sync on cut edges:** three live close-ups and the cut at 59.27 s. Their 7 edges give offsets 1992.57–1992.65 s against PFF's all-`ESTIMATED` switches, every one a hard cut (frames either side checked). The scoreboard agrees to 1.6 s. **Marks drafted, not yet checked by the user.**
+- `--offset-check`: best offset 0.53 s earlier than the sync (vb01: 0.23 s earlier). Two clips, same sign. Worth a look: it can be PFF's positions lagging the video, or the geometry error pulling the minimum; the cut edges themselves agree to a frame.
+
+**keypoint_check on vb02** (235 frames, offsets against the real landmarks):
+
+| # | Landmark | n | dx | dy | spread |
+|---|---|---|---|---|---|
+| 14–17 | Halfway line | 77–139 | −0.22 to −0.01 | −1.64 to 0.84 | 0.73–1.13 |
+| 31 / 32 | Circle left / right | 153 / 114 | **+1.17 / −1.64** | −0.86 / −1.88 | 0.95 / 1.15 |
+| 10 / 11 | L box front far / at 6-yd far | 192 / 192 | +1.82 / +1.89 | 0.99 / −0.77 | 4.0 / 3.9 (erratic) |
+| 2–9, 12–13 | L goal line, 6-yd box, spot, box front near | 34–131 | −1.58 to −0.56 | −1.93 to 2.48 | 0.9–1.5 |
+
+- **31/32 sit inside 9.15 again:** at about −8.0 / +7.5 m (vb01: −7.0 / +7.4). The halfway points land right in x again.
+- **The "box front far" pair is erratic on both clips:** 18/19 on vb01's right end, 10/11 (their mirror) on vb02's left end, spread ~4 m. Same failure, so it's the model on that landmark, not one stadium. A robust per-frame solve should drop them (step b).
+
+**Bench, `--grid circle_kp_x_m`, per clip** (within 2 m / median):
+
+| circle_kp_x_m | vb01 | vb02 |
+|---|---|---|
+| 7.0 | 21.2% / 2.41 m | 32.6% / 2.24 m |
+| **7.2** | **20.9% / 2.43 m** | **32.4% / 2.25 m** |
+| 7.5 | 20.1% / 2.46 m | 31.0% / 2.32 m |
+| 7.8 | 18.8% / 2.54 m | 29.2% / 2.37 m |
+| 8.2 | 16.5% / 2.68 m | 28.2% / 2.41 m |
+| 9.15 | 14.0% / 2.81 m | 25.3% / 2.54 m |
+
+Homography rejected moves 0.4–1.1 pt across the grid on either clip, no trend. 7.0 and 7.2 are within 0.3 pt on both, so 7.2 stays (measured on vb01, not picked on this grid). **31/32 at 7.2 is confirmed on a second clip; no longer a candidate.**
+
+**vb02 scorecard at the new default:**
+
+| | |
+|---|---|
+| Scored frames | 1,399 (the rest are close-ups) |
+| Geometry missing | 6.4%: view `other` 2.1%, homography rejected 4.4% of match view |
+| People within 2 m (misses count) | 32.4% of 23,792 PFF visible player-frames |
+| Matched error, median / p90 | 2.25 m / 3.93 m |
+| Outfield team accuracy / coverage | 89.5% / 100% (home cluster picked by agreement; the pairing caveat above) |
+| Keeper team accuracy / coverage | 61.3% / 99% |
+| False live | 2.9 s of 4.6 s of marked close-up |
+
+Pooled, both clips: within 2 m 23.3%, median 2.46 m, homography rejected 7.1%, geometry missing 15.6%.
+- vb02 is an easier clip (fewer cuts, most of it midfield), so it's not a like-for-like comparison with vb01.
+- Teams hold on a second clip (89.5% even with neighbours paired across teams). Keepers at 61% are new: worth a look once positions are better, since keepers take their cluster from position.
+- False live 2.9 s: the close-ups here are 1.1–2.2 s, about the gate's switch time (0.5 s off, 1 s on), so most of each one stays `match`. That's the cut detector's job (roadmap W3), not a threshold.
+- Positions are still ~2.3 m off on the easy clip. Next is step b, the PTZ camera model.
