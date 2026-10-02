@@ -150,10 +150,35 @@ A clip that fails any of these is refused.
 
   Teams are read from `team_cluster` and `home_cluster`, so a replay keeps them; keepers get their cluster from position, as the pipeline does. If `home_cluster` is null, the scorer uses whichever mapping agrees more, and says so.
 - **False live:** seconds inside the marks where vision has view `match` and a homography, so the predictor would get positions from a replay or close-up. Per label.
+- **Ball** (2026-10-02), on hand labels, since PFF can't say whether the ball is visible in the image. See Ball labels and Ball score below.
 - **Not scored yet:**
-  - the ball: PFF can't say whether it's visible in the image, so it waits for the ball-click labels with the ball work;
   - tracking IDs;
   - possession.
+
+**Ball labels:** `data/splits/vision_ball_labels.json`, committed next to the manifest (`data/vision_bench/` is gitignored). Made with `scripts/ball_click.py`.
+- `version`, and `clips`: `clip_id` → `video_sha256`, `every` (N), `labels`.
+- **Which frames:** source-video frames whose index is a multiple of N, inside `[video_start_s, video_end_s)` and outside the marks (frame index / fps, as the scored frames). N = 5, so 6 labels a second, about 930 on the three clips:
+  - neighbouring frames at 30 fps are near duplicates (the ball moves a few pixels), so N = 1 or 3 mostly re-measures the same frames for 5× or 1.7× the clicking;
+  - 6 a second still puts 6 labels inside the longest gap the ball may be extrapolated over (`ball_max_gap_s` 1 s), so gaps and drift show up;
+  - ~900 labels put a 90% recall at about ±1 pt (binomial SE), enough to see a fix worth 2–3 pt.
+- **Keyed by the integer source-video frame index,** never `video_s` or a run's `frame_id`, so labels survive reruns with another pre-roll. A run's `frame_id` is the index minus `round(video_start_s × fps)` of its `run.json`.
+- **Each label:** `[x, y]`, the ball's center in source pixels (1080p); `"none"`: not visible (off screen, or hidden behind a player); `"unsure"`: can't tell (heavy blur, a ball-like blob). `"unsure"` frames are left out of recall and precision.
+- Pixels, allowed inside `vision/` under the detections-cache exception (03 Diagnostics). They never leave vision.
+
+**Ball score** (`vision.bench`; needs the run's `balls.parquet`, so stage 5 is replayed like everything else, 03 Diagnostics). On labeled frames:
+- **Where vision's ball is in the image:** a detected row's box center; an extrapolated row's pitch x/y projected back through the frame's homography, since its box is the last detection's and doesn't move.
+- **Hit:** a vision ball row with pitch x/y within **R = 15 px** of the click. 15 px is about one ball diameter on the bench (median detected box 15–18 px wide at 1080p, 5th percentile 10.5): a click is good to ~2–3 px and a blurred ball's box center can sit half a diameter off, while wrong picks (heads, boots, line marks, spare balls) land tens to hundreds of pixels away. Recall at 10 and 25 px is printed next to it, so the choice can be seen not to matter. A row without pitch x/y never hits: it doesn't reach game state.
+- **Recall:** hits / labeled-visible frames, all frames (end to end, the gate included) and on match-view frames with geometry (the ball stage alone). Detected and extrapolated hits apart.
+- **Precision:** hits / vision ball rows with pitch x/y on labeled frames (`[x, y]` or `"none"`). A row on a `"none"` frame is a false ball. Detected and extrapolated apart.
+- **Misses** (labeled-visible, no hit), each in the first bucket that fits:
+  1. view `other`: the gate, not the ball stage;
+  2. no geometry: match view, but the frame has no homography or the ball projects off the pitch;
+  3. wrong pick: a candidate ≥ `min_det_conf` within R existed, another was picked;
+  4. low confidence: a candidate within R existed only under `min_det_conf`;
+  5. drift: no candidate within R, and an extrapolated row more than R away;
+  6. not detected: no candidate within R and no row.
+- **Error in meters:** median and p90 of the click and vision's ball both projected through the frame's homography, on hits. It's the image error in meters at that spot; the homography's own error is in the people score.
+- **Targets** (roadmap, detection review): recall ≥ 90%, precision ≥ 95% on usable live frames (match view with geometry).
 
 **Homography threshold sweep** (roadmap Phase 2, group 4). The sweep runs offline on the stage 4 cache (03 Diagnostics), with no detector rerun. What's swept depends on the run's `calib_backend` (03 Pitch calibration):
 - **`pnlcalib`:** `max_calib_err_px`, the camera checks, `max_homography_jump_m`, `homography_max_age_s` and `homography_window` from the cached cameras; `pnl_kp_threshold` and `pnl_line_threshold` with `--revote` (voting redone on CPU from the cached peaks, ~30 s a clip). The checks also feed the gate, which the replay doesn't simulate, so a pick that tightens them is confirmed with a fresh run before it's adopted.
