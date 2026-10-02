@@ -23,6 +23,7 @@ import polars as pl
 from scipy.optimize import linear_sum_assignment
 
 from vision import replay
+from vision.pitch import project, to_02
 from vision.types import BALL, GOALKEEPER, MATCH, PLAYER
 
 MANIFEST = Path("data/splits/vision_benchmark.json")
@@ -38,6 +39,8 @@ TIE_PT = 0.005  # within this much of the best within-2 m, less geometry missing
 BALL_LABELS = Path("data/splits/vision_ball_labels.json")
 BALL_EVERY = 5  # label every 5th source frame
 BALL_NONE, BALL_UNSURE = "none", "unsure"
+BALL_R_PX = 15.0  # a hit: about one ball diameter at 1080p on the bench
+BALL_RS = (10.0, 25.0)  # printed next to it
 
 
 def load_manifest(path: Path) -> list[dict]:
@@ -404,10 +407,151 @@ def pick(results: list[tuple[dict, dict]]) -> tuple[dict, dict] | None:
     return min(close, key=lambda r: r[1]["homography_rejected"])
 
 
+def ball_px(row: dict, H: np.ndarray | None, home_right: bool) -> tuple[float, float]:
+    """Where a vision ball row is in the image (07 Ball score): a detection's box center; an
+    extrapolated row's pitch x/y back through the homography (its box is the last detection's)."""
+    if not row["tracked_only"]:
+        return (row["x1"] + row["x2"]) / 2, (row["y1"] + row["y2"]) / 2
+    xy = to_02(np.array([[row["pitch_x"], row["pitch_y"]]]), home_right)  # its own inverse
+    u, v = project(np.linalg.inv(H), xy)[0]
+    return float(u), float(v)
+
+
+def ball_frames(
+    labels: dict[int, list | str],
+    skip: int,
+    det: pl.DataFrame,
+    balls: pl.DataFrame,
+    frames: pl.DataFrame,
+    hs: dict,
+    config,
+) -> list[dict]:
+    """Per labeled frame inside the run ("unsure" left out): the label, vision's ball row and
+    the nearest candidates, as pixel distances. ball_headline scores them at any radius."""
+    rows = {r["frame_id"]: r for r in det.filter(pl.col("class") == BALL).iter_rows(named=True)}
+    cands: dict[int, list] = {}
+    for f, x1, y1, x2, y2, conf in balls.select(
+        "frame_id", "x1", "y1", "x2", "y2", "det_confidence"
+    ).iter_rows():
+        cands.setdefault(f, []).append(((x1 + x2) / 2, (y1 + y2) / 2, conf))
+    views = dict(frames.select("frame_id", "view").iter_rows())
+    out = []
+    for idx, lab in sorted(labels.items()):
+        f = idx - skip
+        if lab == BALL_UNSURE or f not in views:
+            continue
+        H = hs.get(f)
+        rec = {
+            "frame": idx,
+            "visible": lab != BALL_NONE,
+            "match_view": views[f] == MATCH,
+            "geometry": H is not None,
+            "row": None,  # det / extrap
+            "has_xy": False,
+            "d_px": None,
+            "d_m": None,
+            "cand_hi_px": None,  # nearest candidate >= min_det_conf
+            "cand_px": None,  # nearest candidate at any confidence
+        }
+        r = rows.get(f)
+        if r is not None:
+            rec["row"] = "extrap" if r["tracked_only"] else "det"
+            rec["has_xy"] = r["pitch_x"] is not None
+        if rec["visible"]:
+            click = np.array(lab, dtype=float)
+            if r is not None:  # an extrapolated row always has x/y and a homography
+                at_px = ball_px(r, H, config.home_attacks_tv_right_p1)
+                rec["d_px"] = float(np.linalg.norm(np.array(at_px) - click))
+                if rec["has_xy"]:
+                    at = to_02(project(H, [click]), config.home_attacks_tv_right_p1)[0]
+                    rec["d_m"] = float(np.linalg.norm(at - [r["pitch_x"], r["pitch_y"]]))
+            near = [
+                (float(np.hypot(x - click[0], y - click[1])), c) for x, y, c in cands.get(f, [])
+            ]
+            if near:
+                rec["cand_px"] = min(d for d, _ in near)
+                hi = [d for d, c in near if c >= config.min_det_conf]
+                rec["cand_hi_px"] = min(hi) if hi else None
+        out.append(rec)
+    return out
+
+
+MISS_BUCKETS = ("view_other", "no_geometry", "wrong_pick", "low_conf", "drift", "not_detected")
+
+
+def ball_headline(recs: list[dict], r_px: float = BALL_R_PX) -> dict:
+    """07 Ball score at radius r_px: recall, precision, misses by bucket, error in meters."""
+
+    def near(d):
+        return d is not None and d <= r_px
+
+    def hit(x):
+        return x["visible"] and x["has_xy"] and near(x["d_px"])
+
+    vis = [x for x in recs if x["visible"]]
+    usable = [x for x in vis if x["match_view"] and x["geometry"]]
+    shown = [x for x in recs if x["has_xy"]]  # rows that reach game state
+    misses = dict.fromkeys(MISS_BUCKETS, 0)
+    for x in vis:
+        if hit(x):
+            continue
+        if not x["match_view"]:
+            misses["view_other"] += 1
+        elif not x["geometry"] or (x["row"] and not x["has_xy"] and near(x["d_px"])):
+            misses["no_geometry"] += 1
+        elif near(x["cand_hi_px"]):
+            misses["wrong_pick"] += 1
+        elif near(x["cand_px"]):
+            misses["low_conf"] += 1
+        elif x["row"] == "extrap":
+            misses["drift"] += 1
+        else:
+            misses["not_detected"] += 1
+
+    def frac(a, b):
+        return a / b if b else float("nan")
+
+    d_m = [x["d_m"] for x in vis if hit(x)]
+    out = {
+        "r_px": r_px,
+        "n_labeled": len(recs),
+        "n_visible": len(vis),
+        "n_usable": len(usable),
+        "recall": frac(sum(map(hit, vis)), len(vis)),
+        "recall_usable": frac(sum(map(hit, usable)), len(usable)),
+        "precision": frac(sum(map(hit, shown)), len(shown)),
+        "false_on_none": sum(1 for x in shown if not x["visible"]),
+        "misses": misses,
+        "median_m": float(np.median(d_m)) if d_m else float("nan"),
+        "p90_m": float(np.quantile(d_m, 0.9)) if d_m else float("nan"),
+    }
+    for kind in ("det", "extrap"):
+        rows = [x for x in shown if x["row"] == kind]
+        out[f"hits_{kind}"] = sum(map(hit, rows))
+        out[f"rows_{kind}"] = len(rows)
+        out[f"precision_{kind}"] = frac(out[f"hits_{kind}"], len(rows))
+    return out
+
+
+def fmt_ball(recs: list[dict]) -> str:
+    h = ball_headline(recs)
+    other = ", ".join(f"{r:.0f} px {ball_headline(recs, r)['recall']:.1%}" for r in BALL_RS)
+    misses = ", ".join(f"{k} {v}" for k, v in h["misses"].items() if v)
+    return (
+        f"ball ({h['n_visible']} visible of {h['n_labeled']} labeled): recall {h['recall']:.1%} "
+        f"(usable frames {h['recall_usable']:.1%}; at {other})  precision {h['precision']:.1%} "
+        f"(detected {h['hits_det']}/{h['rows_det']}, extrapolated "
+        f"{h['hits_extrap']}/{h['rows_extrap']}, on 'none' frames {h['false_on_none']})  "
+        f"error {h['median_m']:.2f} / {h['p90_m']:.2f} m  misses: {misses or 'none'}"
+    )
+
+
 class Clip:
     """One clip's caches and truth, loaded once so a sweep only replays."""
 
-    def __init__(self, clip: dict, cache_dir: Path, gamestate_dir: Path):
+    def __init__(
+        self, clip: dict, cache_dir: Path, gamestate_dir: Path, ball_labels: dict | None = None
+    ):
         self.clip = clip
         self.cache = cache_dir / clip["clip_id"]
         run = json.loads((self.cache / "run.json").read_text())
@@ -426,9 +570,14 @@ class Clip:
             )
         vision_gs = gamestate_dir / clip["clip_id"]
         self.inputs = replay.load(self.cache, vision_gs)
-        self.balls = replay.load_balls(
-            self.cache
-        )  # None: a run before balls.parquet, no ball score
+        # None: a run before balls.parquet, no ball score
+        self.balls = replay.load_balls(self.cache)
+        self.ball_labels = None
+        if self.balls is not None and ball_labels and clip["clip_id"] in ball_labels:
+            lab = ball_labels[clip["clip_id"]]
+            if lab["video_sha256"] != clip["video_sha256"]:
+                raise SystemExit(f"{clip['clip_id']}: the ball labels are on another video")
+            self.ball_labels = lab["labels"]
         self.fps = pl.read_parquet(vision_gs / "match.parquet")["native_fps"][0]
         self.pff = gamestate_dir / clip["match_id"] if clip["match_id"] is not None else None
         self._check_replay()
@@ -452,14 +601,15 @@ class Clip:
                 )
 
     def score(self, sets: list[str], offset_check: bool = False, revote: bool = False) -> dict:
+        config = replay.with_overrides(self.config, sets)
         det, frames = replay.replay(
             *self.inputs,
-            replay.with_overrides(self.config, sets),
+            config,
             revote,
             run_every=self.config.keypoints_every,
             balls=self.balls,
         )
-        return score_clip(
+        out = score_clip(
             self.clip,
             det,
             frames,
@@ -469,6 +619,14 @@ class Clip:
             self.fps,
             offset_check,
         )
+        if self.ball_labels is not None:
+            _, keypoints, views, times = self.inputs
+            hs = replay.frame_homographies(
+                keypoints, views, times, config, revote, self.config.keypoints_every
+            )
+            skip = round(self.run_start_s * self.fps)
+            out["ball"] = ball_frames(self.ball_labels, skip, det, self.balls, frames, hs, config)
+        return out
 
 
 def fmt(h: dict) -> str:
@@ -496,10 +654,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     ap.add_argument("--cache-dir", type=Path, default=Path("data/vision_cache"))
     ap.add_argument("--gamestate-dir", type=Path, default=Path("data/gamestate"))
+    ap.add_argument("--ball-labels", type=Path, default=BALL_LABELS)
     args = ap.parse_args(argv)
 
     clips = [c for c in load_manifest(args.manifest) if not args.clip or c["clip_id"] in args.clip]
-    loaded = [Clip(c, args.cache_dir, args.gamestate_dir) for c in clips]
+    labels = load_ball_labels(args.ball_labels)
+    loaded = [Clip(c, args.cache_dir, args.gamestate_dir, labels) for c in clips]
     axes = [(f, vals.split(",")) for f, _, vals in (g.partition("=") for g in args.grid)]
     combos = [
         [f"{f}={v}" for (f, _), v in zip(axes, vs)]
@@ -513,9 +673,14 @@ def main(argv: list[str] | None = None) -> None:
             c.score(sets, args.offset_check and len(combos) == 1, args.revote) for c in loaded
         ]
         h = headline(pooled(per_clip))
+        ball = [x for c in per_clip for x in c.get("ball", [])]
+        if ball:
+            h["ball"] = ball_headline(ball)
         results.append(({"sets": sets, "clips": per_clip}, h))
         if len(combos) > 1:
             print(" ".join(combo) or "(run config)", "|", fmt(h))
+            if ball:
+                print("   ", fmt_ball(ball))
 
     if len(combos) == 1:
         ((run, h),) = results
@@ -538,7 +703,12 @@ def main(argv: list[str] | None = None) -> None:
                     "    false live:",
                     ", ".join(f"{k} {v:.1f} s" for k, v in c["false_live_s"].items()),
                 )
+            if c.get("ball"):
+                print("   ", fmt_ball(c["ball"]))
         print(f"pooled ({len(loaded)} clips): {fmt(h)}")
+        ball = [x for c in run["clips"] for x in c.get("ball", [])]
+        if ball:
+            print("   ", fmt_ball(ball))
     else:
         chosen = pick(results)
         if chosen is None:

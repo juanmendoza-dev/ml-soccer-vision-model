@@ -176,7 +176,7 @@ A clip that fails any of these is refused.
   3. wrong pick: a candidate ≥ `min_det_conf` within R existed, another was picked;
   4. low confidence: a candidate within R existed only under `min_det_conf`;
   5. drift: no candidate within R, and an extrapolated row more than R away;
-  6. not detected: no candidate within R and no row.
+  6. not detected: no candidate within R (a far detection picked instead, if any, also counts against precision).
 - **Error in meters:** median and p90 of the click and vision's ball both projected through the frame's homography, on hits. It's the image error in meters at that spot; the homography's own error is in the people score.
 - **Targets** (roadmap, detection review): recall ≥ 90%, precision ≥ 95% on usable live frames (match view with geometry).
 

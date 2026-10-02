@@ -9,8 +9,8 @@ import pytest
 pytest.importorskip("cv2")
 pytest.importorskip("scipy")
 
-from test_vision_pipeline import PEOPLE, FakeKeypoints
-from test_vision_replay import CONFIG, synth_run
+from test_vision_pipeline import BALL_AT, PEOPLE, FakeKeypoints, feet_px
+from test_vision_replay import CONFIG, WeakBallDetector, synth_run
 
 from vision import bench
 from vision.types import GOALKEEPER, PLAYER, REFEREE
@@ -249,3 +249,53 @@ def test_ball_labels_round_trip(tmp_path):
     bench.save_ball_labels(clips, path)
     with pytest.raises(ValueError):
         bench.load_ball_labels(path)
+
+
+@pytest.fixture
+def ball_dirs(tmp_path, monkeypatch):
+    """bench_dirs with a weak (0.2) ball candidate at (10, 10) on every detection frame."""
+    import test_vision_replay
+
+    monkeypatch.setattr(test_vision_replay, "FakeDetector", WeakBallDetector)
+    cache, _ = synth_run(tmp_path, FakeKeypoints(), CONFIG)
+    run = json.loads((cache / "run.json").read_text())
+    run.update(video_sha256="abc", video_start_s=0.0)
+    (cache / "run.json").write_text(json.dumps(run))
+    return tmp_path / "cache", tmp_path / "gs"
+
+
+def test_ball_score_buckets_hits_misses_and_false_balls(ball_dirs):
+    cache_dir, gs_dir = ball_dirs
+    fake_pff(gs_dir)
+    u, v = (float(c) for c in feet_px(BALL_AT))
+    labels = {
+        5: [u, v],  # gate still off: view other
+        22: [u + 3, v],  # detector misses it (20-24), extrapolated over the gap: hit
+        30: [u, v - 4],  # detected: hit
+        31: [u, v],  # odd frame, extrapolated: hit
+        32: bench.BALL_NONE,  # labeled not visible, vision has one: false ball
+        34: [u + 100, v],  # nothing near the click
+        36: [10.0, 10.0],  # only the 0.2 candidate there
+        38: bench.BALL_UNSURE,  # left out
+    }
+    c = bench.Clip(
+        clip(), cache_dir, gs_dir, {"synth": {"video_sha256": "abc", "every": 5, "labels": labels}}
+    )
+    recs = c.score([])["ball"]
+    assert len(recs) == 7
+    h = bench.ball_headline(recs)
+    assert (h["n_visible"], h["n_usable"]) == (6, 5)
+    assert h["recall"] == pytest.approx(3 / 6) and h["recall_usable"] == pytest.approx(3 / 5)
+    assert (h["hits_det"], h["rows_det"], h["hits_extrap"], h["rows_extrap"]) == (1, 4, 2, 2)
+    assert h["precision"] == pytest.approx(3 / 6) and h["false_on_none"] == 1
+    missed = {"view_other": 1, "low_conf": 1, "not_detected": 1}
+    assert h["misses"] == dict.fromkeys(bench.MISS_BUCKETS, 0) | missed
+    assert h["median_m"] < 1.0
+    assert bench.ball_headline(recs, 2.0)["recall"] == pytest.approx(1 / 6)  # only frame 31
+
+
+def test_ball_labels_on_another_video_are_refused(ball_dirs):
+    cache_dir, gs_dir = ball_dirs
+    fake_pff(gs_dir)
+    with pytest.raises(SystemExit):
+        bench.Clip(clip(), cache_dir, gs_dir, {"synth": {"video_sha256": "x", "labels": {}}})
