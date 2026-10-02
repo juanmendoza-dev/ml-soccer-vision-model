@@ -680,7 +680,7 @@ def test_filled_box_off_screen_is_written_not_visible(tmp_path):
     assert got.filter(~pl.col("visible"))["interpolated"].all()  # 02: not visible => interpolated
 
 
-def test_run_starts_at_start_s(tmp_path, monkeypatch):
+def test_run_starts_at_start_s_with_config_overrides(tmp_path, monkeypatch):
     import json
 
     from vision import run as vision_run
@@ -700,9 +700,11 @@ def test_run_starts_at_start_s(tmp_path, monkeypatch):
             *("--video", str(video), "--weights-dir", str(tmp_path), "--match-id", "clip"),
             *("--start-s", "1.0", "--gamestate-dir", str(tmp_path / "gs")),
             *("--cache-dir", str(tmp_path / "cache"), "--calib-backend", "roboflow"),
+            *("--set", "on_after_s=0.5"),
         ]
     )
     run = json.loads((tmp_path / "cache" / "clip" / "run.json").read_text())
     assert run["video_start_s"] == 1.0
+    assert run["config"]["on_after_s"] == 0.5
     frames = pl.read_parquet(tmp_path / "gs" / "clip" / "frames.parquet")
     assert frames.height == 20 and frames["timestamp_s"][0] == 0.0

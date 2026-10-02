@@ -18,6 +18,7 @@ import cv2
 from converters.common import sha256
 from vision.config import VisionConfig
 from vision.pipeline import Stages, VisionPipeline
+from vision.replay import with_overrides
 from vision.stages import (
     BALL_WEIGHTS,
     PITCH_WEIGHTS,
@@ -86,6 +87,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     ap.add_argument("--gamestate-dir", type=Path, default=Path("data/gamestate"))
     ap.add_argument("--cache-dir", type=Path, default=Path("data/vision_cache"))
+    ap.add_argument(
+        "--set", action="append", default=[], metavar="FIELD=VALUE", help="numeric config field"
+    )
     args = ap.parse_args(argv)
 
     cap = cv2.VideoCapture(str(args.video))
@@ -108,6 +112,7 @@ def main(argv: list[str] | None = None) -> None:
             home_attacks_tv_right_p1=not args.home_attacks_left,
             period=args.period,
         )
+        config = with_overrides(config, args.set)  # dataclasses.replace validates again
     except ValueError as e:
         raise SystemExit(f"bad config: {e}") from None
     pnl_dir = args.pnl_weights_dir or args.weights_dir
