@@ -30,7 +30,7 @@ class VisionConfig:
 
     # Stage 4: pitch calibration (03 Pitch calibration). "roboflow" (32 keypoints + RANSAC,
     # old runs) or "pnlcalib" (a full camera from PnLCalib's nets)
-    calib_backend: str = "roboflow"
+    calib_backend: str = "pnlcalib"
     keypoints_every: int = 5  # stage 4 cadence, both backends
     # PnLCalib: weights prefix (<prefix>_kp / <prefix>_lines) and upstream inference.py's thresholds
     pnl_weights: str = "SV_FT_WC14"
@@ -42,6 +42,10 @@ class VisionConfig:
     max_calib_err_px: float = 10.0
     camera_min_height_m: float = 5.0
     camera_max_height_m: float = 60.0
+    # a rejected call with fewer keypoints than this sees no pitch (close-ups give 0): the
+    # camera in use is dropped instead of held, so a cut doesn't keep positions through the
+    # gate's off_after_s. 0 = always hold (runs before the field, 03)
+    pnl_blind_kp: int = 4
     # Roboflow only from here to circle_kp_x_m
     min_keypoint_conf: float = 0.5
     # where the model puts keypoints 31/32 ("circle left/right"), not the real 9.15
@@ -52,11 +56,11 @@ class VisionConfig:
     min_inliers: int = 4  # roboflow: RANSAC inliers a fit needs
     max_homography_err_m: float = 1.0  # roboflow: mean inlier reprojection error; worse -> rejected
     # both backends from here
-    homography_window: int = 3  # trailing fits averaged
+    homography_window: int = 1  # trailing fits averaged (pnlcalib bench 2026-10-02: 3 lags pans)
     homography_max_age_s: float = 1.0  # older fit -> homography not ok
     # a fit this far (meters, at its keypoints) from the one in use waits for a second
     # fit to agree: a new camera, or a bad fit that gets dropped
-    max_homography_jump_m: float = 5.0
+    max_homography_jump_m: float = 10.0
     # a projection further than this outside the lines is a broken fit, not a player:
     # its x/y go null. Under the 02 validator's 15 m on purpose
     max_off_pitch_m: float = 10.0
@@ -109,6 +113,8 @@ class VisionConfig:
         ):
             if not getattr(self, name) > 0:
                 errors.append(f"{name} must be > 0")
+        if self.pnl_blind_kp < 0:
+            errors.append("pnl_blind_kp must be >= 0")
         if self.camera_max_height_m <= self.camera_min_height_m:
             errors.append("camera_max_height_m must be > camera_min_height_m")
         if self.home_cluster not in (None, 0, 1):

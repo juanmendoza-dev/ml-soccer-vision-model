@@ -170,12 +170,17 @@ def test_replay_reproduces_the_run_and_revote_matches(tmp_path):
     assert not frames["homography_ok"].any()
 
 
-def test_a_blind_call_holds_the_camera_and_fails_the_gate(tmp_path):
-    """A call with no camera keeps the one in use (age limit), but stage 0 counts it as a
-    failure; enough of them in a row switch the view off."""
+def test_a_blind_call_drops_the_camera_and_fails_the_gate(tmp_path):
+    """A call that sees no pitch (0 keypoints: a cut) drops the camera in use and is a gate
+    failure. With pnl_blind_kp=0 the camera is held to its age limit instead; enough failures
+    in a row switch the view off either way."""
     _, _, frames = synth_run(tmp_path, nets=FakeNets(blind_calls={6}))
-    blind = [f for f in frames if f.keypoints_found is not None and f.keypoints_found < 3]
-    assert len(blind) == 1 and blind[0].view == MATCH and blind[0].homography_ok
+    (blind,) = [f for f in frames if f.keypoints_found == 0]
+    assert blind.view == MATCH and not blind.homography_ok
+    held = dataclasses.replace(CONFIG, pnl_blind_kp=0)
+    _, _, frames = synth_run(tmp_path / "h", config=held, nets=FakeNets(blind_calls={6}))
+    (blind,) = [f for f in frames if f.keypoints_found == 0]
+    assert blind.view == MATCH and blind.homography_ok
     _, _, frames = synth_run(tmp_path / "b", nets=FakeNets(blind_calls=set(range(6, 30))))
     views = [f.view for f in frames if not is_ad(f.frame_id)]
     assert MATCH in views and OTHER in views[30:]

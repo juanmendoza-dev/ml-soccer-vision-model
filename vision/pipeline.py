@@ -282,6 +282,8 @@ class VisionPipeline:
         self._pitch_ok = fit is not None
         if use and fit is not None:
             self.homography.offer(fit, t)
+        elif use and n_kp < cfg.pnl_blind_kp:
+            self.homography.reset()  # no pitch in view (a cut): don't hold the old camera
         return n_kp, None  # the error is in pixels, in camera.parquet, not homography_err_m
 
     # --- tracking --------------------------------------------------------

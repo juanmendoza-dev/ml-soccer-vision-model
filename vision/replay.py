@@ -29,6 +29,7 @@ def run_config(cache: Path) -> VisionConfig:
     config = json.loads((cache / "run.json").read_text())["config"]
     config.setdefault("circle_kp_x_m", 9.15)  # runs before the field existed (03 Pitch template)
     config.setdefault("calib_backend", "roboflow")  # runs before PnLCalib (03 Pitch calibration)
+    config.setdefault("pnl_blind_kp", 0)  # PnLCalib runs before it: always held
     return VisionConfig(**config)
 
 
@@ -72,12 +73,14 @@ def revoted_camera(c: dict, config: VisionConfig) -> tuple[Camera | None, int]:
 
 
 def _fit(c: dict, config: VisionConfig, pitch: np.ndarray, revote: bool):
-    """One used stage 4 call -> the Fit the pipeline offered the filter, or None."""
+    """One used stage 4 call -> (the Fit the pipeline offered the filter or None, whether
+    the call saw no pitch and dropped the camera in use)."""
     if config.calib_backend == "pnlcalib":
         cam, n_kp = revoted_camera(c, config) if revote else (cached_camera(c), c["n_kp"])
-        if not accept(cam, config):
-            return None
-        return camera_fit(cam, (c["img_w"], c["img_h"]), n_kp, config.max_off_pitch_m)
+        fit = None
+        if accept(cam, config):
+            fit = camera_fit(cam, (c["img_w"], c["img_h"]), n_kp, config.max_off_pitch_m)
+        return fit, fit is None and n_kp < config.pnl_blind_kp
     xy = np.column_stack([c["kp_x"], c["kp_y"]])
     fit = fit_homography(
         xy, np.array(c["kp_conf"]), config.min_keypoint_conf, config.ransac_m, pitch
@@ -87,8 +90,8 @@ def _fit(c: dict, config: VisionConfig, pitch: np.ndarray, revote: bool):
         and fit.n_inliers >= config.min_inliers
         and fit.err_m <= config.max_homography_err_m
     ):
-        return fit
-    return None
+        return fit, False
+    return None, False
 
 
 def frame_homographies(
@@ -131,9 +134,11 @@ def frame_homographies(
             n_seg += 1
             if (n_seg - 1) % k:
                 continue
-            fit = _fit(c, config, pitch, revote)
+            fit, blind = _fit(c, config, pitch, revote)
             if fit is not None:
                 filt.offer(fit, c["t"])
+            elif blind:
+                filt.reset()
         out[frame_id] = filt.current(times[frame_id]) if view == MATCH else None
     return out
 
