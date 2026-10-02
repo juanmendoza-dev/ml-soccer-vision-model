@@ -105,3 +105,28 @@ def test_kit_colors_split_the_kits_not_the_odd_crops(seed):
     teams.fit()
     red, blue = teams.predict([crop(RED), crop(BLUE)])
     assert {red, blue} == {0, 1}
+
+
+DARK, LIGHT = (35, 35, 35), (225, 225, 225)  # same chroma, kits apart in lightness only
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_kit_colors_split_kits_that_differ_in_lightness(seed):
+    """vb01: navy France vs white Argentina landed in one cluster on chroma alone."""
+    teams = KitColorTeams(seed=seed)
+    teams.add([crop(DARK) for _ in range(20)] + [crop(LIGHT) for _ in range(20)])
+    teams.fit()
+    dark, light = teams.predict([crop(DARK), crop(LIGHT)])
+    assert {dark, light} == {0, 1}
+
+
+def test_kit_clusters_keep_their_numbers_after_a_refit_in_other_light():
+    teams = KitColorTeams()
+    teams.add([crop(RED) for _ in range(10)] + [crop(BLUE) for _ in range(10)])
+    teams.fit()
+    red, blue = teams.predict([crop(RED), crop(BLUE)])
+    dim_red, dim_blue = tuple(v // 2 for v in RED), tuple(v // 2 for v in BLUE)  # floodlights
+    teams.reset()
+    teams.add([crop(dim_blue) for _ in range(12)] + [crop(dim_red) for _ in range(8)])
+    teams.fit()
+    assert teams.predict([crop(dim_red), crop(dim_blue)]) == [red, blue]

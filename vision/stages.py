@@ -117,14 +117,14 @@ class YoloKeypoints:
 
 
 class KitColorTeams:
-    """Two teams by shirt color: mean Lab chroma of the non-grass torso pixels, 2-means.
+    """Two teams by shirt color: mean CIELAB of the non-grass torso pixels, 2-means.
 
     Much cheaper than roboflow's SigLIP + UMAP + KMeans, which matters live (09).
-    Chroma only, so kits that differ mainly in lightness (sky blue vs navy,
-    white vs black) need L back in the feature or SigLIP instead.
+    L is in: navy vs white kits differ in little else (vb01).
     """
 
     N_INIT = 10  # k-means restarts; the best inertia wins
+    LAB_UNITS = np.array([100 / 255, 1.0, 1.0])  # OpenCV's 8-bit L is CIELAB L * 2.55
 
     def __init__(self, seed: int = 0):
         self.rng = np.random.default_rng(seed)
@@ -133,16 +133,16 @@ class KitColorTeams:
 
     @staticmethod
     def features(crop: np.ndarray) -> np.ndarray | None:
-        """Mean (a, b) of the non-grass pixels. L is dropped on purpose: it carries
-        lighting, not kit, and its outliers (a sunlit shirt, a white sleeve) are what
-        a 2-means split lands on instead of the two kits (smoke03)."""
+        """Mean (L, a, b) of the non-grass pixels in CIELAB units, so distance is plain
+        color difference (delta E 76). Scaling each channel by its spread instead let a
+        few bright crops (a sunlit shirt, the referee) outweigh the kits (smoke03)."""
         if crop.size == 0:
             return None
         hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
         not_grass = ~((hsv[..., 0] >= 30) & (hsv[..., 0] <= 90) & (hsv[..., 1] >= 40))
         lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float64)
-        pixels = lab[not_grass.ravel()][:, 1:]
-        return pixels.mean(axis=0) if len(pixels) else None
+        pixels = lab[not_grass.ravel()]
+        return pixels.mean(axis=0) * KitColorTeams.LAB_UNITS if len(pixels) else None
 
     def add(self, crops: list[np.ndarray]) -> None:
         feats = [f for f in map(self.features, crops) if f is not None]
