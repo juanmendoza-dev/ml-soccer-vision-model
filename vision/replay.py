@@ -2,10 +2,13 @@
 
     python -m vision.replay --match-id smoke04 --set max_homography_err_m=2 --set min_inliers=6
 
-No detector or keypoint model runs: the keypoints cache has every stage 4 call and
-the detections cache every box, so a threshold sweep takes seconds. With the run's
-own config the output matches the detections cache (people exactly; the ball only
-where it was detected, extrapolated rows are dropped).
+No detector or keypoint model runs: the stage 4 cache (keypoints.parquet, or camera.parquet
+for PnLCalib runs) has every stage 4 call and the detections cache every box, so a threshold
+sweep takes seconds. With the run's own config the output matches the detections cache
+(people exactly; the ball only where it was detected, extrapolated rows are dropped).
+
+PnLCalib runs replay from the cached cameras; --revote votes them again from the cached peaks
+on CPU, so pnl_kp_threshold / pnl_line_threshold can be swept (03 Diagnostics).
 """
 
 import argparse
@@ -16,14 +19,16 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from vision.calib import accept, camera_fit, camera_from_peaks
 from vision.config import VisionConfig
 from vision.pitch import HomographyFilter, fit_homography, on_pitch, project, template, to_02
-from vision.types import BALL, GOALKEEPER, MATCH, PLAYER
+from vision.types import BALL, GOALKEEPER, MATCH, PLAYER, CalibPeaks, Camera
 
 
 def run_config(cache: Path) -> VisionConfig:
     config = json.loads((cache / "run.json").read_text())["config"]
     config.setdefault("circle_kp_x_m", 9.15)  # runs before the field existed (03 Pitch template)
+    config.setdefault("calib_backend", "roboflow")  # runs before PnLCalib (03 Pitch calibration)
     return VisionConfig(**config)
 
 
@@ -38,19 +43,83 @@ def with_overrides(config: VisionConfig, sets: list[str]) -> VisionConfig:
     return dataclasses.replace(config, **changes)
 
 
+def cached_camera(c: dict) -> Camera | None:
+    """The camera the run voted, from its camera.parquet row."""
+    if not c["found"]:
+        return None
+    return Camera(
+        c["fx"],
+        c["fy"],
+        c["cx"],
+        c["cy"],
+        np.array([c["cam_x"], c["cam_y"], c["cam_z"]]),
+        np.array(c["rot"]).reshape(3, 3),
+        c["err_px"],
+        c["mode"],
+    )
+
+
+def revoted_camera(c: dict, config: VisionConfig) -> tuple[Camera | None, int]:
+    """Vote the camera again from the cached peaks, at config's thresholds."""
+    ends = [np.column_stack([c[f"line_x{e}"], c[f"line_y{e}"], c[f"line_s{e}"]]) for e in (1, 2)]
+    peaks = CalibPeaks(
+        np.column_stack([c["kp_x"], c["kp_y"], c["kp_score"]]), np.stack(ends, axis=1)
+    )
+    cam, n_kp, _ = camera_from_peaks(
+        peaks, (c["img_w"], c["img_h"]), config.pnl_kp_threshold, config.pnl_line_threshold
+    )
+    return cam, n_kp
+
+
+def _fit(c: dict, config: VisionConfig, pitch: np.ndarray, revote: bool):
+    """One used stage 4 call -> the Fit the pipeline offered the filter, or None."""
+    if config.calib_backend == "pnlcalib":
+        cam, n_kp = revoted_camera(c, config) if revote else (cached_camera(c), c["n_kp"])
+        if not accept(cam, config):
+            return None
+        return camera_fit(cam, (c["img_w"], c["img_h"]), n_kp, config.max_off_pitch_m)
+    xy = np.column_stack([c["kp_x"], c["kp_y"]])
+    fit = fit_homography(
+        xy, np.array(c["kp_conf"]), config.min_keypoint_conf, config.ransac_m, pitch
+    )
+    if (
+        fit.H is not None
+        and fit.n_inliers >= config.min_inliers
+        and fit.err_m <= config.max_homography_err_m
+    ):
+        return fit
+    return None
+
+
 def frame_homographies(
-    keypoints: pl.DataFrame, views: pl.DataFrame, times: dict[int, float], config: VisionConfig
+    calls_df: pl.DataFrame,
+    views: pl.DataFrame,
+    times: dict[int, float],
+    config: VisionConfig,
+    revote: bool = False,
+    run_every: int | None = None,
 ) -> dict[int, np.ndarray | None]:
     """frame_id -> the homography in use on that frame (None: not ok), as the pipeline
-    decides it: fits offered in call order, the filter reset on each new segment."""
+    decides it: fits offered in call order, the filter reset on each new segment.
+
+    run_every: the run's keypoints_every. A config.keypoints_every that's a multiple of it
+    keeps every k-th used call of a segment (the gate still saw them all: an approximation)."""
     filt = HomographyFilter(
         config.homography_window, config.max_homography_jump_m, config.homography_max_age_s
     )
+    k = 1
+    if run_every is not None and config.keypoints_every != run_every:
+        if config.keypoints_every % run_every:
+            raise ValueError(
+                f"keypoints_every {config.keypoints_every} isn't a multiple of the run's "
+                f"{run_every}"
+            )
+        k = config.keypoints_every // run_every
     calls: dict[int, list[dict]] = {}
-    for row in keypoints.iter_rows(named=True):
+    for row in calls_df.iter_rows(named=True):
         calls.setdefault(row["frame_id"], []).append(row)
     pitch = template(config.circle_kp_x_m)
-    segment = None
+    segment, n_seg = None, 0
     out = {}
     for frame_id, view in views.select("frame_id", "view").sort("frame_id").iter_rows():
         for c in calls.get(frame_id, []):
@@ -58,16 +127,12 @@ def frame_homographies(
                 continue
             if c["segment"] != segment:
                 filt.reset()
-                segment = c["segment"]
-            xy = np.column_stack([c["kp_x"], c["kp_y"]])
-            fit = fit_homography(
-                xy, np.array(c["kp_conf"]), config.min_keypoint_conf, config.ransac_m, pitch
-            )
-            if (
-                fit.H is not None
-                and fit.n_inliers >= config.min_inliers
-                and fit.err_m <= config.max_homography_err_m
-            ):
+                segment, n_seg = c["segment"], 0
+            n_seg += 1
+            if (n_seg - 1) % k:
+                continue
+            fit = _fit(c, config, pitch, revote)
+            if fit is not None:
                 filt.offer(fit, c["t"])
         out[frame_id] = filt.current(times[frame_id]) if view == MATCH else None
     return out
@@ -79,10 +144,13 @@ def replay(
     views: pl.DataFrame,
     times: dict[int, float],
     config: VisionConfig,
+    revote: bool = False,
+    run_every: int | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """(detections with pitch_x / pitch_y / homography_ok / keeper team_cluster redone,
-    one row per frame: frame_id, view, homography_ok)."""
-    hs = frame_homographies(keypoints, views, times, config)
+    one row per frame: frame_id, view, homography_ok). keypoints is the stage 4 cache of
+    either backend (load())."""
+    hs = frame_homographies(keypoints, views, times, config, revote, run_every)
     det = detections.filter(~((pl.col("class") == BALL) & pl.col("tracked_only")))
     xs, ys = [], []
     for cls, x1, y1, x2, y2, frame_id in det.select(
@@ -155,7 +223,12 @@ def load(cache: Path, gamestate: Path) -> tuple[pl.DataFrame, pl.DataFrame, pl.D
     )
     return (
         pl.read_parquet(cache / "detections.parquet"),
-        pl.read_parquet(cache / "keypoints.parquet"),
+        # PnLCalib runs write camera.parquet instead of keypoints.parquet (03 Diagnostics)
+        pl.read_parquet(
+            cache / "camera.parquet"
+            if (cache / "camera.parquet").exists()
+            else cache / "keypoints.parquet"
+        ),
         pl.read_parquet(cache / "view.parquet"),
         times,
     )
@@ -165,6 +238,7 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="vision.replay")
     ap.add_argument("--match-id", required=True)
     ap.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE")
+    ap.add_argument("--revote", action="store_true", help="PnLCalib: vote cameras again")
     ap.add_argument("--out", type=Path, help="write the replayed detections here")
     ap.add_argument("--cache-dir", type=Path, default=Path("data/vision_cache"))
     ap.add_argument("--gamestate-dir", type=Path, default=Path("data/gamestate"))
@@ -175,7 +249,9 @@ def main(argv: list[str] | None = None) -> None:
     config = with_overrides(base, args.set)
     det, keypoints, views, times = load(cache, args.gamestate_dir / args.match_id)
     _, before = replay(det, keypoints, views, times, base)
-    out, after = replay(det, keypoints, views, times, config)
+    out, after = replay(
+        det, keypoints, views, times, config, args.revote, run_every=base.keypoints_every
+    )
     n_match = after.filter(pl.col("view") == MATCH).height
     for name, frames in [("run config", before), ("replayed", after)]:
         ok = frames["homography_ok"].sum()
