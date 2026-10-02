@@ -23,6 +23,27 @@
         {"start_s": 115.0, "end_s": 117.8, "label": "closeup"}
       ],
       "marks_checked_by_user": true
+    },
+    {
+      "clip_id": "vb02-ned-arg",
+      "match_id": "10511",
+      "period": 2,
+      "video_sha256": "84bb70640162fc9d0ed34f0a0b5dfe4f5c0c4c7e8f26dc7343a8814003a9ef13",
+      "video_start_s": 8.0,
+      "video_end_s": 59.2,
+      "home_attacks_tv_right_p1": true,
+      "home_cluster": null,
+      "sync_method": "cut edges: 7 hand-marked cut starts/ends vs PFF's all-ESTIMATED switches, offsets 1992.57-1992.65 s; scoreboard 78:11 at 0 s agrees to 1.6 s",
+      "sync": [
+        {"video_s": 11.2, "timestamp_s": 2003.770},
+        {"video_s": 59.267, "timestamp_s": 2051.918}
+      ],
+      "marks": [
+        {"start_s": 11.2, "end_s": 13.433, "label": "closeup"},
+        {"start_s": 20.967, "end_s": 22.067, "label": "closeup"},
+        {"start_s": 43.467, "end_s": 44.733, "label": "closeup"}
+      ],
+      "marks_checked_by_user": false
     }
   ]
 }
