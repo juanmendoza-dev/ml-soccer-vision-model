@@ -49,3 +49,19 @@ These are per crop; per-track votes come on top.
 ## Next
 - User checks the marks; then the other four 2022 clips and the three geometry-only clips, before reading anything into these numbers.
 - If items 1 and 2 hold across clips, they go ahead of the threshold sweep: kit clustering, and a look at where the 2 m comes from. Tackle the y bias first, as the cheapest lead.
+
+## Fix 1: teams (2026-10-01)
+03 stage 3 now: mean CIELAB (L, a, b) of the shirt pixels, and each track's team is the majority of all its votes so far (was chroma only, fixed by the first 5 votes). Offline test `scripts/team_crops.py`: the pipeline's own warmup fit, tracks labeled by majority PFF team after removing each frame's affine (109 tracks). The first labeling, without the affine step, mislabeled 6 tracks (white Argentina shirts labeled away, navy France labeled home), checked by eye.
+
+| vb01 outfield | Old | New |
+|---|---|---|
+| Offline, per crop | 53% | 97.4% |
+| Offline, track team | 52% | 97.6% |
+| Rerun, rows on PFF-labeled tracks | 53.9% | 97.5% |
+| Bench `team accuracy` (coverage 99–100%) | 52.4% | 83.0% |
+| Bench keepers (accuracy / coverage) | 87.5% / 55% | 93.3% / 91% |
+
+- **The bench understates it.** Its team score pairs PFF and vision players per frame by position, and with positions ~2.8 m off it pairs neighbours across teams. The rerun's rows on tracks labeled after the affine step are 97.5% right. The bench number should rise to match once positions are fixed (fix 2).
+- smoke03 (red Spain vs blue Japan, no truth): both kits split cleanly by eye. Any L weight from 0.1 to 1.0 gives the same vb01 result; scaling each channel by its warmup spread was dropped because it splits off a few bright outliers (synthetic smoke03 test).
+- Geometry numbers are unchanged by the rerun, as expected (same detections and keypoints).
+- Still to do: confirm on a second clip.
