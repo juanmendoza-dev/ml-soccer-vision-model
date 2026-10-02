@@ -28,8 +28,6 @@ from vision.types import (
 )
 from vision.view_gate import ViewGate, grass_share
 
-TEAM_VOTES = 5  # cluster predictions per track before its team is fixed
-
 
 class Detector(Protocol):
     def detect(self, image: np.ndarray) -> list[Detection]: ...
@@ -105,7 +103,8 @@ class VisionPipeline:
         self._track_motion: dict[int, np.ndarray] = {}  # px per frame, x1 y1 x2 y2
         # last detected box and its step, kept apart from filled boxes so fills don't compound
         self._track_seen: dict[int, tuple[int, np.ndarray]] = {}
-        self._team_votes: dict[int, list[int]] = {}
+        self._team_votes: dict[int, list[int]] = {}  # per track: predictions of cluster 0, 1
+        self._first_vote: dict[int, int] = {}  # breaks a tie
         self._ball: tuple[float, np.ndarray, np.ndarray, Box, float] | None = (
             None  # t xy v box conf
         )
@@ -302,22 +301,18 @@ class VisionPipeline:
             ):
                 teams.fit()
             return
-        todo = [
-            (tr, c)
-            for tr, c in zip(players, crops)
-            if len(self._team_votes.get(tr.track_id, [])) < TEAM_VOTES
-        ]
-        if todo:
-            clusters = teams.predict([c for _, c in todo])
-            for (tr, _), cl in zip(todo, clusters, strict=True):
-                if cl >= 0:  # -1 = assigner couldn't tell
-                    self._team_votes.setdefault(tr.track_id, []).append(int(cl))
+        # every confident frame votes: a track that starts occluded gets outvoted later
+        for tr, cl in zip(players, teams.predict(crops), strict=True):
+            if cl >= 0:  # -1 = assigner couldn't tell
+                self._team_votes.setdefault(tr.track_id, [0, 0])[cl] += 1
+                self._first_vote.setdefault(tr.track_id, int(cl))
 
     def _cluster_of(self, tr: Track) -> int | None:
         votes = self._team_votes.get(tr.track_id)
-        if tr.cls != PLAYER or not votes:
+        if tr.cls != PLAYER or votes is None:
             return None
-        return max(set(votes), key=votes.count)  # majority
+        n0, n1 = votes
+        return self._first_vote[tr.track_id] if n0 == n1 else int(n1 > n0)  # majority so far
 
     def _team_of(self, tr: Track) -> str | None:
         cluster = self._cluster_of(tr)

@@ -440,6 +440,39 @@ def test_low_confidence_tracks_dont_feed_kit_colors():
     assert teams.n_crops == 0 and not teams.fitted
 
 
+class ChangingTeams(ShirtColorTeams):
+    """Calls everyone cluster 1 for the first few predictions, then cluster 0."""
+
+    def __init__(self, wrong_calls):
+        super().__init__()
+        self.calls = 0
+        self.wrong_calls = wrong_calls
+
+    def predict(self, crops):
+        self.calls += 1
+        return [1 if self.calls <= self.wrong_calls else 0 for _ in crops]
+
+
+def test_track_team_is_the_majority_of_every_vote_so_far(tmp_path):
+    """A track that starts occluded gets its first votes wrong; later votes outweigh them,
+    and a team that changes along a track is still valid 02."""
+    config = VisionConfig(detect_every=2, team_warmup_s=1.0, team_min_crops=5, home_cluster=0)
+    detector = FakeDetector()
+    pipe = VisionPipeline(
+        config, Stages(detector, FakeTracker(), FakeKeypoints(), ChangingTeams(wrong_calls=3))
+    )
+    writer = GameStateWriter("synth", "Reds", "Blues", FPS, config, tmp_path / "gs")
+    frames = []
+    for frame_id in range(45):
+        detector.frame_id = frame_id
+        frames.append(pipe.step(frame_id, frame_id / FPS, render(frame_id)))
+        writer.add(frames[-1])
+    teams_of = [{o.team for o in vf.objects if o.cls == PLAYER} for vf in frames]
+    assert {"away"} in teams_of  # the first votes: cluster 1
+    assert teams_of[40] == {"home"}
+    assert validate_match(writer.close()) == []
+
+
 def test_offpitch_report_finds_the_bad_rows(run, capsys):
     from vision import offpitch
 
