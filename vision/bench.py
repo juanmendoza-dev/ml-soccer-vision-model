@@ -15,6 +15,7 @@ sweep are scored the same way.
 import argparse
 import itertools
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +34,10 @@ MAX_DRIFT_S = 0.1  # sync pairs disagreeing by more: the source video's fps is o
 GEOMETRY_TARGET = 0.17  # roadmap: frames without geometry at or under smoke04's
 MAX_PREROLL_S = 30.0  # vision may start this much before the clip, unscored
 TIE_PT = 0.005  # within this much of the best within-2 m, less geometry missing wins
+# 07 Ball labels / Ball score
+BALL_LABELS = Path("data/splits/vision_ball_labels.json")
+BALL_EVERY = 5  # label every 5th source frame
+BALL_NONE, BALL_UNSURE = "none", "unsure"
 
 
 def load_manifest(path: Path) -> list[dict]:
@@ -73,6 +78,53 @@ def mark_labels(video_s: np.ndarray, marks: list[dict]) -> list[str | None]:
         for i in np.flatnonzero((video_s >= mk["start_s"]) & (video_s < mk["end_s"])):
             labels[i] = mk["label"]
     return labels
+
+
+def ball_label_frames(clip: dict, fps: float, every: int = BALL_EVERY) -> list[int]:
+    """Source-video frame indices to label for the ball (07 Ball labels): multiples of
+    every inside the clip, outside the marks."""
+    start, end = clip["video_start_s"], clip["video_end_s"]
+    idx = np.array(
+        [
+            i
+            for i in range(math.floor(start * fps), math.ceil(end * fps) + 1)
+            if i % every == 0 and start <= i / fps < end
+        ]
+    )
+    marked = mark_labels(idx / fps, clip["marks"])
+    return [int(i) for i, m in zip(idx, marked, strict=True) if m is None]
+
+
+def load_ball_labels(path: Path = BALL_LABELS) -> dict:
+    """clip_id -> {video_sha256, every, labels: {source frame index: [x, y] | none | unsure}}."""
+    if not path.exists():
+        return {}
+    clips = json.loads(path.read_text())["clips"]
+    for c in clips.values():
+        c["labels"] = {int(k): v for k, v in c["labels"].items()}
+        for v in c["labels"].values():
+            if not (v in (BALL_NONE, BALL_UNSURE) or (isinstance(v, list) and len(v) == 2)):
+                raise ValueError(f"bad ball label {v!r}")
+    return clips
+
+
+def save_ball_labels(clips: dict, path: Path = BALL_LABELS) -> None:
+    """One label per line, so a diff shows what was clicked. Written whole, then swapped in."""
+    lines = ['{"version": 1, "clips": {']
+    for n, (clip_id, c) in enumerate(sorted(clips.items())):
+        lines.append(
+            f'  "{clip_id}": {{"video_sha256": "{c["video_sha256"]}", "every": {c["every"]}, '
+            '"labels": {'
+        )
+        items = sorted(c["labels"].items())
+        for k, (idx, v) in enumerate(items):
+            comma = "," if k < len(items) - 1 else ""
+            lines.append(f'    "{idx}": {json.dumps(v)}{comma}')
+        lines.append("  }}" + ("," if n < len(clips) - 1 else ""))
+    lines.append("}}")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("\n".join(lines) + "\n")
+    tmp.replace(path)
 
 
 def load_truth(

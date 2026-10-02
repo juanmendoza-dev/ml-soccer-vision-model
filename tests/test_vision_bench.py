@@ -226,3 +226,26 @@ def test_cli_scores_and_sweeps(bench_dirs, tmp_path, capsys):
     assert "pick: min_inliers=4" in printed  # 40 inliers never happens: no geometry
     sweep = json.loads(out.read_text())
     assert [r["headline"]["geometry_missing"] for r in sweep][1] == 1.0
+
+
+def test_ball_label_frames_skip_marks_and_stay_in_the_clip():
+    mark = {"start_s": 2.0, "end_s": 2.5, "label": "closeup"}
+    c = {"video_start_s": 1.0, "video_end_s": 3.0, "marks": [mark]}
+    idx = bench.ball_label_frames(c, 30.0)
+    assert idx == [30, 35, 40, 45, 50, 55, 75, 80, 85]  # 60-70 are marked, 90 is the end
+
+
+def test_ball_labels_round_trip(tmp_path):
+    path = tmp_path / "labels.json"
+    clips = {
+        "c1": {"video_sha256": "ab", "every": 5, "labels": {10: [1.5, 2.0], 5: "none"}},
+        "c2": {"video_sha256": "cd", "every": 5, "labels": {}},
+    }
+    bench.save_ball_labels(clips, path)
+    json.loads(path.read_text())  # valid JSON
+    back = bench.load_ball_labels(path)
+    assert back["c1"]["labels"] == {5: "none", 10: [1.5, 2.0]} and back["c2"]["labels"] == {}
+    clips["c1"]["labels"][15] = "maybe"
+    bench.save_ball_labels(clips, path)
+    with pytest.raises(ValueError):
+        bench.load_ball_labels(path)
