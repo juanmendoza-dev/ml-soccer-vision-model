@@ -1,6 +1,7 @@
 """vision.replay: stage 4 acceptance rerun from the caches (03 Diagnostics)."""
 
 import dataclasses
+import json
 
 import polars as pl
 import pytest
@@ -64,6 +65,22 @@ def test_run_config_reproduces_the_cache(tmp_path, keypoints):
     )
     joined = frames.join(polygon, on="frame_id")
     assert joined.height == 100 and (joined["homography_ok"] == joined["ok"]).all()
+
+
+def test_run_json_without_the_circle_field_replays_as_9_15(tmp_path):
+    """Runs from before circle_kp_x_m existed fitted 31/32 at 9.15 (03 Pitch template)."""
+    cache, gs = synth_run(
+        tmp_path, FakeKeypoints(), dataclasses.replace(CONFIG, circle_kp_x_m=9.15)
+    )
+    run = json.loads((cache / "run.json").read_text())
+    del run["config"]["circle_kp_x_m"]
+    (cache / "run.json").write_text(json.dumps(run))
+    config = replay.run_config(cache)
+    assert config.circle_kp_x_m == 9.15
+    cached = people(pl.read_parquet(cache / "detections.parquet"))
+    assert people(replayed(cache, gs, config)[0]).equals(cached)
+    now = dataclasses.replace(config, circle_kp_x_m=7.2)
+    assert not people(replayed(cache, gs, now)[0]).equals(cached)
 
 
 def test_glitch_run_has_rejected_match_frames(tmp_path):

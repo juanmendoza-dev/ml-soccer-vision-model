@@ -3,7 +3,7 @@ import pytest
 
 cv2 = pytest.importorskip("cv2")
 
-from vision.pitch import TEMPLATE, HomographyFilter, fit_homography, project, to_02
+from vision.pitch import TEMPLATE, HomographyFilter, fit_homography, project, template, to_02
 
 # A made-up broadcast camera: meters (TV frame) -> 1280x720 pixels, with perspective
 CAMERA = np.array([[9.0, -2.0, 640.0], [0.0, -6.0, 380.0], [0.0, -0.004, 1.0]])
@@ -19,9 +19,23 @@ def test_template_landmarks():
     assert tuple(TEMPLATE[29]) == (52.5, -34.0)  # 30: near-right corner
     assert tuple(TEMPLATE[8]) == (-41.5, 0.0)  # 9: left penalty spot
     assert tuple(TEMPLATE[21]) == (41.5, 0.0)  # 22: right penalty spot
-    assert tuple(TEMPLATE[30]) == (-9.15, 0.0)  # 31, 32: center circle on the halfway line
-    assert tuple(TEMPLATE[31]) == (9.15, 0.0)
+    # 31, 32: "circle left / right" where the model puts them, not at the circle (03)
+    assert tuple(TEMPLATE[30]) == (-7.2, 0.0)
+    assert tuple(TEMPLATE[31]) == (7.2, 0.0)
     assert len({tuple(p) for p in TEMPLATE}) == 32
+
+
+def test_circle_points_follow_the_config_value():
+    old = template(9.15)
+    assert tuple(old[30]) == (-9.15, 0.0) and tuple(old[31]) == (9.15, 0.0)
+    assert np.array_equal(old[:30], TEMPLATE[:30])  # nothing else moves
+
+
+def test_fit_uses_the_template_it_is_given():
+    old = template(9.15)
+    px = project(CAMERA, old)
+    assert fit_homography(px, np.full(32, 0.9), 0.5, pitch=old).err_m < 1e-4
+    assert fit_homography(px, np.full(32, 0.9), 0.5).err_m > 0.01  # 31/32 don't fit at 7.2
 
 
 def test_recovers_camera_from_keypoints():
