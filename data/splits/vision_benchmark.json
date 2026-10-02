@@ -43,7 +43,7 @@
         {"start_s": 20.967, "end_s": 22.067, "label": "closeup"},
         {"start_s": 43.467, "end_s": 44.733, "label": "closeup"}
       ],
-      "marks_checked_by_user": false
+      "marks_checked_by_user": true
     }
   ]
 }

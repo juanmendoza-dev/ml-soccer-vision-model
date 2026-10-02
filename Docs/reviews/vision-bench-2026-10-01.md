@@ -106,7 +106,7 @@ These are per crop; per-track votes come on top.
 
 ## Clip 2: vb02-ned-arg, and 31/32 confirmed (2026-10-01)
 `vb02-ned-arg`: PFF 10511 (Netherlands v Argentina, QF), second half, video 0:08–0:59.2 (clock 78:19–79:10), 1080p30. Vision ran from 0:00 (8 s pre-roll), on the new default (`circle_kp_x_m` 7.2), RTX 2060 at 4.1 fps. Home (Netherlands) attacks TV right in period 1: with the TV-left goal on screen, PFF's visible players are at x ≈ −40.
-- **Sync on cut edges:** three live close-ups and the cut at 59.27 s. Their 7 edges give offsets 1992.57–1992.65 s against PFF's all-`ESTIMATED` switches, every one a hard cut (frames either side checked). The scoreboard agrees to 1.6 s. **Marks drafted, not yet checked by the user.**
+- **Sync on cut edges:** three live close-ups and the cut at 59.27 s. Their 7 edges give offsets 1992.57–1992.65 s against PFF's all-`ESTIMATED` switches, every one a hard cut (frames either side checked). The scoreboard agrees to 1.6 s. Marks checked by the user 2026-10-01.
 - `--offset-check`: best offset 0.53 s earlier than the sync (vb01: 0.23 s earlier). Two clips, same sign. Scored with the sync shifted by −0.23 / −0.53 s: vb01 (run config, 9.15) 14.0% → 15.0% / 15.3%, vb02 32.4% → 35.8% / 36.8%, median about 0.1 m better. So timing is a small part of the 2+ m, not the main cause. The cut edges agree to a frame, so the sync stays as marked; it may be PFF's positions lagging the video slightly.
 
 **keypoint_check on vb02** (235 frames, offsets against the real landmarks):
@@ -132,7 +132,7 @@ These are per crop; per-track votes come on top.
 | 8.2 | 16.5% / 2.68 m | 28.2% / 2.41 m |
 | 9.15 | 14.0% / 2.81 m | 25.3% / 2.54 m |
 
-Homography rejected moves 0.4–1.1 pt across the grid on either clip, no trend. 7.0 and 7.2 are within 0.3 pt on both, so 7.2 stays (measured on vb01, not picked on this grid). **31/32 at 7.2 is confirmed on a second clip, pending the user's check of vb02's marks.** 6.5 is worse on both (vb01 20.0%, vb02 30.8%), so 7.0–7.2 is a real optimum. But on vb02 keypoint_check measures 31/32 at 7.5–8.0 m while the bench prefers 7.2: the value also soaks up some of the per-frame stretch. Grid it again once the PTZ solver exists.
+Homography rejected moves 0.4–1.1 pt across the grid on either clip, no trend. 7.0 and 7.2 are within 0.3 pt on both, so 7.2 stays (measured on vb01, not picked on this grid). **31/32 at 7.2 is confirmed on a second clip, marks checked by the user.** 6.5 is worse on both (vb01 20.0%, vb02 30.8%), so 7.0–7.2 is a real optimum. But on vb02 keypoint_check measures 31/32 at 7.5–8.0 m while the bench prefers 7.2: the value also soaks up some of the per-frame stretch. Grid it again once the PTZ solver exists.
 
 **vb02 scorecard at the new default:**
 
