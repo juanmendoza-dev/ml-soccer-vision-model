@@ -2,7 +2,9 @@
 
     python -m vision.run --video clip.mp4 --weights-dir <roboflow sports data/> --match-id demo1
 
-Weights are roboflow/sports' (examples/soccer/setup.sh downloads them).
+Weights are roboflow/sports' (examples/soccer/setup.sh downloads them). With
+--calib-backend pnlcalib, stage 4 is PnLCalib (03 Pitch calibration): its weights
+(SV_FT_WC14_kp / _lines, the GitHub releases) go in --pnl-weights-dir.
 Then look at it with: python -m demo.debug --video clip.mp4 --cache data/vision_cache/demo1
 """
 
@@ -23,24 +25,34 @@ from vision.stages import (
     BallAndPeopleDetector,
     ByteTracker,
     KitColorTeams,
+    PnLCalibCamera,
     YoloDetector,
     YoloKeypoints,
+    pnl_weight_files,
 )
 from vision.types import BALL
 from vision.writer import GameStateWriter
 
 
-def build_stages(weights_dir: Path, device: str, fps: float, config: VisionConfig) -> Stages:
+def build_stages(
+    weights_dir: Path, device: str, fps: float, config: VisionConfig, pnl_dir: Path | None = None
+) -> Stages:
     conf = config.track_min_conf  # the pipeline filters the ball and new tracks higher
     people = YoloDetector(weights_dir / PLAYER_WEIGHTS, device=device, conf=conf)
     detector = people
     if (weights_dir / BALL_WEIGHTS).exists():
         ball = YoloDetector(weights_dir / BALL_WEIGHTS, device=device, conf=conf, required=(BALL,))
         detector = BallAndPeopleDetector(people, ball)
+    if config.calib_backend == "pnlcalib":
+        keypoints = PnLCalibCamera(
+            pnl_dir or weights_dir, config.pnl_weights, device=device, fp16=config.pnl_fp16
+        )
+    else:
+        keypoints = YoloKeypoints(weights_dir / PITCH_WEIGHTS, device=device)
     return Stages(
         detector=detector,
         tracker=ByteTracker(fps / config.detect_every, config.lost_track_s),
-        keypoints=YoloKeypoints(weights_dir / PITCH_WEIGHTS, device=device),
+        keypoints=keypoints,
         teams=KitColorTeams(),
     )
 
@@ -59,6 +71,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--period", type=int, default=1)
     ap.add_argument("--device", default="cuda", help="cuda, cpu or mps")
     ap.add_argument("--detect-every", type=int, default=1)
+    ap.add_argument("--calib-backend", choices=["roboflow", "pnlcalib"], default="roboflow")
+    ap.add_argument(
+        "--pnl-weights-dir", type=Path, help="PnLCalib weights (default: --weights-dir)"
+    )
+    ap.add_argument("--pnl-fp16", action="store_true", help="PnLCalib nets in fp16 autocast")
     ap.add_argument("--fps", type=float, help="override when the video reports none or a bad one")
     ap.add_argument("--max-frames", type=int)
     ap.add_argument(
@@ -85,13 +102,19 @@ def main(argv: list[str] | None = None) -> None:
     try:
         config = VisionConfig(
             detect_every=args.detect_every,
+            calib_backend=args.calib_backend,
+            pnl_fp16=args.pnl_fp16,
             home_cluster=args.home_cluster,
             home_attacks_tv_right_p1=not args.home_attacks_left,
             period=args.period,
         )
     except ValueError as e:
         raise SystemExit(f"bad config: {e}") from None
-    pipe = VisionPipeline(config, build_stages(args.weights_dir, args.device, fps, config))
+    pnl_dir = args.pnl_weights_dir or args.weights_dir
+    pipe = VisionPipeline(config, build_stages(args.weights_dir, args.device, fps, config, pnl_dir))
+    weights = {p.name: sha256(p) for p in sorted(args.weights_dir.glob("*.pt"))}
+    if config.calib_backend == "pnlcalib":  # no extension, so the glob misses them (03)
+        weights |= {n: sha256(pnl_dir / n) for n in pnl_weight_files(config.pnl_weights)}
     writer = GameStateWriter(
         args.match_id,
         args.home,
@@ -103,7 +126,7 @@ def main(argv: list[str] | None = None) -> None:
         run_info={
             "video": str(args.video),
             "video_sha256": sha256(args.video),
-            "weights": {p.name: sha256(p) for p in sorted(args.weights_dir.glob("*.pt"))},
+            "weights": weights,
             "device": args.device,
             "video_start_s": skip / fps,  # the source video's time at t = 0
         },
