@@ -49,6 +49,62 @@ KEYPOINTS_SCHEMA = {
     "kp_y": pl.List(pl.Float64),
     "kp_conf": pl.List(pl.Float64),
 }
+LIST = pl.List(pl.Float64)
+CAMERA_SCHEMA = {
+    "match_id": pl.String,
+    "frame_id": pl.Int64,
+    "t": pl.Float64,
+    "used": pl.Boolean,
+    "segment": pl.Int64,
+    "img_w": pl.Int64,
+    "img_h": pl.Int64,
+    **{c: LIST for c in ("kp_x", "kp_y", "kp_score")},
+    **{c: LIST for c in ("line_x1", "line_y1", "line_s1", "line_x2", "line_y2", "line_s2")},
+    "found": pl.Boolean,
+    **{c: pl.Float64 for c in ("fx", "fy", "cx", "cy", "cam_x", "cam_y", "cam_z")},
+    "rot": LIST,
+    "err_px": pl.Float64,
+    "mode": pl.String,
+    "n_kp": pl.Int64,
+    "n_lines": pl.Int64,
+}
+
+
+def camera_row(match_id: str, frame_id: int, call) -> dict:
+    """One CalibCall as a camera.parquet row (03 Diagnostics)."""
+    kp, ln, cam = call.peaks.kp, call.peaks.lines, call.camera
+    row = {
+        "match_id": match_id,
+        "frame_id": frame_id,
+        "t": call.t,
+        "used": call.used,
+        "segment": call.segment,
+        "img_w": call.image_size[0],
+        "img_h": call.image_size[1],
+        "kp_x": kp[:, 0].tolist(),
+        "kp_y": kp[:, 1].tolist(),
+        "kp_score": kp[:, 2].tolist(),
+        "found": cam is not None,
+        "n_kp": call.n_kp,
+        "n_lines": call.n_lines,
+    }
+    for end in (0, 1):
+        for i, name in enumerate(("x", "y", "s")):
+            row[f"line_{name}{end + 1}"] = ln[:, end, i].tolist()
+    if cam is not None:
+        row.update(
+            fx=cam.fx,
+            fy=cam.fy,
+            cx=cam.cx,
+            cy=cam.cy,
+            cam_x=float(cam.position[0]),
+            cam_y=float(cam.position[1]),
+            cam_z=float(cam.position[2]),
+            rot=cam.rotation.ravel().tolist(),
+            err_px=cam.err_px,
+            mode=cam.mode,
+        )
+    return row
 
 
 def on_screen(o) -> bool:
@@ -85,6 +141,7 @@ class GameStateWriter:
         self._detections: list[dict] = []
         self._views: list[dict] = []
         self._keypoints: list[dict] = []
+        self._cameras: list[dict] = []
         self._started = time.time()
         self.errors: list[str] = []  # 02 validator output, set by close()
 
@@ -129,6 +186,7 @@ class GameStateWriter:
                     "kp_conf": kp.conf.tolist(),
                 }
             )
+        self._cameras += [camera_row(self.match_id, vf.frame_id, c) for c in vf.calib_calls]
         for o in [*vf.objects, *([vf.ball] if vf.ball else [])]:
             self._detections.append(
                 {
@@ -258,9 +316,15 @@ class GameStateWriter:
                 self.cache / "detections.parquet"
             )
             pl.DataFrame(self._views, schema=VIEW_SCHEMA).write_parquet(self.cache / "view.parquet")
-            pl.DataFrame(self._keypoints, schema=KEYPOINTS_SCHEMA).write_parquet(
-                self.cache / "keypoints.parquet"
-            )
+            # the backend's stage 4 cache only: replay reads by the run's calib_backend
+            if self.config.calib_backend == "pnlcalib":
+                pl.DataFrame(self._cameras, schema=CAMERA_SCHEMA).write_parquet(
+                    self.cache / "camera.parquet"
+                )
+            else:
+                pl.DataFrame(self._keypoints, schema=KEYPOINTS_SCHEMA).write_parquet(
+                    self.cache / "keypoints.parquet"
+                )
 
         # An all-other clip (no objects) fails here on purpose: a run that saw no
         # match is a failed run, not a valid empty one
