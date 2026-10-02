@@ -30,6 +30,12 @@ from vision.types import (
 )
 from vision.writer import GameStateWriter
 
+
+def rf_config(**kw) -> VisionConfig:
+    """These fakes are roboflow keypoints; PnLCalib's are in test_vision_calib."""
+    return VisionConfig(**{"calib_backend": "roboflow", **kw})
+
+
 FPS = 10
 W, H = 1280, 720
 CAMERA = np.array([[9.0, -2.0, 640.0], [0.0, -6.0, 380.0], [0.0, -0.004, 1.0]])
@@ -118,7 +124,7 @@ class ShirtColorTeams:
 
 @pytest.fixture
 def run(tmp_path):
-    config = VisionConfig(detect_every=2, team_warmup_s=1.0, team_min_crops=5, home_cluster=0)
+    config = rf_config(detect_every=2, team_warmup_s=1.0, team_min_crops=5, home_cluster=0)
     detector = FakeDetector()
     pipe = VisionPipeline(
         config, Stages(detector, FakeTracker(), FakeKeypoints(), ShirtColorTeams())
@@ -262,7 +268,7 @@ class SwitchKeypoints:
 
 def run_green(lines_at, n, fps=25):
     """Every frame green; lines_at(frame_id) says whether pitch lines show."""
-    config = VisionConfig()  # keypoints every 5th frame, the default
+    config = rf_config()  # keypoints every 5th frame, the default
     kps = SwitchKeypoints()
     pipe = VisionPipeline(config, Stages(FakeDetector(), FakeTracker(), kps, ShirtColorTeams()))
     image = render(0)
@@ -310,7 +316,7 @@ class SpyTracker(FakeTracker):
 def test_low_confidence_people_reach_the_tracker_but_not_the_ball():
     tracker = SpyTracker()
     pipe = VisionPipeline(
-        VisionConfig(), Stages(LowConfDetector(), tracker, FakeKeypoints(), ShirtColorTeams())
+        rf_config(), Stages(LowConfDetector(), tracker, FakeKeypoints(), ShirtColorTeams())
     )
     for frame_id in range(15):
         vf = pipe.step(frame_id, frame_id / FPS, render(frame_id))
@@ -333,7 +339,7 @@ class RunningDetector:
 def test_filled_boxes_follow_a_moving_player(detect_every):
     detector = RunningDetector()
     pipe = VisionPipeline(
-        VisionConfig(detect_every=detect_every),
+        rf_config(detect_every=detect_every),
         Stages(detector, FakeTracker(), FakeKeypoints(), ShirtColorTeams()),
     )
     filled = 0
@@ -349,7 +355,7 @@ def test_filled_boxes_follow_a_moving_player(detect_every):
 
 def write_run(tmp_path, name, timestamps, fps=10):
     """One player at x = frame_id squared through the writer; returns objects."""
-    writer = GameStateWriter(name, "a", "b", fps, VisionConfig(), tmp_path / "gs")
+    writer = GameStateWriter(name, "a", "b", fps, rf_config(), tmp_path / "gs")
     for frame_id, t in enumerate(timestamps):
         x = float(frame_id**2)
         player = VisionObject(
@@ -386,13 +392,13 @@ def test_single_frame_run_has_null_velocity(tmp_path):
 )
 def test_config_rejects_bad_values(bad):
     with pytest.raises(ValueError):
-        VisionConfig(**bad)
+        rf_config(**bad)
 
 
 def test_filled_box_running_off_screen_stays_a_fraction():
     detector = RunningDetector()  # 4 px per frame
     pipe = VisionPipeline(
-        VisionConfig(detect_every=3),
+        rf_config(detect_every=3),
         Stages(detector, FakeTracker(), FakeKeypoints(), ShirtColorTeams()),
     )
     image = render(0)[:, :340]  # narrow frame: the player leaves it on the right
@@ -406,7 +412,7 @@ def test_filled_box_running_off_screen_stays_a_fraction():
 
 def test_run_with_no_detections_writes_typed_caches(tmp_path):
     writer = GameStateWriter(
-        "empty", "a", "b", FPS, VisionConfig(), tmp_path / "gs", tmp_path / "cache"
+        "empty", "a", "b", FPS, rf_config(), tmp_path / "gs", tmp_path / "cache"
     )
     for frame_id in range(3):
         writer.add(VisionFrame(frame_id, frame_id / FPS, OTHER, 0.0, None, False, None, None))
@@ -423,7 +429,7 @@ def test_writer_reports_validation(run, tmp_path):
 
     _, _, cache, _ = run
     assert json.loads((cache / "run.json").read_text())["validation_errors"] == []
-    writer = GameStateWriter("none", "a", "b", FPS, VisionConfig(), tmp_path / "gs2")
+    writer = GameStateWriter("none", "a", "b", FPS, rf_config(), tmp_path / "gs2")
     writer.add(VisionFrame(0, 0.0, OTHER, 0.0, None, False, None, None))
     writer.close()
     assert writer.errors  # no match view at all: a failed run, not an empty valid one
@@ -432,7 +438,7 @@ def test_writer_reports_validation(run, tmp_path):
 def test_low_confidence_tracks_dont_feed_kit_colors():
     teams = ShirtColorTeams()
     pipe = VisionPipeline(
-        VisionConfig(team_warmup_s=0.0, team_min_crops=1),
+        rf_config(team_warmup_s=0.0, team_min_crops=1),
         Stages(LowConfDetector(), FakeTracker(), FakeKeypoints(), teams),
     )
     for frame_id in range(30):
@@ -456,7 +462,7 @@ class ChangingTeams(ShirtColorTeams):
 def test_track_team_is_the_majority_of_every_vote_so_far(tmp_path):
     """A track that starts occluded gets its first votes wrong; later votes outweigh them,
     and a team that changes along a track is still valid 02."""
-    config = VisionConfig(detect_every=2, team_warmup_s=1.0, team_min_crops=5, home_cluster=0)
+    config = rf_config(detect_every=2, team_warmup_s=1.0, team_min_crops=5, home_cluster=0)
     detector = FakeDetector()
     pipe = VisionPipeline(
         config, Stages(detector, FakeTracker(), FakeKeypoints(), ChangingTeams(wrong_calls=3))
@@ -515,7 +521,7 @@ class NoisyKeypoints:
 
 def test_sloppy_homography_is_rejected_but_still_feeds_the_gate():
     pipe = VisionPipeline(
-        VisionConfig(max_homography_err_m=0.1),
+        rf_config(max_homography_err_m=0.1),
         Stages(FakeDetector(), FakeTracker(), NoisyKeypoints(), ShirtColorTeams()),
     )
     frames = [pipe.step(i, i / FPS, render(i)) for i in range(40)]
@@ -540,7 +546,7 @@ class GlitchKeypoints:
 
 def test_one_bad_keypoint_frame_gives_nulls_not_wrong_positions():
     pipe = VisionPipeline(
-        VisionConfig(),
+        rf_config(),
         Stages(FakeDetector(), FakeTracker(), GlitchKeypoints(bad_call=5), ShirtColorTeams()),
     )
     frames = [pipe.step(i, i / FPS, render(i)) for i in range(40)]
@@ -572,7 +578,7 @@ class OffPitchDetector:
 
 
 def test_projections_far_off_the_pitch_go_null(tmp_path):
-    config = VisionConfig()
+    config = rf_config()
     detector = OffPitchDetector()
     pipe = VisionPipeline(
         config, Stages(detector, FakeTracker(), FakeKeypoints(), ShirtColorTeams())
@@ -599,7 +605,7 @@ def test_projections_far_off_the_pitch_go_null(tmp_path):
 
 def ball_pipe():
     return VisionPipeline(
-        VisionConfig(), Stages(FakeDetector(), FakeTracker(), FakeKeypoints(), ShirtColorTeams())
+        rf_config(), Stages(FakeDetector(), FakeTracker(), FakeKeypoints(), ShirtColorTeams())
     )
 
 
@@ -644,7 +650,7 @@ def test_ball_seen_without_a_pitch_position_resets_the_track():
 
 def test_filled_box_off_screen_is_written_not_visible(tmp_path):
     # D6: the writer used to mark every object visible
-    config = VisionConfig()
+    config = rf_config()
     writer = GameStateWriter("vis", "a", "b", FPS, config, tmp_path / "gs", tmp_path / "cache")
 
     def obj(oid, interpolated, box_frac):
@@ -693,7 +699,7 @@ def test_run_starts_at_start_s(tmp_path, monkeypatch):
         [
             *("--video", str(video), "--weights-dir", str(tmp_path), "--match-id", "clip"),
             *("--start-s", "1.0", "--gamestate-dir", str(tmp_path / "gs")),
-            *("--cache-dir", str(tmp_path / "cache")),
+            *("--cache-dir", str(tmp_path / "cache"), "--calib-backend", "roboflow"),
         ]
     )
     run = json.loads((tmp_path / "cache" / "clip" / "run.json").read_text())

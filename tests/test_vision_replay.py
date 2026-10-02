@@ -26,6 +26,11 @@ from vision.types import BALL, GOALKEEPER, MATCH
 from vision.writer import GameStateWriter
 
 
+def rf_config(**kw) -> VisionConfig:
+    """These fakes are roboflow keypoints; PnLCalib's are in test_vision_calib."""
+    return VisionConfig(**{"calib_backend": "roboflow", **kw})
+
+
 def synth_run(tmp_path, keypoints, config, n=100):
     detector = FakeDetector()
     pipe = VisionPipeline(config, Stages(detector, FakeTracker(), keypoints, ShirtColorTeams()))
@@ -37,7 +42,7 @@ def synth_run(tmp_path, keypoints, config, n=100):
     return tmp_path / "cache" / "synth", tmp_path / "gs" / "synth"
 
 
-CONFIG = VisionConfig(detect_every=2, team_warmup_s=1.0, team_min_crops=5, home_cluster=0)
+CONFIG = rf_config(detect_every=2, team_warmup_s=1.0, team_min_crops=5, home_cluster=0)
 
 
 def replayed(cache, gs, config):
@@ -114,9 +119,9 @@ def test_ball_detections_are_reprojected_and_extrapolations_dropped(tmp_path):
 
 
 def test_overrides_are_typed_and_checked():
-    config = replay.with_overrides(VisionConfig(), ["min_inliers=6", "ransac_m=3.5"])
+    config = replay.with_overrides(rf_config(), ["min_inliers=6", "ransac_m=3.5"])
     assert config.min_inliers == 6 and config.ransac_m == 3.5
     with pytest.raises(SystemExit):
-        replay.with_overrides(VisionConfig(), ["no_such_field=1"])
+        replay.with_overrides(rf_config(), ["no_such_field=1"])
     with pytest.raises(ValueError):  # VisionConfig's own checks still run
-        replay.with_overrides(VisionConfig(), ["min_inliers=3"])
+        replay.with_overrides(rf_config(), ["min_inliers=3"])

@@ -71,7 +71,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--period", type=int, default=1)
     ap.add_argument("--device", default="cuda", help="cuda, cpu or mps")
     ap.add_argument("--detect-every", type=int, default=1)
-    ap.add_argument("--calib-backend", choices=["roboflow", "pnlcalib"], default="roboflow")
+    ap.add_argument("--calib-backend", choices=["roboflow", "pnlcalib"], default="pnlcalib")
     ap.add_argument(
         "--pnl-weights-dir", type=Path, help="PnLCalib weights (default: --weights-dir)"
     )
