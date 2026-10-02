@@ -50,6 +50,43 @@ class KeypointCall:
 
 
 @dataclass(frozen=True)
+class CalibPeaks:
+    """PnLCalib's nets on one image: the max-pool peak per channel, before any threshold,
+    in net pixels (960 x 540). What the camera cache stores (03 Diagnostics)."""
+
+    kp: np.ndarray  # (57, 3): x, y, score
+    lines: np.ndarray  # (23, 2, 3): both ends, x, y, score
+
+
+@dataclass(frozen=True)
+class Camera:
+    """One PnLCalib camera, in its world: centered meters, y toward the near touchline, z down."""
+
+    fx: float
+    fy: float
+    cx: float
+    cy: float
+    position: np.ndarray  # (3,)
+    rotation: np.ndarray  # (3, 3)
+    err_px: float  # voting's reprojection error; can be NaN
+    mode: str  # winning voting mode and RANSAC setting, e.g. "full/0"
+
+
+@dataclass(frozen=True)
+class CalibCall:
+    """One PnLCalib stage 4 run, as camera.parquet stores it (03 Diagnostics)."""
+
+    t: float
+    used: bool  # allowed into the homography filter (match view); probes in other aren't
+    segment: int
+    image_size: tuple[int, int]  # w, h: the calibration's pixel frame
+    peaks: CalibPeaks
+    camera: Camera | None  # None: voting found nothing
+    n_kp: int  # after thresholds and line completion
+    n_lines: int
+
+
+@dataclass(frozen=True)
 class VisionObject:
     object_id: str
     cls: str  # detector class
@@ -77,3 +114,4 @@ class VisionFrame:
     objects: list[VisionObject] = field(default_factory=list)  # players, goalkeepers, referees
     ball: VisionObject | None = None
     keypoint_calls: list[KeypointCall] = field(default_factory=list)  # keypoints cache only
+    calib_calls: list[CalibCall] = field(default_factory=list)  # camera cache only

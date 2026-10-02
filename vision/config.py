@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class VisionConfig:
     # Stage 0: view gate
     min_grass: float = 0.3  # share of green pixels for a match view
-    min_keypoints: int = 4  # fewer than this (when stage 4 runs) -> other
+    min_keypoints: int = 4  # roboflow: fewer than this (when stage 4 runs) -> other
     off_after_s: float = 0.5  # failing this long -> other
     on_after_s: float = 1.0  # passing this long -> match
     refit_teams_after_s: float = 120.0  # break longer than this -> refit teams
@@ -28,16 +28,30 @@ class VisionConfig:
     team_min_crops: int = 60
     home_cluster: int | None = None  # which cluster is home; null -> team stays null
 
-    # Stage 4: homography
-    keypoints_every: int = 5
+    # Stage 4: pitch calibration (03 Pitch calibration). "roboflow" (32 keypoints + RANSAC,
+    # old runs) or "pnlcalib" (a full camera from PnLCalib's nets)
+    calib_backend: str = "roboflow"
+    keypoints_every: int = 5  # stage 4 cadence, both backends
+    # PnLCalib: weights prefix (<prefix>_kp / <prefix>_lines) and upstream inference.py's thresholds
+    pnl_weights: str = "SV_FT_WC14"
+    pnl_kp_threshold: float = 0.3434
+    pnl_line_threshold: float = 0.7867
+    pnl_fp16: bool = False
+    # per-call camera checks: broken cameras, not slightly-off ones (WC14 on the bench: error
+    # p95 <= 5.5 px, height 13.5-24 m; vb03 had focal 0 / height 0 cameras these reject)
+    max_calib_err_px: float = 10.0
+    camera_min_height_m: float = 5.0
+    camera_max_height_m: float = 60.0
+    # Roboflow only from here to circle_kp_x_m
     min_keypoint_conf: float = 0.5
     # where the model puts keypoints 31/32 ("circle left/right"), not the real 9.15
     # (03 Pitch template; measured on vb01, a candidate until a second clip agrees)
     circle_kp_x_m: float = 7.2
     # Homography acceptance. Guesses until they're tuned on real clips
-    ransac_m: float = 2.0  # RANSAC inlier distance on the template, meters
-    min_inliers: int = 4  # RANSAC inliers a fit needs
-    max_homography_err_m: float = 1.0  # mean inlier reprojection error; worse -> fit rejected
+    ransac_m: float = 2.0  # roboflow: RANSAC inlier distance on the template, meters
+    min_inliers: int = 4  # roboflow: RANSAC inliers a fit needs
+    max_homography_err_m: float = 1.0  # roboflow: mean inlier reprojection error; worse -> rejected
+    # both backends from here
     homography_window: int = 3  # trailing fits averaged
     homography_max_age_s: float = 1.0  # older fit -> homography not ok
     # a fit this far (meters, at its keypoints) from the one in use waits for a second
@@ -59,7 +73,16 @@ class VisionConfig:
         for name in ("detect_every", "keypoints_every", "homography_window", "min_keypoints"):
             if getattr(self, name) < 1:
                 errors.append(f"{name} must be >= 1")
-        for name in ("min_grass", "min_det_conf", "track_min_conf", "min_keypoint_conf"):
+        if self.calib_backend not in ("roboflow", "pnlcalib"):
+            errors.append("calib_backend must be roboflow or pnlcalib")
+        for name in (
+            "min_grass",
+            "min_det_conf",
+            "track_min_conf",
+            "min_keypoint_conf",
+            "pnl_kp_threshold",
+            "pnl_line_threshold",
+        ):
             if not 0 <= getattr(self, name) <= 1:
                 errors.append(f"{name} must be in 0-1")
         for name in (
@@ -81,9 +104,13 @@ class VisionConfig:
             "max_homography_jump_m",
             "max_off_pitch_m",
             "circle_kp_x_m",
+            "max_calib_err_px",
+            "camera_min_height_m",
         ):
             if not getattr(self, name) > 0:
                 errors.append(f"{name} must be > 0")
+        if self.camera_max_height_m <= self.camera_min_height_m:
+            errors.append("camera_max_height_m must be > camera_min_height_m")
         if self.home_cluster not in (None, 0, 1):
             errors.append("home_cluster must be 0, 1 or None")
         if self.period not in (1, 2, 3, 4):
