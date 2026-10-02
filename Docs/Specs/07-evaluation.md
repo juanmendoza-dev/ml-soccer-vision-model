@@ -155,7 +155,10 @@ A clip that fails any of these is refused.
   - tracking IDs;
   - possession.
 
-**Homography threshold sweep** (roadmap Phase 2, group 4). The sweep runs offline on the keypoint cache (03 Diagnostics), with no detector rerun. Swept: `ransac_m`, `min_inliers`, `max_homography_err_m`, `max_homography_jump_m`, `homography_max_age_s` and `homography_window`. The gate's `min_keypoint_conf` and `min_keypoints` aren't swept, because they change the view gate, which the replay doesn't simulate.
+**Homography threshold sweep** (roadmap Phase 2, group 4). The sweep runs offline on the stage 4 cache (03 Diagnostics), with no detector rerun. What's swept depends on the run's `calib_backend` (03 Pitch calibration):
+- **`pnlcalib`:** `max_calib_err_px`, the camera checks, `max_homography_jump_m`, `homography_max_age_s` and `homography_window` from the cached cameras; `pnl_kp_threshold` and `pnl_line_threshold` with `--revote` (voting redone on CPU from the cached peaks, ~30 s a clip). The checks also feed the gate, which the replay doesn't simulate, so a pick that tightens them is confirmed with a fresh run before it's adopted.
+- **`roboflow`** (old runs): `ransac_m`, `min_inliers`, `max_homography_err_m`, `max_homography_jump_m`, `homography_max_age_s` and `homography_window`. The gate's `min_keypoint_conf` and `min_keypoints` aren't swept, because they change the view gate.
+- A `keypoints_every` that's a multiple of the run's replays with every k-th call: the cost of calibrating less often, for the live budget (09). Reported next to the pick, never picked by it.
 - **Pick:** the highest pooled within-2 m with homography rejected ≤ 17%.
 - **Tie-break:** within 0.5 pt, the setting with the least homography rejected wins (the permissive lean: 05 says a rejection costs more than 2–4 m of error). `python -m vision.bench --grid FIELD=V1,V2 ...` sweeps the cartesian grid and prints the pick.
 - Per-clip numbers for the pick and for the current defaults go in the review.
