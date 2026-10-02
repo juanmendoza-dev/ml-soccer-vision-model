@@ -390,8 +390,13 @@ class Clip:
         if not people(det).equals(people(cached)):
             raise SystemExit(f"{self.clip['clip_id']}: replay doesn't reproduce the run's cache")
 
-    def score(self, sets: list[str], offset_check: bool = False) -> dict:
-        det, frames = replay.replay(*self.inputs, replay.with_overrides(self.config, sets))
+    def score(self, sets: list[str], offset_check: bool = False, revote: bool = False) -> dict:
+        det, frames = replay.replay(
+            *self.inputs,
+            replay.with_overrides(self.config, sets),
+            revote,
+            run_every=self.config.keypoints_every,
+        )
         return score_clip(
             self.clip,
             det,
@@ -422,6 +427,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--grid", action="append", default=[], metavar="FIELD=V1,V2,...")
     ap.add_argument("--out", type=Path, help="write the scorecard as JSON")
     ap.add_argument(
+        "--revote", action="store_true", help="PnLCalib runs: vote cameras again from the peaks"
+    )
+    ap.add_argument(
         "--offset-check", action="store_true", help="report the best sync offset within ±1 s"
     )
     ap.add_argument("--cache-dir", type=Path, default=Path("data/vision_cache"))
@@ -439,7 +447,9 @@ def main(argv: list[str] | None = None) -> None:
     results = []
     for combo in combos:
         sets = args.set + combo
-        per_clip = [c.score(sets, args.offset_check and len(combos) == 1) for c in loaded]
+        per_clip = [
+            c.score(sets, args.offset_check and len(combos) == 1, args.revote) for c in loaded
+        ]
         h = headline(pooled(per_clip))
         results.append(({"sets": sets, "clips": per_clip}, h))
         if len(combos) > 1:
