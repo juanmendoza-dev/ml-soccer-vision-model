@@ -44,6 +44,24 @@
         {"start_s": 43.467, "end_s": 44.733, "label": "closeup"}
       ],
       "marks_checked_by_user": true
+    },
+    {
+      "clip_id": "vb03-jpn-esp",
+      "match_id": "3854",
+      "period": 1,
+      "video_sha256": "47e734f901ae9d4e5fb05f5c76219ba23e7c95f0a5c2ae675185fb594f7a4282",
+      "video_start_s": 225.0,
+      "video_end_s": 285.0,
+      "home_attacks_tv_right_p1": true,
+      "home_cluster": null,
+      "sync_method": "kicks (stitched video, piece 6 of 6 = 211.17-300 s, no cutaways inside): 3 kick frames vs pff ball speed jumps, offsets 55.43-55.48 s, plus 0.11 s because kicks read that much early against vb02's cut edges (3 kicks there, 1992.44-1992.56 vs 1992.57-1992.65). scoreboard 4:45 at 231 s agrees to 1 s",
+      "sync": [
+        {"video_s": 230.19, "timestamp_s": 285.765},
+        {"video_s": 278.65, "timestamp_s": 334.247},
+        {"video_s": 294.55, "timestamp_s": 350.096}
+      ],
+      "marks": [],
+      "marks_checked_by_user": false
     }
   ]
 }
