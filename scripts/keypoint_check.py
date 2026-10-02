@@ -4,7 +4,8 @@
 
 On each scored frame with a stage 4 call, fits a homography from the PFF players instead of
 the pitch keypoints: matched vision feet (pixels) -> their PFF positions (TV frame). Each
-confident keypoint is sent through it and compared with its TEMPLATE position. A landmark
+confident keypoint is sent through it and compared with the landmark's real position (31/32
+at the circle edge, 9.15 m, whatever circle_kp_x_m says, so clips compare). A landmark
 that lands off by the same amount frame after frame is misplaced in the template (or the
 keypoint model is biased on it); scattered offsets point at the fit instead.
 """
@@ -19,8 +20,9 @@ import polars as pl
 
 from scripts.team_crops import CACHE, matched_frames
 from vision import bench, replay
-from vision.pitch import TEMPLATE, project, to_02
+from vision.pitch import CIRCLE_R, project, template, to_02
 
+REAL = template(CIRCLE_R)  # offsets are against this, not the fitted template
 MIN_PAIRS = 8  # matched players before a frame's PFF homography is trusted
 RANSAC_M = 1.0
 MAX_FIT_M = 0.6  # median residual of that fit
@@ -71,9 +73,9 @@ def offsets(clip: dict) -> pl.DataFrame:
             continue
         px = np.column_stack([kp["kp_x"], kp["kp_y"]])[keep]
         at = project(H, px)
-        near = np.linalg.norm(TEMPLATE[keep][:, None] - dst[inl][None], axis=2).min(axis=1)
+        near = np.linalg.norm(REAL[keep][:, None] - dst[inl][None], axis=2).min(axis=1)
         for k, (x, y), d in zip(keep, at, near):
-            rows.append((frame_id, int(k), x - TEMPLATE[k, 0], y - TEMPLATE[k, 1], d, len(keep)))
+            rows.append((frame_id, int(k), x - REAL[k, 0], y - REAL[k, 1], d, len(keep)))
     return pl.DataFrame(rows, schema=["frame_id", "kp", "dx", "dy", "near_m", "n_kp"], orient="row")
 
 
@@ -87,7 +89,7 @@ def main() -> None:
     if args.out:
         off.write_parquet(args.out)
     print(f"{args.clip}: {off['frame_id'].n_unique()} frames with a PFF fit, TV frame meters")
-    print("offset = where PFF's players put the keypoint minus where the template does")
+    print("offset = where PFF's players put the keypoint minus the real landmark (31/32: 9.15 m)")
     near = off.filter(pl.col("near_m") <= NEAR_M)
     table = (
         near.group_by("kp")
