@@ -122,7 +122,8 @@ The reduced W0 from the detection review (roadmap Phase 2): about 8 World Cup 20
 - **Sync, in this order.** The scoreboard clock gives the first pair to about ±1 s (period clock; the second half's starts at 45:00). Then refine it without vision's homography, which is what's being scored:
   1. a shot in the clip: its strike frame on video against the shot's `events.parquet` frame;
   2. else the edges of hand-marked cutaways against PFF's switches to and from all-`ESTIMATED` frames (when the footage is the world feed, they match to a frame);
-  3. else the clip gets `sync_coarse: true` and is reported apart.
+  3. else kicks: the frame on video where a foot meets the ball, read by eye from frame strips, against the jump in PFF's ball speed (ball rows `visible` and not `interpolated`; long passes and clearances, where the jump is clean). At least 3 kicks spread over the clip, and the spread of their offsets is reported as the sync's precision. Needed for the stitched 2022 videos, where every cutaway falls between pieces (2026-10-02). PFF's ball timing may lag the video the way its players seem to (`--offset-check`, vision bench review), so this rung is only used once it agrees with the cut edges on a clip that has both (vb02). If it doesn't, the clip is scored with the difference corrected and says so in `sync_method`;
+  4. else the clip gets `sync_coarse: true` and is reported apart.
 
   A second pair checks drift: if the offsets differ by more than 0.1 s, the source video's frame rate is wrong and the scorer refuses the clip. `--offset-check` reports the offset, within ±1 s in PFF-frame steps, that minimizes the median player error on frames with geometry. That's a check only, never used to score.
 
