@@ -65,3 +65,27 @@ These are per crop; per-track votes come on top.
 - smoke03 (red Spain vs blue Japan, no truth): both kits split cleanly by eye. Any L weight from 0.1 to 1.0 gives the same vb01 result; scaling each channel by its warmup spread was dropped because it splits off a few bright outliers (synthetic smoke03 test).
 - Geometry numbers are unchanged by the rerun, as expected (same detections and keypoints).
 - Still to do: confirm on a second clip.
+
+## Fix 2, step a: is the template wrong? (2026-10-01)
+`scripts/keypoint_check.py`: on 147 vb01 frames with ≥ 8 matched players, a homography fitted from the players' feet to their PFF positions (median residual ≤ 0.6 m) says where each detected keypoint really is. Keypoints within 20 m of a matched player, TV frame, offset = PFF minus template:
+
+| # | Landmark | n | dx | dy | spread |
+|---|---|---|---|---|---|
+| 14–17 | Halfway line (far touchline, circle far, circle near, near touchline) | 90–106 | −0.05 to 0.13 | −1.27, 0.86, 1.67, 3.17 | 0.65–1.51 |
+| 31 / 32 | Circle left / right of the center spot | 99 / 115 | **+2.13 / −1.75** | 1.18 / 1.54 | 1.1 / 1.2 |
+| 18 / 19 | R box front, far | 119 / 100 | −6.97 / −6.01 | 0.73 / 0.05 | 3.5 / 4.7 (erratic) |
+| 20–24, 26–28 | R box, spot, 6-yd box, goal line | 8–49 | +0.45 to +1.85 | −0.84 to −3.0 | 0.7–1.8 |
+
+- **31/32 are a real, steady offset:** the model's "circle left/right" points sit about 7.2 m from the center spot, not 9.15 m, while the halfway points beside them land where they should in x. The template forces them out to 9.15 m, which stretches the middle of the pitch along x.
+- Replayed on the bench (no rerun needed):
+
+| Template | Within 2 m | Median / p90 | Homography rejected |
+|---|---|---|---|
+| Current | 14.0% | 2.81 / 4.43 m | 10.1% |
+| 31/32 at ±7.2 m | 20.9% | 2.43 / 4.24 m | 10.1% |
+| 31/32 dropped | 11.7% | 2.87 / 4.50 m | 17.6% |
+| Every landmark with n ≥ 20 moved to its measured spot (fitted on this clip: an upper bound, not a fix) | 30.8% | 1.75 / 3.91 m | 15.0% |
+
+- **The template isn't the main cause.** Even moved to measured positions on the same clip, the median stays at 1.75 m, against 0.52 m once each frame's affine is removed. Each landmark wanders about 1 m from frame to frame (the spread column), and a free 8-parameter fit on ~8 such points bends the pitch differently on each frame.
+- Points 18/19 are erratic (6–7 m off, wide spread): likely confused with another landmark on far-side views.
+- One clip, and the 31/32 offset was measured on it: confirm on a second clip before changing the template. The PFF players' fit is itself a ruler with ~0.5 m noise and extrapolates near the goal line; the right-end offsets (+1–2 m in x) may be partly that.
