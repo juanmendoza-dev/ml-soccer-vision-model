@@ -53,9 +53,7 @@ def kicks(ball: pl.DataFrame) -> list[dict]:
         step_before = np.linalg.norm(xy[i] - xy[i - 1]) / (t[i] - t[i - 1])
         step_after = np.linalg.norm(xy[i + 1] - xy[i]) / (t[i + 1] - t[i])
         if step_before < SLOW_MS and step_after > FAST_MS and v_after > AFTER_MS:
-            out.append(
-                {"timestamp_s": t[i], "x": xy[i, 0], "y": xy[i, 1], "v_after": v_after}
-            )
+            out.append({"timestamp_s": t[i], "x": xy[i, 0], "y": xy[i, 1], "v_after": v_after})
     return out
 
 
