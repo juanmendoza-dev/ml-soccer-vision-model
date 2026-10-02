@@ -9,12 +9,17 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from vision.types import BALL, CLASSES, Detection, Keypoints, Track
+from vision.types import BALL, CLASSES, CalibPeaks, Detection, Keypoints, Track
 
 # roboflow/sports examples/soccer/setup.sh file names
 PLAYER_WEIGHTS = "football-player-detection.pt"
 PITCH_WEIGHTS = "football-pitch-detection.pt"
 BALL_WEIGHTS = "football-ball-detection.pt"
+
+
+def pnl_weight_files(prefix: str) -> tuple[str, str]:
+    """PnLCalib's keypoint and line weights (github.com/mguti97/PnLCalib releases), no extension."""
+    return f"{prefix}_kp", f"{prefix}_lines"
 
 
 class YoloDetector:
@@ -114,6 +119,54 @@ class YoloKeypoints:
         xy = r.keypoints.xy[best].cpu().numpy()
         conf = r.keypoints.conf[best].cpu().numpy() if r.keypoints.conf is not None else np.ones(32)
         return Keypoints(xy, conf)
+
+
+class PnLCalibCamera:
+    """PnLCalib's two HRNet nets (03 Pitch calibration): image -> per-channel heatmap peaks.
+    Voting the camera from the peaks is CPU work, in vision.calib."""
+
+    def __init__(self, weights_dir: Path, prefix: str, device: str = "cuda", fp16: bool = False):
+        import torch
+        import yaml
+
+        from vision.pnlcalib.cls_hrnet import get_cls_net
+        from vision.pnlcalib.cls_hrnet_l import get_cls_net as get_cls_net_l
+
+        here = Path(__file__).parent / "pnlcalib"
+        kp_file, line_file = pnl_weight_files(prefix)
+        self.nets = []
+        for build, cfg, weights in [
+            (get_cls_net, "hrnetv2_w48.yaml", kp_file),
+            (get_cls_net_l, "hrnetv2_w48_l.yaml", line_file),
+        ]:
+            net = build(yaml.safe_load((here / cfg).read_text()))
+            net.load_state_dict(torch.load(Path(weights_dir) / weights, map_location=device))
+            self.nets.append(net.to(device).eval())
+        self.device, self.fp16 = device, fp16
+
+    def detect(self, image: np.ndarray) -> CalibPeaks:
+        import torch
+        import torchvision.transforms.functional as F
+
+        from vision.calib import NET_H, NET_W
+        from vision.pnlcalib.utils_heatmap import (
+            get_keypoints_from_heatmap_batch_maxpool,
+            get_keypoints_from_heatmap_batch_maxpool_l,
+        )
+
+        # as upstream's inference: RGB, 0-1, resized to the nets' 960 x 540
+        x = F.to_tensor(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)).unsqueeze(0)
+        if x.shape[-1] != NET_W:
+            x = F.resize(x, [NET_H, NET_W])
+        x = x.to(self.device)
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=self.fp16):
+            heat_kp, heat_lines = (net(x).float() for net in self.nets)
+        # last channel is background
+        kp = get_keypoints_from_heatmap_batch_maxpool(heat_kp[:, :-1])
+        lines = get_keypoints_from_heatmap_batch_maxpool_l(heat_lines[:, :-1])
+        return CalibPeaks(
+            kp[0, :, 0].numpy().astype(np.float64), lines[0].numpy().astype(np.float64)
+        )
 
 
 class KitColorTeams:
