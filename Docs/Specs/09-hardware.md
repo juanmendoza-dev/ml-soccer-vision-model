@@ -141,7 +141,7 @@ These are unmeasured estimates for a 2060 with FP16 TensorRT exports. Plain PyTo
 | 0. View gate | Every frame, CPU; skips everything below on ads/studio/close-ups | ~1 ms |
 | 1. Player detection | YOLOv8s at 640–960, every 2nd–3rd frame | ~5–10 ms |
 | 5. Ball detection | Small model at higher resolution, or tiled crops near the last ball position | ~10–25 ms; the most expensive stage |
-| 4. Pitch calibration (PnLCalib, 03) | 1–2 calls a second on its own worker, the frame loop holds the last accepted camera | Measured in PyTorch: 185 ms GPU per call in fp16 autocast plus ~60 ms CPU voting, so 20–40% of the GPU at 1–2 Hz. Needs TensorRT or a smaller input; every 5th frame (offline) would be ~1.5 s of GPU a second |
+| 4. Pitch calibration (PnLCalib, 03) | ≥ 3 calls a second on its own worker, plus pitch tracking between calls: holding the last camera at 1–2 Hz drops within 2 m from 90% to 66–80% (bench review 2026-10-02) | Measured in PyTorch: 185 ms GPU per call in fp16 autocast plus ~60 ms CPU voting, so ≥ 55% of the GPU at 3 Hz. Needs TensorRT or a smaller input; every 5th frame (offline) would be ~1.5 s of GPU a second |
 | 2. Tracking (ByteTrack) | Every frame, CPU | < 2 ms |
 | 3. Team assignment | Fit during a warmup window, then classify only new tracks | Occasional SigLIP batch |
 | 6. Jersey OCR | Separate async worker, low rate, outside the main loop | Doesn't count against the frame budget |
