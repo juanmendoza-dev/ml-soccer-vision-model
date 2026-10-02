@@ -25,6 +25,8 @@ vision = [
     "supervision>=0.21,<0.31",  # ByteTrack is removed in 0.31
     "opencv-python>=4.9",
     "lightgbm>=4.3",  # learned possession (vision.possession_model)
+    "shapely>=2.0",  # vision/pnlcalib (stage 4)
+    "scipy>=1.11",  # vision/pnlcalib: least_squares in the camera voting
 ]
 dev = ["pytest>=8", "ruff>=0.5"]
 
@@ -45,6 +47,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["gamestate*", "vision*", "converters*", "profiles*", "prediction*", "evaluation*", "demo*"]
 
+[tool.setuptools.package-data]
+vision = ["pnlcalib/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
@@ -52,3 +57,4 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["vision/pnlcalib"]  # vendored upstream code, kept as is
