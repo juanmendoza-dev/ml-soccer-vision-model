@@ -1,6 +1,6 @@
 """Stage 0: is this frame a usable match view? (03)
 
-Grass share every frame, keypoint count when stage 4 ran, hysteresis in seconds.
+Grass share every frame, stage 4's pitch check when it ran, hysteresis in seconds.
 Causal: decides from frames <= t only.
 """
 
@@ -28,14 +28,14 @@ class ViewGate:
         self._streak_start: float | None = None  # when the current opposite streak began
         self.last_change_t: float | None = None
 
-    def passes(self, grass: float, keypoints_found: int | None) -> bool:
-        if grass < self.config.min_grass:
-            return False
-        return keypoints_found is None or keypoints_found >= self.config.min_keypoints
+    def passes(self, grass: float, pitch_ok: bool | None) -> bool:
+        """pitch_ok: stage 4's last verdict (enough keypoints, or an accepted camera, by
+        backend); None while stage 4 hasn't run in this view."""
+        return grass >= self.config.min_grass and pitch_ok is not False
 
-    def update(self, t: float, grass: float, keypoints_found: int | None = None) -> str:
+    def update(self, t: float, grass: float, pitch_ok: bool | None = None) -> str:
         """Feed one frame; returns the view after hysteresis."""
-        ok = self.passes(grass, keypoints_found)
+        ok = self.passes(grass, pitch_ok)
         if ok == (self.view == MATCH):
             self._streak_start = None
             return self.view

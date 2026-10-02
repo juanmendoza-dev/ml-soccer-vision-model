@@ -23,10 +23,10 @@ def test_grass_share():
     assert 0.45 < grass_share(half) < 0.55
 
 
-def run(gate, seconds, grass, fps=10, start=0.0, keypoints=None):
+def run(gate, seconds, grass, fps=10, start=0.0, pitch_ok=None):
     views = []
     for i in range(round(seconds * fps)):
-        views.append(gate.update(start + i / fps, grass, keypoints))
+        views.append(gate.update(start + i / fps, grass, pitch_ok))
     return views
 
 
@@ -47,5 +47,5 @@ def test_keypoints_veto_green_frames():
     gate = ViewGate(VisionConfig())
     run(gate, 2.0, grass=0.8)
     assert gate.view == MATCH
-    # green close-up: grass passes but only 2 keypoints found
-    assert run(gate, 1.0, grass=0.8, start=2.0, keypoints=2)[-1] == OTHER
+    # green close-up: grass passes but stage 4 finds no pitch
+    assert run(gate, 1.0, grass=0.8, start=2.0, pitch_ok=False)[-1] == OTHER

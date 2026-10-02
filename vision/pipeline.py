@@ -10,6 +10,7 @@ from typing import Protocol
 
 import numpy as np
 
+from vision.calib import accept, camera_fit, camera_from_peaks
 from vision.config import VisionConfig
 from vision.pitch import HomographyFilter, fit_homography, on_pitch, project, template, to_02
 from vision.types import (
@@ -19,6 +20,8 @@ from vision.types import (
     OTHER,
     PLAYER,
     Box,
+    CalibCall,
+    CalibPeaks,
     Detection,
     KeypointCall,
     Keypoints,
@@ -40,7 +43,9 @@ class Tracker(Protocol):
 
 
 class KeypointModel(Protocol):
-    def detect(self, image: np.ndarray) -> Keypoints: ...
+    """Stage 4: roboflow keypoints, or PnLCalib's peaks (config.calib_backend)."""
+
+    def detect(self, image: np.ndarray) -> Keypoints | CalibPeaks: ...
 
 
 class TeamAssigner(Protocol):
@@ -94,9 +99,9 @@ class VisionPipeline:
         self._match_seconds = 0.0
         self._last_t: float | None = None
         self._n = 0  # frames seen, match or not
-        # Last keypoint count, held until the next keypoint frame so the gate sees
+        # Stage 4's last pitch check, held until it runs again so the gate sees
         # failures between samples (a green close-up has grass but no pitch lines)
-        self._kp_seen: int | None = None
+        self._pitch_ok: bool | None = None
 
     def _reset_segment(self) -> None:
         self._steps = 0  # frames since the view became match
@@ -137,6 +142,7 @@ class VisionPipeline:
         n = self._n
         self._n += 1
         self._kp_calls: list[KeypointCall] = []
+        self._calib_calls: list[CalibCall] = []
 
         kp_found = None
         h_err = None
@@ -148,9 +154,9 @@ class VisionPipeline:
             kp_found, h_err = self._keypoints(image, t, use=in_match)
 
         before = self.gate.view
-        view = self.gate.update(t, grass, self._kp_seen)
+        view = self.gate.update(t, grass, self._pitch_ok)
         if view != before:
-            self._kp_seen = None  # the other view's sample says nothing about this one
+            self._pitch_ok = None  # the other view's sample says nothing about this one
         if before == MATCH and view == OTHER:
             self._off_since = t
         if view == OTHER:
@@ -164,6 +170,7 @@ class VisionPipeline:
                 None,
                 None,
                 keypoint_calls=self._kp_calls,
+                calib_calls=self._calib_calls,
             )
         if before == OTHER:
             self._enter_match(t)
@@ -236,6 +243,7 @@ class VisionPipeline:
             objects,
             ball,
             self._kp_calls,
+            self._calib_calls,
         )
 
     # --- homography (stage 4) --------------------------------------------
@@ -245,10 +253,12 @@ class VisionPipeline:
         only used (use=True, match view) when enough of it survives RANSAC with a
         small error, and then only if it agrees with the one in use (HomographyFilter)."""
         cfg = self.config
+        if cfg.calib_backend == "pnlcalib":
+            return self._calibrate(image, t, use)
         kp = self.stages.keypoints.detect(image)
         self._kp_calls.append(KeypointCall(t, use, self._segment, kp))
         fit = fit_homography(kp.xy, kp.conf, cfg.min_keypoint_conf, cfg.ransac_m, self.pitch)
-        self._kp_seen = fit.n_confident
+        self._pitch_ok = fit.n_confident >= cfg.min_keypoints
         if (
             use
             and fit.H is not None
@@ -257,6 +267,22 @@ class VisionPipeline:
         ):
             self.homography.offer(fit, t)
         return fit.n_confident, fit.err_m
+
+    def _calibrate(self, image: np.ndarray, t: float, use: bool) -> tuple[int, None]:
+        """Stage 4 with PnLCalib (03 Pitch calibration). The gate passes on an accepted
+        camera; a rejected or missing one leaves the camera in use to age out in the filter."""
+        cfg = self.config
+        size = (image.shape[1], image.shape[0])
+        peaks = self.stages.keypoints.detect(image)
+        cam, n_kp, n_lines = camera_from_peaks(
+            peaks, size, cfg.pnl_kp_threshold, cfg.pnl_line_threshold
+        )
+        self._calib_calls.append(CalibCall(t, use, self._segment, size, peaks, cam, n_kp, n_lines))
+        fit = camera_fit(cam, size, n_kp, cfg.max_off_pitch_m) if accept(cam, cfg) else None
+        self._pitch_ok = fit is not None
+        if use and fit is not None:
+            self.homography.offer(fit, t)
+        return n_kp, None  # the error is in pixels, in camera.parquet, not homography_err_m
 
     # --- tracking --------------------------------------------------------
 
