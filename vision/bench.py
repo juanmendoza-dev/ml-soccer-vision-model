@@ -374,21 +374,30 @@ class Clip:
             )
         vision_gs = gamestate_dir / clip["clip_id"]
         self.inputs = replay.load(self.cache, vision_gs)
+        self.balls = replay.load_balls(
+            self.cache
+        )  # None: a run before balls.parquet, no ball score
         self.fps = pl.read_parquet(vision_gs / "match.parquet")["native_fps"][0]
         self.pff = gamestate_dir / clip["match_id"] if clip["match_id"] is not None else None
         self._check_replay()
 
     def _check_replay(self) -> None:
         """Every score is a replay, so the run config's replay must be what the run wrote."""
-        det, _ = replay.replay(*self.inputs, self.config)
+        det, _ = replay.replay(*self.inputs, self.config, balls=self.balls)
         cols = ["frame_id", "object_id", "pitch_x", "pitch_y", "homography_ok", "team_cluster"]
+        ball_cols = [*cols[:4], "x1", "y1", "x2", "y2", "det_confidence", "tracked_only"]
 
-        def people(d):
-            return d.filter(pl.col("class") != BALL).select(cols).sort("frame_id", "object_id")
+        def rows(d, ball):
+            d = d.filter((pl.col("class") == BALL) == ball)
+            return d.select(ball_cols if ball else cols).sort("frame_id", "object_id")
 
         cached = pl.read_parquet(self.cache / "detections.parquet")
-        if not people(det).equals(people(cached)):
-            raise SystemExit(f"{self.clip['clip_id']}: replay doesn't reproduce the run's cache")
+        for ball in [False] if self.balls is None else [False, True]:
+            if not rows(det, ball).equals(rows(cached, ball)):
+                what = "ball" if ball else "people"
+                raise SystemExit(
+                    f"{self.clip['clip_id']}: replay doesn't reproduce the run's cache ({what})"
+                )
 
     def score(self, sets: list[str], offset_check: bool = False, revote: bool = False) -> dict:
         det, frames = replay.replay(
@@ -396,6 +405,7 @@ class Clip:
             replay.with_overrides(self.config, sets),
             revote,
             run_every=self.config.keypoints_every,
+            balls=self.balls,
         )
         return score_clip(
             self.clip,

@@ -4,8 +4,9 @@
 
 No detector or keypoint model runs: the stage 4 cache (keypoints.parquet, or camera.parquet
 for PnLCalib runs) has every stage 4 call and the detections cache every box, so a threshold
-sweep takes seconds. With the run's own config the output matches the detections cache
-(people exactly; the ball only where it was detected, extrapolated rows are dropped).
+sweep takes seconds. With the run's own config the output matches the detections cache:
+people exactly, and the ball exactly when the run wrote balls.parquet (stage 5 is rerun from
+its candidates). Older runs keep only their detected ball rows, reprojected.
 
 PnLCalib runs replay from the cached cameras; --revote votes them again from the cached peaks
 on CPU, so pnl_kp_threshold / pnl_line_threshold can be swept (03 Diagnostics).
@@ -19,10 +20,12 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from vision.ball import BallTrack
 from vision.calib import accept, camera_fit, camera_from_peaks
 from vision.config import VisionConfig
 from vision.pitch import HomographyFilter, fit_homography, on_pitch, project, template, to_02
-from vision.types import BALL, GOALKEEPER, MATCH, PLAYER, CalibPeaks, Camera
+from vision.types import BALL, GOALKEEPER, MATCH, PLAYER, CalibPeaks, Camera, Detection
+from vision.writer import DETECTIONS_SCHEMA
 
 
 def run_config(cache: Path) -> VisionConfig:
@@ -151,12 +154,16 @@ def replay(
     config: VisionConfig,
     revote: bool = False,
     run_every: int | None = None,
+    balls: pl.DataFrame | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """(detections with pitch_x / pitch_y / homography_ok / keeper team_cluster redone,
     one row per frame: frame_id, view, homography_ok). keypoints is the stage 4 cache of
-    either backend (load())."""
+    either backend (load()). With balls (load_balls()), the ball rows are stage 5 rerun."""
     hs = frame_homographies(keypoints, views, times, config, revote, run_every)
-    det = detections.filter(~((pl.col("class") == BALL) & pl.col("tracked_only")))
+    if balls is None:
+        det = detections.filter(~((pl.col("class") == BALL) & pl.col("tracked_only")))
+    else:
+        det = detections.filter(pl.col("class") != BALL)
     xs, ys = [], []
     for cls, x1, y1, x2, y2, frame_id in det.select(
         "class", "x1", "y1", "x2", "y2", "frame_id"
@@ -180,12 +187,86 @@ def replay(
         ),
     )
     det = _goalkeeper_clusters(det)
+    if balls is not None:
+        det = pl.concat([det, replay_ball(balls, views, times, hs, config)]).sort(
+            "frame_id", maintain_order=True
+        )
     frames = views.select("frame_id", "view").with_columns(
         homography_ok=pl.col("frame_id").replace_strict(
             {f: H is not None for f, H in hs.items()}, return_dtype=pl.Boolean
         )
     )
     return det, frames
+
+
+def replay_ball(
+    balls: pl.DataFrame,
+    views: pl.DataFrame,
+    times: dict[int, float],
+    hs: dict[int, np.ndarray | None],
+    config: VisionConfig,
+) -> pl.DataFrame:
+    """Stage 5 rerun from balls.parquet: the ball rows of the detections cache. Segments and
+    detection frames follow the view, as in VisionPipeline.step."""
+    by_frame: dict[int, list[Detection]] = {}
+    for frame_id, x1, y1, x2, y2, conf in balls.select(
+        "frame_id", "x1", "y1", "x2", "y2", "det_confidence"
+    ).iter_rows():
+        by_frame.setdefault(frame_id, []).append(Detection((x1, y1, x2, y2), BALL, conf))
+    track = BallTrack(config)
+    rows = []
+    segment, step, before = -1, 0, None
+    for match_id, frame_id, view in (
+        views.select("match_id", "frame_id", "view").sort("frame_id").iter_rows()
+    ):
+        if view != MATCH:
+            before = view
+            continue
+        if before != MATCH:
+            segment, step = segment + 1, 0
+            track.reset()
+        before = view
+        detect_now = step % config.detect_every == 0
+        step += 1
+        H = hs[frame_id]
+
+        def to_pitch(px, H=H):
+            if H is None:
+                return None, None
+            xy = to_02(project(H, [px]), config.home_attacks_tv_right_p1)[0]
+            if not on_pitch(xy, config.max_off_pitch_m):
+                return None, None
+            return float(xy[0]), float(xy[1])
+
+        b = track.update(
+            times[frame_id],
+            by_frame.get(frame_id, []) if detect_now else [],
+            to_pitch,
+            H is not None,
+        )
+        if b is None:
+            continue
+        x1, y1, x2, y2 = b.box
+        rows.append(
+            {
+                "match_id": match_id,
+                "frame_id": frame_id,
+                "object_id": f"{segment}-ball",
+                "class": BALL,
+                "team_cluster": None,
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+                "det_confidence": None if b.interpolated else b.confidence,
+                "tracked_only": b.interpolated,
+                "pitch_x": b.x,
+                "pitch_y": b.y,
+                "homography_ok": H is not None,
+                "homography_err_m": None,
+            }
+        )
+    return pl.DataFrame(rows, schema=DETECTIONS_SCHEMA)
 
 
 def _goalkeeper_clusters(det: pl.DataFrame) -> pl.DataFrame:
@@ -239,6 +320,12 @@ def load(cache: Path, gamestate: Path) -> tuple[pl.DataFrame, pl.DataFrame, pl.D
     )
 
 
+def load_balls(cache: Path) -> pl.DataFrame | None:
+    """balls.parquet, or None for runs before it (03 Diagnostics)."""
+    path = cache / "balls.parquet"
+    return pl.read_parquet(path) if path.exists() else None
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="vision.replay")
     ap.add_argument("--match-id", required=True)
@@ -255,7 +342,14 @@ def main(argv: list[str] | None = None) -> None:
     det, keypoints, views, times = load(cache, args.gamestate_dir / args.match_id)
     _, before = replay(det, keypoints, views, times, base)
     out, after = replay(
-        det, keypoints, views, times, config, args.revote, run_every=base.keypoints_every
+        det,
+        keypoints,
+        views,
+        times,
+        config,
+        args.revote,
+        run_every=base.keypoints_every,
+        balls=load_balls(cache),
     )
     n_match = after.filter(pl.col("view") == MATCH).height
     for name, frames in [("run config", before), ("replayed", after)]:

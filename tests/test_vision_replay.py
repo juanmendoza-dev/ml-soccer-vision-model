@@ -22,7 +22,7 @@ from test_vision_pipeline import (
 from vision import replay
 from vision.config import VisionConfig
 from vision.pipeline import Stages, VisionPipeline
-from vision.types import BALL, GOALKEEPER, MATCH
+from vision.types import BALL, GOALKEEPER, MATCH, Detection
 from vision.writer import GameStateWriter
 
 
@@ -70,6 +70,36 @@ def test_run_config_reproduces_the_cache(tmp_path, keypoints):
     )
     joined = frames.join(polygon, on="frame_id")
     assert joined.height == 100 and (joined["homography_ok"] == joined["ok"]).all()
+
+
+class WeakBallDetector(FakeDetector):
+    """Adds a ball candidate under min_det_conf: the cache keeps it, stage 5 doesn't pick it."""
+
+    def detect(self, image):
+        return [*super().detect(image), Detection((5, 5, 15, 15), BALL, 0.2)]
+
+
+@pytest.mark.parametrize(
+    "keypoints", [FakeKeypoints, lambda: GlitchKeypoints(bad_call=5)], ids=["clean", "glitch"]
+)
+def test_ball_replays_exactly_from_the_candidates(tmp_path, keypoints, monkeypatch):
+    import test_vision_replay
+
+    monkeypatch.setattr(test_vision_replay, "FakeDetector", WeakBallDetector)
+    cache, gs = synth_run(tmp_path, keypoints(), CONFIG)
+    cols = ["frame_id", "object_id", "pitch_x", "pitch_y", "x1", "y1", "x2", "y2"]
+    cols += ["det_confidence", "tracked_only"]
+
+    def ball(d):
+        return d.filter(pl.col("class") == BALL).select(cols).sort("frame_id")
+
+    cached = pl.read_parquet(cache / "detections.parquet")
+    balls = replay.load_balls(cache)
+    assert balls is not None and (balls["det_confidence"] == 0.2).any()
+    det, _ = replay.replay(*replay.load(cache, gs), replay.run_config(cache), balls=balls)
+    assert ball(det).equals(ball(cached))
+    assert ball(cached)["tracked_only"].sum() > 0  # extrapolated rows are covered too
+    assert ball(cached)["object_id"].n_unique() == 2  # a new ball id after the ad
 
 
 def test_run_json_without_the_circle_field_replays_as_9_15(tmp_path):
