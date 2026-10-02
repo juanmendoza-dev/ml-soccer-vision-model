@@ -89,3 +89,17 @@ These are per crop; per-track votes come on top.
 - **The template isn't the main cause.** Even moved to measured positions on the same clip, the median stays at 1.75 m, against 0.52 m once each frame's affine is removed. Each landmark wanders about 1 m from frame to frame (the spread column), and a free 8-parameter fit on ~8 such points bends the pitch differently on each frame.
 - Points 18/19 are erratic (6–7 m off, wide spread): likely confused with another landmark on far-side views.
 - One clip, and the 31/32 offset was measured on it: confirm on a second clip before changing the template. The PFF players' fit is itself a ruler with ~0.5 m noise and extrapolates near the goal line; the right-end offsets (+1–2 m in x) may be partly that.
+
+## Fix 2, step a applied: 31/32 at ±7.2 m (2026-10-01, candidate)
+03 Pitch template: 31/32 now sit at `(∓circle_kp_x_m, 0)`, default 7.2 m, where the model puts them. It's a `VisionConfig` value, so it goes into `run.json` and the replay check still holds; a `run.json` without it ran on 9.15 (vb01's run). `scripts/keypoint_check.py` now measures against the real landmarks (31/32 at 9.15) whatever the config says, so the next clip's table reads like the one above (rerun on vb01: same numbers).
+
+`python -m vision.bench --clip vb01-arg-fra --grid circle_kp_x_m=9.15,7.2`:
+
+| circle_kp_x_m | Within 2 m | Median / p90 | With geometry: within 2 m, median | Rejected | Unmatched / frame |
+|---|---|---|---|---|---|
+| 9.15 (vb01's run) | 14.0% | 2.81 / 4.43 m | 17.8%, 2.81 m | 10.1% | 4.37 |
+| 7.2 (new default) | 20.9% | 2.43 / 4.24 m | 26.5%, 2.43 m | 10.1% | 3.87 |
+
+- Same as the monkeypatched replay above, so the wiring is right.
+- Still a candidate: measured and scored on the same clip. Confirm on clip 2 (NED–ARG, 10511) with `keypoint_check` (do 31/32 sit near ±7.2 again?) and the bench grid.
+- Far from the 90% target either way: the per-frame fit is the bigger problem (step b, PTZ camera model).
