@@ -1,6 +1,11 @@
 """Ball labels for the vision bench (07 Ball labels): click the ball on every 5th frame.
 
     PYTHONPATH=. python scripts/ball_click.py --clip vb02-ned-arg
+    PYTHONPATH=. python scripts/ball_click.py --clip vb02-ned-arg --frames 240-280,1505-1590   # fix some
+
+Only click a ball you can see. If you can't see it (in the air against the crowd, hidden
+in a group of players, off screen), press space; if you can't tell, press u. Don't click
+where it probably is: a guess scores vision against a ball that isn't in the image.
 
 First run per clip decodes the video once, in order (no seeking: it can land on the wrong
 frame), and saves the frames to label as JPGs under data/vision_bench/ball_frames/<clip>/.
@@ -84,6 +89,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--clip", required=True)
     ap.add_argument("--scale", type=float, default=0.85, help="window size vs 1080p")
     ap.add_argument("--labels", type=Path, default=bench.BALL_LABELS)
+    ap.add_argument(
+        "--frames", help="step through only these source frames, to fix labels: 240-280,1060"
+    )
     args = ap.parse_args(argv)
 
     clip = next((c for c in bench.load_manifest(bench.MANIFEST) if c["clip_id"] == args.clip), None)
@@ -110,6 +118,12 @@ def main(argv: list[str] | None = None) -> None:
         bench.save_ball_labels(all_labels, args.labels)
 
     pos = next((k for k, i in enumerate(idx) if i not in labels), len(idx) - 1)
+    if args.frames:
+        spans = [[int(v) for v in part.split("-")] for part in args.frames.split(",")]
+        idx = [i for i in idx if any(sp[0] <= i <= sp[-1] for sp in spans)]
+        if not idx:
+            raise SystemExit("none of --frames are frames to label (every 5th, outside marks)")
+        pos = 0
     mouse = [None]
     s = args.scale
     flick = False
