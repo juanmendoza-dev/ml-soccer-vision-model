@@ -9,7 +9,7 @@ class VisionConfig:
     min_grass: float = 0.3  # share of green pixels for a match view
     min_keypoints: int = 4  # roboflow: fewer than this (when stage 4 runs) -> other
     off_after_s: float = 0.5  # failing this long -> other
-    on_after_s: float = 1.0  # passing this long -> match
+    on_after_s: float = 0.5  # passing this long -> match (bench 2026-10-02: was 1.0)
     refit_teams_after_s: float = 120.0  # break longer than this -> refit teams
 
     # Stage 1-2: detection and tracking

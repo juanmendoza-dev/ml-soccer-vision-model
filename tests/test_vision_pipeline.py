@@ -33,7 +33,8 @@ from vision.writer import GameStateWriter
 
 def rf_config(**kw) -> VisionConfig:
     """These fakes are roboflow keypoints; PnLCalib's are in test_vision_calib."""
-    return VisionConfig(**{"calib_backend": "roboflow", **kw})
+    # the synthetic clips' timings (gate on after 1 s) were written for on_after_s 1.0
+    return VisionConfig(**{"calib_backend": "roboflow", "on_after_s": 1.0, **kw})
 
 
 FPS = 10
