@@ -163,7 +163,7 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 - [ ] Ball: reset on camera cuts, temporal candidate association instead of max confidence (F8, detection review D2/W2). The sensitivity test puts the ball second after geometry (misses −0.014 per 10% of time), so this is on. Targets: recall ≥ 90%, precision ≥ 95%
 - [ ] Per-stage timings + effective model settings in `run.json` (03)
 - [ ] Run roboflow/sports end to end on a SoccerNet sample clip as a reference
-- [ ] Tune the stage 0 thresholds on broadcast clips with ads and studio cuts (`view.parquet`, 03)
+- [ ] Tune the stage 0 thresholds on broadcast clips with ads and studio cuts (`view.parquet`, 03) **2026-10-02: `on_after_s` 1.0 → 0.5 on the bench (view `other` vb01 10.6 → 5.4%, vb02 6.7 → 3.5%, false live unchanged, pooled within 2 m 90.0 → 92.0%; `Docs/reviews/pnlcalib-bench-2026-10-02.md`). Left: `min_grass` and `off_after_s` need clips with ads and studio cuts; the bench has only close-ups**
 
 **5. Small cleanups**
 - [ ] 03: header omits `events.parquet` (the v0.4 → 0.6 part fixed 2026-09-30); points 31/32 aren't on the halfway line

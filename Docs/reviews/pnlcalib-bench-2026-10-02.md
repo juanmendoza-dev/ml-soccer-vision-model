@@ -51,3 +51,20 @@ Holding a camera between calls costs a lot once the camera pans: 1 Hz loses a qu
 - **vb02 keepers 63.8%** (roboflow 61.3%): assignment by mean x, not geometry.
 - **Live rate:** see above. 09's row now has numbers.
 - **More stadiums:** the WC14 pick and these defaults are tuned on three clips at two stadiums. The geometry-only clips (2014/2018) are next.
+
+## Gate `on_after_s` (2026-10-02, later)
+The 1 s wait before going back to `match` after a close-up was the largest loss left. Fresh runs (replay doesn't simulate the gate) on vb01 and vb02 with `--set on_after_s=0.5` (new `vision.run --set`), scored by `vision.bench`.
+
+| | `on_after_s` 1.0 | 0.5 |
+|---|---|---|
+| vb01 view `other` / within 2 m | 10.6% / 86.2% | **5.4% / 90.0%** |
+| vb02 | 6.7% / 87.8% | **3.5% / 90.8%** |
+| False live vb01 / vb02 | 0.1 / 0.2 s | 0.1 / 0.2 s |
+| Back to `match` after each mark | 1.00–1.13 s | 0.50–0.63 s |
+
+- **Per mark (`view.parquet`):** on all 8 close-ups the only match-view time inside the mark is the 0.47–0.63 s off-lag at its start, the same as at 1.0. No mark re-enters `match`, so no close-up gets through. All unmarked `other` time is now the on-lag: 2.6 s on vb01 (was 5.1), 1.6 s on vb02 (was 3.1).
+- **Picked 0.5:** the lowest value allowed, and it passes the rule (false live ≤ 0.5 s per clip, no mark let through). 0.7 wasn't run: it can't beat 0.5 under the rule. 8 close-ups on 2 clips is a small sample, so it doesn't go lower. A close-up with a lucky camera would need 0.5 s of accepted probes (3 in a row at every 5th frame); 1 of 98 close-up frames had one.
+- **Default now.** All three clips rerun on the new defaults (vb03 too, for the ball cache; it has no cuts and gives the same 94.4%). Pooled: **within 2 m 92.0%** (from 90.0%), median 0.59 m, geometry missing **3.2%** (view `other` 2.7%, rejected 0.4%). The bench now scores these runs without `--set` overrides.
+- These runs also write `balls.parquet` (every ball candidate, 03 Diagnostics), so the ball work replays on CPU. The bench's replay check now covers the ball rows too, and passes on all three.
+- **Run speed:** two runs at once on the 2060 filled its 6 GB, spilled to shared memory and took 67 min each (0.1–0.5 fps). One at a time: 3.1 fps. Run them one after another.
+- `run.json`'s `git_commit` is stamped when the run closes, so vb01/vb02 show a commit from after they started. The pipeline code didn't change in between (only the bench and docs).
