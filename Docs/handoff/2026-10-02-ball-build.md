@@ -31,7 +31,8 @@ You're picking up the ball work in the Soccer Goal Predictor repo (`C:\Users\sup
 - **Numbers to reproduce** (review, R1):
   - vb02 good clicks within 25 px of the projection: **84.4%** (147 frames, median 11.9 px);
   - label frames by kind: vb01 197 pff / 93 estimated; vb02 170 / 110; vb03 340 / 2 / 18 no camera;
-  - stage 5 verdict agreement with clicks at 40 px: 95.2%.
+  - stage 5 verdict agreement with clicks at 40 px: 92.5% with per-frame cameras (95.2% with the run's interpolated camera);
+  - auto-accept on vb02: 82 of 147 `pff` frames, 81 within 15 px of the click.
 - **Bad vb02 labels** ("good" excludes them): 240–280 (specks), 575–610 (trailing), plus guesses at 1060–1080, 1505–1590, 1610–1650, 1665–1690, 1705–1725.
 - **Picker replay** (review, R2 table): today's rule 70.2% recall / 73.6% precision on PFF at 25 px, 82.7% / 87.9% on the good clicks. Gate + size + 2 m margin: 72.0 / 74.5 and 85.5 / 90.0.
 - **Don't run two `vision.run`s at once on the 2060** (6 GB; 67 min instead of ~10). The same goes for any GPU job next to a run.

@@ -74,7 +74,7 @@ ESTIMATED runs inside live wide play (view `match`):
 | vb02 | 10 | 7.6 s (920–1148, z up to 6.8 m) | a long aerial phase with headers; 752–792 a **grounded** ball PFF lost (z 0.3) |
 | vb03 | 1 | 0.3 s | nothing airborne in this minute |
 
-Looked at by eye (overlays in the scratchpad):
+Looked at by eye (overlays drawn on the extracted label frames; source frame numbers):
 - **vb02 1000:** the ball at a header, plainly visible, ESTIMATED, estimate 42 px off.
 - **vb02 760:** a grounded ball rolling clear, ESTIMATED, estimate 132 px off.
 - **vb02 1520:** a lofted ball against the crowd, estimate ~50 px from a white blob that may be the ball. The click there was a guess 247 px away.
@@ -117,7 +117,9 @@ ESTIMATED positions are interpolated with later frames (05, Leakage). That's fin
 | 25 px | 79.6% | 70.1% | 87.8% |
 | 40 px | 79.6% | 77.6% | 95.2% |
 
-At 40 px PFF reads 2 pt low. At 25 px, 10 pt low. A truth that moves recall by 2–10 pt can't decide a 90% target. It can rank two settings scored on the same frames, since the error is the same for both.
+At 40 px PFF reads 2 pt low. At 25 px, 10 pt low.
+
+With a camera solved on each frame (what the spec builds), it's 92.5% at 40 px (recall 76.2 vs 79.6%), and 87.8% at 25 px. A truth that moves recall by 2–10 pt can't decide a 90% target. It can rank two settings scored on the same frames, since the error is the same for both.
 
 ### Bad labels it finds
 VISIBLE frames where the click is more than 30 px from PFF's projection (32 of 170):
@@ -135,6 +137,18 @@ Suggestion: the candidate nearest PFF's projection within 40 px, at any confiden
 - **Frames with a suggestion:** vb01 132 of 290 label frames, vb02 134 of 280, vb03 287 of 360.
 
 The rest needs a click or "none". With today's detector, about half the frames become one key press. A better detector raises that, since the suggestion is only as good as the candidates.
+
+**Auto-accept.** Some suggestions are safe without a look. The rule: confidence ≥ 0.5, within 15 px of PFF's projection, no other candidate within 40 px.
+- **On vb02's good VISIBLE clicks:** 82 of 147 qualify. 81 of them are within 15 px of the click (median 3.8 px, 97.6% within 10 px); the other is 18 px.
+- **Frames that still need a person:**
+
+| Clip | Label frames | Auto-accepted | Left |
+|---|---|---|---|
+| vb01 | 290 | 54 | 236 |
+| vb02 | 280 | 93 | 187 |
+| vb03 | 360 | 234 | 126 |
+
+On the frames left, half of the `pff` suggestions take one key press. The number left shrinks as the detector improves.
 
 ### Verdict
 - **No.** PFF projected can't be the main truth for the targets:
@@ -154,6 +168,7 @@ Our ball model: roboflow/sports' `football-ball-detection.pt`, **YOLOv8x trained
 
 **Ceiling: is there any candidate near the ball?** The run's `balls.parquet` (conf ≥ 0.1) has a candidate within 25 px of PFF's projection on 70.4% of PFF-VISIBLE label frames (vb01 54%, vb02 69%, vb03 80%).
 - PFF's bias pulls this down, most on vb01. With the local bias correction it's 65.5 / 77.1 / 84.1%.
+- **The same holds on the clicks.** On vb02's 220 good clicks, a candidate is within 15 px on 85.5% (≥ 0.3: 81.4%), against stage 5's 82.7% recall. So the picker is close to what the candidates allow, on clean truth too.
 - **Misses seen by eye:**
   - balls at a player's feet (vb01 2695, vb02 835);
   - a ball at a player's knee (vb03 8310: the model's top pick is a spare ball by the touchline at 0.50);
@@ -176,6 +191,13 @@ Our ball model: roboflow/sports' `football-ball-detection.pt`, **YOLOv8x trained
 | gate + size + 2 m margin | **72.0%** | **74.5%** | 55.3 / 70.6 / 82.4% | **85.5% / 90.0%** |
 
 - **The picker is worth 1–3 pt.** The gate is the best rule on both truths, and its settings barely matter.
+- **Airborne balls.** The off-pitch and size filters and the pitch-space gate work through the ground homography, so an airborne ball sits too far out. They were checked on the 73 good vb02 clicks on PFF-ESTIMATED (mostly aerial) frames. Recall/precision there:
+  - `"max"` 89.0 / 91.5%;
+  - gate 91.8 / 91.8%;
+  - size or margin alone 90.4 / 90.4%;
+  - all three 91.8 / 91.8%.
+
+  No loss on this sample. The highest balls are in vb02's guessed ranges, though, so 10-ball's adoption rule also requires no loss on verified ESTIMATED frames.
 - **Recall can't pass the ceiling,** and the ceiling is the detector.
 - **Precision against PFF is low partly because of PFF's bias.** Against the clicks it's 88–90%.
 
