@@ -42,7 +42,18 @@ For clips with a `match_id`. Built once per clip, cached in `data/vision_bench/b
   - A frame with no suggestion needs a click or a key, as now.
   - Labels are what the person chose. The suggestion is never saved unless accepted.
 - **`--flag`:** the label frames where a saved `[x, y]` is more than 30 px from a `pff` projection, or a `"none"` falls on a `pff` frame with a candidate within 25 px of it. Opened like `--frames`, for a second look. On vb02's first pass this lists the speck clicks (240–280), the trailing clicks (580–610), 665, 1670, 1685, 1750, plus PFF's bias stretches (710–915, 1205–1215), where the click is right. So a flag is a prompt, never an automatic rejection.
-- **Expected effort:** with today's candidates the suggestion is right on ~53% of `pff` frames and 26% of `estimated` ones. It rises with the detector.
+- **Auto-accept (`--assist`, on by default):** a `pff` frame is labeled without being shown when its suggestion:
+  - has confidence ≥ 0.5;
+  - is within 15 px of the projection;
+  - has no other candidate within 40 px of the projection.
+
+  Saved as `[x, y]` at the candidate's box center, listed in the label file's per-clip `auto` list (source frame indices) so it can be told apart and redone.
+  - Measured on vb02's good clicks: 82 of 147 `pff` frames qualify, and 81 are within 15 px of the click (median 3.8 px; the other one is 18 px).
+  - **Spot check:** the tool shows a random 10% of auto-accepted frames for a normal decision, and reports the share changed. Above 3%, auto-accept is off for that clip.
+- **Expected effort, today's candidates:**
+  - frames left for a person: vb01 236 of 290, vb02 187 of 280 (already labeled; only the flags need a look), vb03 126 of 360;
+  - on those, the suggestion is right on ~53% of `pff` frames and 26% of `estimated` ones (one key press);
+  - it all improves with the detector, so relabel after step 5 costs less.
 
 ### 1d. Scores (07)
 - **Ball score:** on verified labels, as in 07 now (R = 15 px, recall, precision, miss buckets). This is the score the targets apply to.
@@ -51,7 +62,7 @@ For clips with a `match_id`. Built once per clip, cached in `data/vision_bench/b
   - recall is hits over `pff` frames, precision is hits over vision rows on `pff` frames;
   - also printed: rows on `estimated` frames (no hit/miss), the ceiling (any candidate within 40 px), and recall at 25 px;
   - its job is paired comparisons (sweeps, A vs B) and clips without labels;
-  - on vb02 at 40 px it agreed with the clicks' verdict on 95.2% of frames, recall 2 pt lower. At 25 px, 87.8%, 10 pt lower.
+  - on vb02, with a camera solved on each frame (as specced), its verdict agreed with the clicks' on 92.5% of frames at 40 px, recall 3.4 pt lower (76.2 vs 79.6%). At 25 px: 87.8%, 10.9 pt lower.
 - **Agreement check, per labeled clip:**
   - the share of good `[x, y]` labels on `pff` frames within 25 px of the projection (vb02 84.4%);
   - verdict agreement at 40 px.
@@ -63,7 +74,7 @@ One class, as now, shared by pipeline and replay. All new fields go in `VisionCo
 ### 2a. Candidates
 - The ball model's detections at conf ≥ `track_min_conf` (0.1), as `balls.parquet` stores them.
 - Dropped before picking:
-  - **no pitch position:** off the pitch by more than **`ball_cand_margin_m`** (2 m; today a candidate may sit 10 m out, `max_off_pitch_m`). Board logos and the net project several meters out. A ball in play is within ~1 m of the lines, and a throw-in is taken from the line.
+  - **no pitch position:** off the pitch by more than **`ball_cand_margin_m`** (2 m; today a candidate may sit 10 m out, `max_off_pitch_m`). Board logos and the net project several meters out. **Caution:** a ball in the air projects through the ground homography to a point behind it. A ball 1 m up near the far touchline lands a few meters out, and one 3 m up lands much further. So this filter, the size filter and the pitch-space gate can drop a real airborne ball. Measured on the 73 good vb02 clicks that fall on PFF-ESTIMATED (mostly aerial) frames: no loss (recall 89.0% for `"max"`, 91.8% for gate + size + margin). But vb02's highest balls are in its guessed ranges, so they aren't in that sample.
   - **wrong size:** box width outside `[ball_size_lo × w_exp, ball_size_hi × w_exp + 6 px]`, with `w_exp` the width of 0.22 m at that pitch point through the frame's homography. **0.5 and 2.0.** Catches the bottom-of-frame specks (too small for the near touchline) and head- or boot-sized boxes. The +6 px allows motion blur.
 - Off by default for old runs (`ball_cand_margin_m = max_off_pitch_m`, `ball_size_lo = 0`, `ball_size_hi = inf`).
 
@@ -128,7 +139,7 @@ The ball model's recall is the ceiling (~70% of PFF-VISIBLE frames, review). Inp
   - PFF ball projection (1b);
   - the current ball model at conf ≥ 0.05.
 - **Labels:**
-  - **positive:** PFF VISIBLE, and the candidate nearest the projection is within 25 px. Box = that candidate's box;
+  - **positive:** PFF VISIBLE, the candidate nearest the projection is within 25 px, and **no other candidate is within 40 px**. Box = that candidate's box. PFF drifts up to ~1 m for seconds (review). In those stretches the nearest candidate can be a boot while the ball sits 35 px away. Projections are first corrected by the median offset of confident (≥ 0.5) candidates within 40 px over ±1 s (excluding ±0.2 s around the frame), which took vb02's agreement from 84.4% to 88.4% within 25 px;
   - **hard negatives:** candidates ≥ 0.3 more than 60 px from a VISIBLE projection. Only on frames that also have a positive, so the frame's one ball is known;
   - **left out:** frames with an ESTIMATED ball, frames with a VISIBLE ball and no candidate within 25 px (a missed ball must not become background), frames with a second ball-like candidate ≥ 0.5 within 3 m of the touchline (spare balls).
   - **missed balls:** a random 300 of the frames with a VISIBLE ball and no candidate go through `ball_click --assist`, and only verified boxes (click → box of `diam_px`) join. These teach the model what it misses now.
@@ -155,13 +166,17 @@ A model that doesn't beat the current one is a recorded result (detection review
 Each step is a commit series with its own bench check.
 
 1. **PFF reference + PFF score** (`vision/ball_truth.py`, `vision.bench` prints the PFF score and the agreement check).
-   - Check: on vb02, agreement within 25 px ≥ 80% (review: 84.4%); PFF-score recall at 40 px within 3 pt of the click recall.
+   - Check: on vb02, agreement within 25 px ≥ 80% (review: 84.4%); PFF-score recall at 40 px within 4 pt of the click recall (review: 76.2 vs 79.6%).
    - Done when the bench prints both scores for all three clips and the replay check still passes.
 2. **Label tool** (`--assist`, `--flag`).
    - The user re-reviews vb02's flagged frames (`--flag`), then labels vb01 and vb03 with `--assist`. About 290 + 360 frames, around half one key press.
    - Done when all three clips have verified labels with no unresolved flags, and 07's ball score runs on all three.
 3. **Tracker** (2a–2c, 2e–2f; carrier hold waits for stage 8 in the pipeline).
-   - Check by replay, both scores, all three clips. The gate + filters config must beat `"max"` on pooled recall and precision on verified labels, and not lose more than 1 pt on any clip.
+   - Check by replay, both scores, all three clips. The gate + filters config must:
+     - beat `"max"` on pooled recall and precision on verified labels;
+     - not lose more than 1 pt on any clip;
+     - **not lose on the verified labels of PFF-ESTIMATED frames** (the aerial ones the PFF score can't see).
+   - If the filters lose there, apply them only when no candidate ≥ `ball_gate_conf` is inside the gate.
    - Done when it's the default for new runs and old runs replay exactly.
 4. **Auto-label sync check** on vb01–vb03 (3a sync), then auto-labels for the six matches.
    - Done when the manifest lists six matches' offsets, each with its peak share, and the counts of positives, negatives and left-out frames.

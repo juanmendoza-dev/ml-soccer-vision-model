@@ -161,7 +161,9 @@ A clip that fails any of these is refused.
   - possession.
 
 **Ball labels:** `data/splits/vision_ball_labels.json`, committed next to the manifest (`data/vision_bench/` is gitignored). Made with `scripts/ball_click.py`.
-- **With `--assist`** (10-ball 1c), each frame shows a suggestion: the ball candidate nearest PFF's projected ball. Enter accepts it. A click, space or `u` overrides it, as before. A saved label is always what the person chose.
+- **With `--assist`** (10-ball 1c), each frame shows a suggestion: the ball candidate nearest PFF's projected ball. Enter accepts it. A click, space or `u` overrides it, as before.
+  - **Auto-accept:** a confident, isolated candidate within 15 px of a VISIBLE projection is saved without being shown and listed under the clip's `auto`. On vb02, 81 of 82 such frames match the click within 15 px. A random 10% of them is shown for checking.
+  - Every other label is what the person chose.
 - **`--flag`** reopens labels that disagree with PFF's projection (> 30 px from a VISIBLE one, or `"none"` with a candidate near it) for a second look. PFF has its own biased stretches, so a flag never rejects a label by itself.
 - vb02's first pass (2026-10-02) has known bad clicks (specks at 240–280, trailing clicks at 575–610, guesses where the ball wasn't visible); they're redone with `--flag` before vb02's ball score counts.
 - `version`, and `clips`: `clip_id` → `video_sha256`, `every` (N), `labels`.
@@ -191,7 +193,7 @@ A clip that fails any of these is refused.
   - **Truth:** PFF's ball projected through a PnLCalib camera solved on each label frame, at the ball's center, on frames where PFF says VISIBLE (`kind = pff`).
   - **Hit:** a vision ball row with pitch x/y within **40 px**.
   - **Printed with it:** recall, precision, recall at 25 px, the candidate ceiling, and vision rows on ESTIMATED frames (counted, not scored).
-  - **Why 40 px:** on vb02 it gave the same verdict as the clicks on 95.2% of frames, recall 2 pt lower. At 25 px the verdicts agreed on 87.8% of frames and recall was 10 pt lower, because PFF's ball drifts ~1 m for seconds at a time.
+  - **Why 40 px:** on vb02 it gave the same verdict as the clicks on 92.5% of frames, recall 3.4 pt lower. At 25 px the verdicts agreed on 87.8% of frames and recall was 10.9 pt lower, because PFF's ball drifts ~1 m for seconds at a time.
   - **What it's for:** paired comparisons on the same frames (sweeps, A vs B) and clips without labels.
   - **Agreement check per labeled clip:** good `[x, y]` labels within 25 px of the projection (vb02 84.4%). A clip far below that has a sync or camera problem, and its PFF score is withheld.
 
