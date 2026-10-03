@@ -150,12 +150,20 @@ A clip that fails any of these is refused.
 
   Teams are read from `team_cluster` and `home_cluster`, so a replay keeps them; keepers get their cluster from position, as the pipeline does. If `home_cluster` is null, the scorer uses whichever mapping agrees more, and says so.
 - **False live:** seconds inside the marks where vision has view `match` and a homography, so the predictor would get positions from a replay or close-up. Per label.
-- **Ball** (2026-10-02), on hand labels, since PFF can't say whether the ball is visible in the image. See Ball labels and Ball score below.
+- **Ball** (2026-10-02), on verified labels. Checked 2026-10-02 (`Docs/reviews/ball-research-2026-10-02.md`):
+  - PFF's VISIBLE ball is a grounded ball, within 25 px of the real one on 84% of frames, with ~1 m biases lasting 5–15 s;
+  - airborne and lost balls are ESTIMATED and 44 px off (median), on 31–39% of live frames;
+  - PFF can't mark a hidden ball.
+
+  So PFF pre-places and checks the labels and gives a loose second score, never the targets' truth (10-ball). See Ball labels and Ball score below.
 - **Not scored yet:**
   - tracking IDs;
   - possession.
 
 **Ball labels:** `data/splits/vision_ball_labels.json`, committed next to the manifest (`data/vision_bench/` is gitignored). Made with `scripts/ball_click.py`.
+- **With `--assist`** (10-ball 1c), each frame shows a suggestion: the ball candidate nearest PFF's projected ball. Enter accepts it. A click, space or `u` overrides it, as before. A saved label is always what the person chose.
+- **`--flag`** reopens labels that disagree with PFF's projection (> 30 px from a VISIBLE one, or `"none"` with a candidate near it) for a second look. PFF has its own biased stretches, so a flag never rejects a label by itself.
+- vb02's first pass (2026-10-02) has known bad clicks (specks at 240–280, trailing clicks at 575–610, guesses where the ball wasn't visible); they're redone with `--flag` before vb02's ball score counts.
 - `version`, and `clips`: `clip_id` → `video_sha256`, `every` (N), `labels`.
 - **Which frames:** source-video frames whose index is a multiple of N, inside `[video_start_s, video_end_s)` and outside the marks (frame index / fps, as the scored frames). N = 5, so 6 labels a second, about 930 on the three clips:
   - neighbouring frames at 30 fps are near duplicates (the ball moves a few pixels), so N = 1 or 3 mostly re-measures the same frames for 5× or 1.7× the clicking;
@@ -178,7 +186,14 @@ A clip that fails any of these is refused.
   5. drift: no candidate within R, and an extrapolated row more than R away;
   6. not detected: no candidate within R (a far detection picked instead, if any, also counts against precision).
 - **Error in meters:** median and p90 of the click and vision's ball both projected through the frame's homography, on hits. It's the image error in meters at that spot; the homography's own error is in the people score.
-- **Targets** (roadmap, detection review): recall ≥ 90%, precision ≥ 95% on usable live frames (match view with geometry).
+- **Targets** (roadmap, detection review): recall ≥ 90%, precision ≥ 95% on usable live frames (match view with geometry). On verified labels only.
+- **PFF score** (10-ball 1b, 1d), printed under the ball score on every clip with a `match_id`, labeled or not, never against the targets.
+  - **Truth:** PFF's ball projected through a PnLCalib camera solved on each label frame, at the ball's center, on frames where PFF says VISIBLE (`kind = pff`).
+  - **Hit:** a vision ball row with pitch x/y within **40 px**.
+  - **Printed with it:** recall, precision, recall at 25 px, the candidate ceiling, and vision rows on ESTIMATED frames (counted, not scored).
+  - **Why 40 px:** on vb02 it gave the same verdict as the clicks on 95.2% of frames, recall 2 pt lower. At 25 px the verdicts agreed on 87.8% of frames and recall was 10 pt lower, because PFF's ball drifts ~1 m for seconds at a time.
+  - **What it's for:** paired comparisons on the same frames (sweeps, A vs B) and clips without labels.
+  - **Agreement check per labeled clip:** good `[x, y]` labels within 25 px of the projection (vb02 84.4%). A clip far below that has a sync or camera problem, and its PFF score is withheld.
 
 **Homography threshold sweep** (roadmap Phase 2, group 4). The sweep runs offline on the stage 4 cache (03 Diagnostics), with no detector rerun. What's swept depends on the run's `calib_backend` (03 Pitch calibration):
 - **`pnlcalib`:** `max_calib_err_px`, the camera checks, `max_homography_jump_m`, `homography_max_age_s` and `homography_window` from the cached cameras; `pnl_kp_threshold` and `pnl_line_threshold` with `--revote` (voting redone on CPU from the cached peaks, ~30 s a clip). The checks also feed the gate, which the replay doesn't simulate, so a pick that tightens them is confirmed with a fresh run before it's adopted.
