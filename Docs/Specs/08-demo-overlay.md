@@ -44,6 +44,13 @@ Everything is drawn at frame t from frames `<= t` only, the same rule as predict
   - **Trail:** the ball's game-state positions over the last 1.0 s, mapped through the current frame's mapping so the camera's pan doesn't drag it. It doesn't reach back past the last frame without a usable mapping (a cut or a close-up resets it).
   - **Detection jumps:** a ball faster than 40 m/s (past the hardest shots, about 35 m/s) is a wrong detection, not a ball: no arrow while `vx, vy` says so, and the trail stops where consecutive positions imply it. The ring still shows the detection, so the error stays visible. First seen on the M1 sample run (2026-10-01): one frame's ball jumped about 25 m to the image edge, 382 m/s.
   - **Frames:** the cache's processed range by default, so a run never draws past what vision processed (the debug-mode `--frames` trap).
+- **Danger meter (2026-10-05):** calibrated P(goal within 5 s) from 05's "Offline demo model" (`p_goal_h5` from `prediction.infer`, or a CV run's `p_goal_cal_h5` in the pitch view).
+  - **Which value:** a frame at period time t shows the latest grid row of its period with `t_s <= t`. Never a later or interpolated row. When that row is more than 0.1 s old (a grid gap) or its p is null, the bar is grey and the value reads `--`.
+  - **Scale:** log, so the build-up shows (the calibrated top decile is about 2%). 0.1% is an empty bar, 50% a full one, with ticks at 1%, 5% and 20%. The value is a percentage, one decimal under 10%. One fill color for the whole bar: green at the bottom of the scale, amber halfway, red at the top. Title: "goal in 5 s".
+  - Checked on the PFF pitch view (`demo.render --pgoal`) before any vision clip. The scale may change once there, recorded here.
+  - **On video:** a panel at the right edge of the frame.
+- **Video frame alignment:** a vision run's `frame_id` 0 is source frame `round(video_start_s × fps)` (`run.json`, vision.run's `--start-s`). `demo.video` skips to it with `grab()`, frame-exact like vision.run, never by seeking.
+- **PFF truth ticker (clips from PFF matches):** the match's PFF shots and goals, mapped onto the run's frames through the clip's sync offset (`data/splits/demo_clips.json`, `vision.bench`'s format), in the ticker labelled "(PFF)". Each shows from its own frame for 4 s, like the event ticker, so the meter's lead time can be read off the video.
 
 ## Footage
 | Use | Footage | Can it be published? |
