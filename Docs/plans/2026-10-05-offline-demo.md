@@ -148,7 +148,7 @@ git add Docs/Specs/03-vision-pipeline.md && git commit -m "03: offline stage 8 f
   - `meter.draw(img, box, p) -> None`, `meter.METER_W = 96`
   - `overlay.meter_color(level) -> tuple`, `overlay.danger_meter(img, box, level, value, ticks, title)`
 
-- [ ] **Step 1: Write the failing tests** (`tests/test_demo_meter.py`)
+- [x] **Step 1: Write the failing tests** (`tests/test_demo_meter.py`)
 
 ```python
 """08 danger meter: the causal lookup, the log scale and the drawing."""
@@ -233,12 +233,12 @@ def test_meter_color_runs_green_amber_red():
     assert ov.meter_color(1.0) == ov.METER_COLORS[2]
 ```
 
-- [ ] **Step 2: Run them, expect failures**
+- [x] **Step 2: Run them, expect failures**
 
 Run: `.venv/Scripts/python -m pytest tests/test_demo_meter.py -q`
 Expected: FAIL, `ImportError: cannot import name 'meter' from 'demo'`
 
-- [ ] **Step 3: Add the drawing to `demo/overlay.py`** (append at the end)
+- [x] **Step 3: Add the drawing to `demo/overlay.py`** (append at the end)
 
 ```python
 METER_COLORS = ((80, 200, 80), (0, 190, 255), (40, 40, 230))  # BGR green, amber, red
@@ -279,7 +279,7 @@ def danger_meter(
     text(img, title, (x + w // 2, y + h - 12), 0.38, MUTED, align="center")
 ```
 
-- [ ] **Step 4: Create `demo/meter.py`**
+- [x] **Step 4: Create `demo/meter.py`**
 
 ```python
 """08 danger meter: which P(goal) a frame shows, and where it sits on the bar."""
@@ -338,19 +338,19 @@ class Meter:
         return None if np.isnan(p[i]) else float(p[i])
 ```
 
-- [ ] **Step 5: Run the tests, expect a pass**
+- [x] **Step 5: Run the tests, expect a pass**
 
 Run: `.venv/Scripts/python -m pytest tests/test_demo_meter.py -q`
 Expected: PASS (9 tests)
 
-- [ ] **Step 6: Commit and push**
+- [x] **Step 6: Commit and push**
 
 ```bash
 git add demo/meter.py demo/overlay.py tests/test_demo_meter.py
 git commit -m "demo: danger meter, causal lookup on the 10 Hz rows and a log scale bar" && git push
 ```
 
-- [ ] **Step 7: Meter column in the pitch view (`demo/render.py`)**
+- [x] **Step 7: Meter column in the pitch view (`demo/render.py`)**
 
 Make these changes:
 - `from demo import meter as mt` at the imports.
@@ -377,7 +377,7 @@ Make these changes:
 
 The pitch view's meter is checked by eye in Step 9. The lookup and the drawing are already covered by the tests above. Run the whole demo test set: `.venv/Scripts/python -m pytest tests/test_demo_meter.py tests/test_demo_overlay.py tests/test_demo_video.py -q`. Expected: PASS.
 
-- [ ] **Step 8: Commit and push**
+- [x] **Step 8: Commit and push**
 
 ```bash
 git add demo/render.py tests/test_demo_meter.py
