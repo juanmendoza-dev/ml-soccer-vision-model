@@ -744,7 +744,7 @@ If it fails, stop and look before going further:
   - `stage8.fill(match_dir: Path, config: StateConfig | None = None) -> dict`, which rewrites `frames.parquet` and returns the shares;
   - `tests/vision_gs.write_match(d: Path, n=60, fps=10.0, teams=True, possession=None, ball_state=None) -> Path`, also used by Task 5.
 
-- [ ] **Step 1: Write the test helper** (`tests/vision_gs.py`)
+- [x] **Step 1: Write the test helper** (`tests/vision_gs.py`)
 
 ```python
 """A small game state in vision's format (vision.writer): one period, the ball carried
@@ -874,7 +874,7 @@ def write_match(d: Path, n=60, fps=10.0, teams=True, possession=None, ball_state
 
 Check the helper first: `.venv/Scripts/python -c "from pathlib import Path; import tempfile; from tests.vision_gs import write_match; from gamestate.validate import validate_match; d = write_match(Path(tempfile.mkdtemp()) / 'm'); print(validate_match(d))"` must print `[]`. If the validator objects to something (a column type, `view_polygon` null), match `vision/writer.py`'s `close()` exactly. That's the format being imitated.
 
-- [ ] **Step 2: Write the failing tests** (`tests/test_vision_stage8.py`)
+- [x] **Step 2: Write the failing tests** (`tests/test_vision_stage8.py`)
 
 ```python
 """03 "Offline stage 8 fill": stage 8's columns written into a vision run's frames."""
@@ -925,12 +925,12 @@ def test_main_records_the_fill_in_run_json(tmp_path):
     assert 0 < run["stage8"]["possession_set_share"] <= 1
 ```
 
-- [ ] **Step 3: Run them, expect failures**
+- [x] **Step 3: Run them, expect failures**
 
 Run: `.venv/Scripts/python -m pytest tests/test_vision_stage8.py -q`
 Expected: FAIL, `ImportError: cannot import name 'stage8' from 'vision'`
 
-- [ ] **Step 4: Implement `vision/stage8.py`**
+- [x] **Step 4: Implement `vision/stage8.py`**
 
 ```python
 """Stage 8 on a finished vision run (03 "Offline stage 8 fill"): ball_state,
@@ -1010,12 +1010,12 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 5: Run the tests, expect a pass**
+- [x] **Step 5: Run the tests, expect a pass**
 
 Run: `.venv/Scripts/python -m pytest tests/test_vision_stage8.py tests/test_state.py -q`
 Expected: PASS. If the first test fails on `possession_team == "home"`, print the frames: the helper's h1 has to be within `carrier_radius_m` (1.5 m) of the ball for `carrier_min_s` (0.3 s). Fix the helper, not stage 8.
 
-- [ ] **Step 6: Commit and push**
+- [x] **Step 6: Commit and push**
 
 ```bash
 git add vision/stage8.py tests/vision_gs.py tests/test_vision_stage8.py
