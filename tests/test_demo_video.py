@@ -1,12 +1,15 @@
 """08 ball marker on video: the refit screen mapping, its skip rules, the arrow and trail,
 and a run on a synthetic clip and cache."""
 
+import json
+
 import numpy as np
 import polars as pl
 import pytest
 
 cv2 = pytest.importorskip("cv2")
 
+from demo import meter as mt
 from demo import overlay as ov
 from demo import video
 
@@ -255,3 +258,79 @@ def test_a_detection_jump_draws_the_ring_but_no_arrow_or_trail_across_it(tmp_pat
             tip = video.as_point(screen(bv.ball_xy(10)["x"] + ov.ARROW_S * 4.0, 0.0), W, H_PX)
         ov.ball_marker(want, center, max(round((d["x2"] - d["x1"]) * 0.9), 6), "solid", tip)
         assert np.array_equal(bv.draw(blank, f), want)
+
+
+def shaded_video(path, n):
+    """Frame i is a flat gray of 20 + 10 i, so a frame's index can be read back."""
+    w = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (W, H_PX))
+    for i in range(n):
+        w.write(np.full((H_PX, W, 3), 20 + 10 * i, np.uint8))
+    w.release()
+
+
+def test_frames_line_up_with_the_runs_start(tmp_path):
+    _, cache, gs = write_run(tmp_path, n_video=20, processed=10)
+    (cache / "run.json").write_text(json.dumps({"video_start_s": 3 / FPS}))
+    shaded = tmp_path / "shaded.mp4"
+    shaded_video(shaded, 20)
+    out = tmp_path / "out.mp4"
+    video.main(["--video", str(shaded), "--match-id", "m", "--cache-dir", str(cache.parent),
+                "--gamestate-dir", str(gs.parent), "--out", str(out)])
+    cap = cv2.VideoCapture(str(out))
+    ok, first = cap.read()
+    assert ok
+    src = cv2.VideoCapture(str(shaded))
+    shades = [float(src.read()[1][5:40, 5:40].mean()) for _ in range(20)]  # mp4v shifts grays a bit
+    got = float(first[5:40, 5:40].mean())
+    assert int(np.argmin([abs(got - v) for v in shades])) == 3  # source frame 3, not 0
+    assert abs(got - shades[3]) < 4
+
+
+def test_start_frame_without_run_json_is_zero(tmp_path):
+    assert video.start_frame(tmp_path, 30.0) == 0
+
+
+def test_truth_events_map_pff_time_to_run_frames(tmp_path):
+    d = tmp_path / "gs" / "pff1"
+    d.mkdir(parents=True)
+    pl.DataFrame(
+        {"frame_id": [1, 2, 3], "period": [2, 2, 1], "timestamp_s": [105.0, 101.0, 105.0]}
+    ).write_parquet(d / "frames.parquet")
+    pl.DataFrame(
+        {
+            "match_id": ["pff1"] * 3,
+            "frame_id": [1, 2, 3],
+            "event_type": ["goal", "shot", "goal"],
+            "team": ["away", "away", "home"],
+            "player_id": [None] * 3,
+            "x": [0.0] * 3,
+            "y": [0.0] * 3,
+            "outcome": ["goal", "saved", "goal"],
+            "set_piece": ["open_play"] * 3,
+            "set_play_phase": [False] * 3,
+        }
+    ).write_parquet(d / "events.parquet")
+    clip = {"match_id": "pff1", "period": 2, "sync": [{"video_s": 0.0, "timestamp_s": 100.0}]}
+    ev = video.truth_events(clip, tmp_path / "gs", video_start_s=2.0, fps=FPS)
+    # goal at PFF 105 s -> video 5 s -> run 3 s -> frame 30; the shot at 101 s is before
+    # the run starts (frame -10) and is dropped, the period-1 goal too
+    assert ev["frame_id"].to_list() == [30]
+    assert ev["event_type"].to_list() == ["goal"]
+
+
+def test_main_draws_the_meter_from_predictions(tmp_path):
+    path, cache, gs = write_run(tmp_path, n_video=20, processed=15)
+    pl.DataFrame(
+        {"frame_id": list(range(15)), "period": [1] * 15, "timestamp_s": [f / FPS for f in range(15)]}
+    ).write_parquet(gs / "frames.parquet")
+    preds = tmp_path / "p.parquet"
+    pl.DataFrame({"period": [1] * 15, "t_s": [f / FPS for f in range(15)], "p_goal_h5": [0.3] * 15}).write_parquet(preds)
+    out = tmp_path / "out.mp4"
+    video.main(["--video", str(path), "--match-id", "m", "--cache-dir", str(cache.parent),
+                "--gamestate-dir", str(gs.parent), "--predictions", str(preds), "--out", str(out)])
+    ok, img = cv2.VideoCapture(str(out)).read()
+    assert ok
+    x = W - 16 - mt.METER_W + 14 + 13  # middle of the meter's bar
+    y = 80 + min(H_PX - 160, 420) - 34 - 5  # just above the bar's bottom
+    want = np.array(ov.meter_color(mt.level(0.3)))
+    assert np.abs(img[y, x].astype(int) - want).max() < 40  # mp4v blurs colors a little
