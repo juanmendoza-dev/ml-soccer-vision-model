@@ -165,7 +165,7 @@ A model that doesn't beat the current one is a recorded result (detection review
 ## 4. Build order
 Each step is a commit series with its own bench check.
 
-1. **PFF reference + PFF score** (`vision/ball_truth.py`, `vision.bench` prints the PFF score and the agreement check).
+1. **Done 2026-10-05** (`Docs/reviews/ball-fix-2026-10-05.md`, Phase A). **PFF reference + PFF score** (`vision/ball_truth.py`, `vision.bench` prints the PFF score and the agreement check).
    - Check: on vb02, agreement within 25 px ≥ 80% (review: 84.4%); PFF-score recall at 40 px within 4 pt of the click recall (review: 76.2 vs 79.6%).
    - Done when the bench prints both scores for all three clips and the replay check still passes.
 2. **Label tool** (`--assist`, `--flag`).
