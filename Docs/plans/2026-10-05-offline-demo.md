@@ -384,7 +384,7 @@ git add demo/render.py tests/test_demo_meter.py
 git commit -m "render: --pgoal draws the danger meter next to the pitch" && git push
 ```
 
-- [ ] **Step 9: Look at both open-play goals of 10517 on PFF (no vision yet)**
+- [x] **Step 9: Look at both open-play goals of 10517 on PFF (no vision yet)**
 
 In frame order, 10517's goals are: 1 = 44867 (period 1 penalty), 2 = 68200 (period 1, open play, t 2121.1), 3 = 162106 (period 2 penalty), 4 = 164932 (period 2, open play, t 2158.6).
 
