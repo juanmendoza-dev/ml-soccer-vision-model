@@ -1,0 +1,29 @@
+{
+ "version": 1,
+ "clips": [
+  {
+   "clip_id": "demo01-arg-fra-81",
+   "match_id": "10517",
+   "period": 2,
+   "video_sha256": "f104da230914e8e5fe19bbd742f028bf00afd23a0dfea2e68307fbc9179084f5",
+   "video_start_s": 28.0,
+   "video_end_s": 105.0,
+   "home_attacks_tv_right_p1": true,
+   "home_cluster": null,
+   "sync_method": "cut edges: 9 hard cuts (first frame of the new shot, 41.700-92.167 s) vs PFF's all-ESTIMATED switches, offsets 2068.483-2068.543 s; the two pairs below are the earliest and the last before the goal (offsets 2068.543 and 2068.515)",
+   "sync": [
+    {"video_s": 41.7, "timestamp_s": 2110.243},
+    {"video_s": 80.0, "timestamp_s": 2148.515}
+   ],
+   "marks": [
+    {"start_s": 41.7, "end_s": 45.2, "label": "closeup"},
+    {"start_s": 48.967, "end_s": 51.833, "label": "closeup"},
+    {"start_s": 60.333, "end_s": 65.267, "label": "closeup"},
+    {"start_s": 73.7, "end_s": 80.0, "label": "closeup"},
+    {"start_s": 92.167, "end_s": 103.233, "label": "closeup"},
+    {"start_s": 103.233, "end_s": 105.0, "label": "other"}
+   ],
+   "marks_checked_by_user": true
+  }
+ ]
+}
