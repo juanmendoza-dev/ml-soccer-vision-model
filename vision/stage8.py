@@ -36,6 +36,13 @@ def fill(match_dir: Path, config: StateConfig | None = None) -> dict:
             "rerun vision.run with --home-cluster"
         )
     state = infer(frames, objects, config)
+    # a carrier from a player vision gave no team, before any possession: 02 wants no
+    # carrier without a possession_team, so that carrier is dropped and counted
+    orphan = pl.col("ball_carrier_id").is_not_null() & pl.col("possession_team").is_null()
+    dropped = state.filter(orphan).height
+    state = state.with_columns(
+        ball_carrier_id=pl.when(orphan).then(None).otherwise(pl.col("ball_carrier_id"))
+    )
     out = (
         frames.drop(*STATE_COLS)
         .join(state, on="frame_id", how="left", validate="1:1")
@@ -52,6 +59,7 @@ def fill(match_dir: Path, config: StateConfig | None = None) -> dict:
         "alive_share": round(float((bs == "alive").fill_null(False).mean()), 4),
         "dead_share": round(float((bs == "dead").fill_null(False).mean()), 4),
         "ball_state_null_share": round(float(bs.is_null().mean()), 4),
+        "carrier_without_team_dropped": dropped,
     }
 
 
