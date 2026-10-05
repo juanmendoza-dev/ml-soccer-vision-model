@@ -30,58 +30,16 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import polars as pl
 
 from converters.common import sha256
 from vision import bench
-from vision.view_gate import grass_share
+from vision.ball_truth import extract
 
 VIDEOS = Path("data/vision_bench/videos.json")
 FRAMES = Path("data/vision_bench/ball_frames")
 CACHE = Path("data/vision_cache")
 ZOOM, ZOOM_HALF = 4, 30  # magnifier: 61 x 61 source px at 4x
 RING_PX = 15  # 07's hit radius, drawn around labels
-
-
-def extract(video: Path, idx: list[int], out: Path, cache: Path | None) -> None:
-    """Sequential decode, as vision.run does, saving the frames in idx."""
-    out.mkdir(parents=True, exist_ok=True)
-    todo = [i for i in idx if not (out / f"{i}.jpg").exists()]
-    if not todo:
-        return
-    check = None
-    if cache is not None and (cache / "view.parquet").exists():
-        run = json.loads((cache / "run.json").read_text())
-        view = pl.read_parquet(cache / "view.parquet", columns=["frame_id", "grass_share"])
-        check = (run["video_start_s"], dict(view.iter_rows()))
-    cap = cv2.VideoCapture(str(video))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    want, last = set(todo), max(todo)
-    checked = mismatched = 0
-    print(f"decoding {video.name} up to frame {last} ({len(todo)} to save)...")
-    for i in range(last + 1):
-        if not cap.grab():
-            raise SystemExit(f"{video} ends at frame {i}")
-        if i not in want:
-            continue
-        ok, image = cap.retrieve()
-        if not ok:
-            raise SystemExit(f"can't decode frame {i}")
-        if check is not None:
-            run_frame = i - round(check[0] * fps)
-            if run_frame in check[1]:
-                checked += 1
-                mismatched += grass_share(image) != check[1][run_frame]
-        cv2.imwrite(str(out / f"{i}.jpg"), image, [cv2.IMWRITE_JPEG_QUALITY, 95])
-    cap.release()
-    if check is None:
-        print("no run cache to check the frame index against")
-    elif mismatched:
-        for p in out.glob("*.jpg"):
-            p.unlink()
-        raise SystemExit(f"{mismatched} of {checked} frames don't match the run: frame offset?")
-    else:
-        print(f"frame index checked against the run on {checked} frames")
 
 
 def main(argv: list[str] | None = None) -> None:
