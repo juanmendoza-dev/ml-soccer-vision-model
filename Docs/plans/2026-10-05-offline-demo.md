@@ -85,7 +85,7 @@ CLAUDE.md: formats and behavior go into the specs before code.
 - Modify: `Docs/Specs/08-demo-overlay.md`: append to "## Element definitions".
 - Modify: `Docs/Specs/03-vision-pipeline.md`: append after stage 8's "Known limits and later live check" paragraph (around line 222).
 
-- [ ] **Step 1: Add to 05** (text to insert verbatim)
+- [x] **Step 1: Add to 05** (text to insert verbatim)
 
 ```markdown
 ## Offline demo model (2026-10-05)
@@ -107,7 +107,7 @@ The first end-to-end clip (roadmap Phase 3) needs a saved goal model. A broadcas
 - Causal: resampling, features and stage 8 all are, and a test changes objects after t and checks every row `<= t`.
 ```
 
-- [ ] **Step 2: Add to 08** (append under "## Element definitions")
+- [x] **Step 2: Add to 08** (append under "## Element definitions")
 
 ```markdown
 - **Danger meter (2026-10-05):** calibrated P(goal within 5 s) from 05's "Offline demo model" (`p_goal_h5` from `prediction.infer`, or a CV run's `p_goal_cal_h5` in the pitch view).
@@ -119,13 +119,13 @@ The first end-to-end clip (roadmap Phase 3) needs a saved goal model. A broadcas
 - **PFF truth ticker (clips from PFF matches):** the match's PFF shots and goals, mapped onto the run's frames through the clip's sync offset (`data/splits/demo_clips.json`, `vision.bench`'s format), in the ticker labelled "(PFF)". Each shows from its own frame for 4 s, like the event ticker, so the meter's lead time can be read off the video.
 ```
 
-- [ ] **Step 3: Add to 03** (after stage 8's "Known limits and later live check" paragraph)
+- [x] **Step 3: Add to 03** (after stage 8's "Known limits and later live check" paragraph)
 
 ```markdown
      **Offline stage 8 fill (2026-10-05).** `python -m vision.stage8 --match-id <id>` runs `vision.state.infer` (rule-only, default `StateConfig`) on a finished vision run and writes `ball_state`, `possession_team` and `ball_carrier_id` into its `frames.parquet`, then the 02 validator. It records its config and shares in the cache's `run.json` under `stage8`. It's idempotent: infer reads only objects and frame times. `vision.run` writes the three as null again, so the fill runs after every `vision.run`, and after `vision.bench` (the bench replays from the caches and doesn't need it). A run where no player has a team is refused: possession would be null everywhere. **Rule-only is a temporary deviation** from the v1h decision above: `vision.possession_model.resolve` / `predict_match` refuse a match outside the manifest, so v1h on a vision run needs its own entry path (a follow-up).
 ```
 
-- [ ] **Step 4: Commit and push each spec on its own**
+- [x] **Step 4: Commit and push each spec on its own**
 
 ```bash
 git add Docs/Specs/05-prediction-model.md && git commit -m "05: offline demo model and vision inference sections" && git push
