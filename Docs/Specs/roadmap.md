@@ -200,6 +200,7 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 Skipped for now: schema 0.7 for empty runs, shootout (period 5) handling in vision.
 
 ## Phase 3 — End to end + demo
+**Next (2026-10-05): offline demo first, before the ball build.** Plan: `Docs/plans/2026-10-05-offline-demo.md`. One private clip (ARG–FRA 81' goal, 10517) through vision → stage 8 fill → the fold-0 goal model → danger meter on video, compared with PFF tracking. Covers the first three items below.
 - [ ] Feed vision game state into trained predictor
 - [ ] Compare predictor accuracy on vision vs. dataset tracking
 - [ ] Offline overlay renderer, with debug mode (08)
