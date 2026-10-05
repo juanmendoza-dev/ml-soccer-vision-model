@@ -1036,7 +1036,7 @@ git commit -m "stage 8 fill for finished vision runs, refuses runs without teams
   - `infer.predict_match(match_dir: Path, model) -> pl.DataFrame` (columns in 05 "Vision inference")
   - CLI output `data/predictions/<match_id>/<model_id>.parquet` + `.json`
 
-- [ ] **Step 1: Write the failing tests** (`tests/test_infer.py`)
+- [x] **Step 1: Write the failing tests** (`tests/test_infer.py`)
 
 ```python
 """05 "Vision inference": the mask, the stage 8 guard, causality and the output files."""
@@ -1105,12 +1105,12 @@ def test_main_writes_predictions_and_shares(tmp_path, monkeypatch):
     assert 0.9 < side["predicted_share"] <= 1.0
 ```
 
-- [ ] **Step 2: Run them, expect failures**
+- [x] **Step 2: Run them, expect failures**
 
 Run: `.venv/Scripts/python -m pytest tests/test_infer.py -q`
 Expected: FAIL, `ImportError: cannot import name 'infer' from 'prediction'`
 
-- [ ] **Step 3: Implement `prediction/infer.py`**
+- [x] **Step 3: Implement `prediction/infer.py`**
 
 ```python
 """P(goal) on a vision run's game state (05 "Vision inference"): resampled to 10 Hz in
@@ -1215,12 +1215,12 @@ Notes for the implementer:
 - `resample_match` takes `events` with zero rows. If its label code fails on that, fix the empty case in `prediction/resample.py` with its own test in `tests/test_resample.py`. Don't build a fake event.
 - `test_main_writes_predictions_and_shares` monkeypatches `infer.GoalModel`. That's why `main` calls it through the module global.
 
-- [ ] **Step 4: Run the tests, expect a pass**
+- [x] **Step 4: Run the tests, expect a pass**
 
 Run: `.venv/Scripts/python -m pytest tests/test_infer.py tests/test_resample.py tests/test_features.py -q`
 Expected: PASS
 
-- [ ] **Step 5: Commit and push**
+- [x] **Step 5: Commit and push**
 
 ```bash
 git add prediction/infer.py tests/test_infer.py
