@@ -48,9 +48,12 @@ def fill(match_dir: Path, config: StateConfig | None = None) -> dict:
         .join(state, on="frame_id", how="left", validate="1:1")
         .select(frames.columns)
     )
-    out.write_parquet(match_dir / "frames.parquet")
+    path = match_dir / "frames.parquet"
+    original = path.read_bytes()
+    out.write_parquet(path)
     errors = validate_match(match_dir)
     if errors:
+        path.write_bytes(original)  # a failed fill leaves nothing for prediction.infer to score
         raise ValueError(f"{match_dir.name}: 02 validation failed after stage 8: {errors}")
     bs = out["ball_state"]
     return {

@@ -59,3 +59,14 @@ def test_a_carrier_without_a_team_is_dropped(tmp_path):
     assert validate_match(d) == []
     assert frames.filter(pl.col("possession_team").is_null())["ball_carrier_id"].is_null().all()
     assert stats["carrier_without_team_dropped"] > 0
+
+
+def test_a_failed_validation_leaves_the_frames_as_they_were(tmp_path, monkeypatch):
+    # infer only checks that possession is set somewhere, so a fill that fails 02 must
+    # not leave its output behind for it to score
+    d = write_match(tmp_path / "m")
+    before = (d / "frames.parquet").read_bytes()
+    monkeypatch.setattr(stage8, "validate_match", lambda _: ["frames: broken"])
+    with pytest.raises(ValueError, match="02 validation failed"):
+        stage8.fill(d)
+    assert (d / "frames.parquet").read_bytes() == before
