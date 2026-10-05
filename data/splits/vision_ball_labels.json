@@ -1,6 +1,6 @@
 {"version": 1, "clips": {
-  "vb02-ned-arg": {"video_sha256": "84bb70640162fc9d0ed34f0a0b5dfe4f5c0c4c7e8f26dc7343a8814003a9ef13", "every": 5, "labels": {
-    "240": [465.9, 909.4],
+  "vb02-ned-arg": {"video_sha256": "84bb70640162fc9d0ed34f0a0b5dfe4f5c0c4c7e8f26dc7343a8814003a9ef13", "every": 5, "flag_checked": [240], "labels": {
+    "240": [1591.8, 575.3],
     "245": [524.7, 892.9],
     "250": [565.9, 888.2],
     "255": [622.4, 881.2],
