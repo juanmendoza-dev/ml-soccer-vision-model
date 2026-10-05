@@ -256,3 +256,41 @@ def event_marker(img: np.ndarray, center: Point, is_goal: bool) -> None:
     """An X where the shot was taken, gold for a goal."""
     c = GOLD if is_goal else TEXT
     cv2.drawMarker(img, center, c, cv2.MARKER_TILTED_CROSS, 16, 2, cv2.LINE_AA)
+
+
+METER_COLORS = ((80, 200, 80), (0, 190, 255), (40, 40, 230))  # BGR green, amber, red
+
+
+def meter_color(level: float) -> tuple[int, int, int]:
+    """Green at the bottom of the scale, amber halfway, red at the top."""
+    if level < 0.5:
+        lo, hi, f = METER_COLORS[0], METER_COLORS[1], 2 * level
+    else:
+        lo, hi, f = METER_COLORS[1], METER_COLORS[2], 2 * level - 1
+    return tuple(round(a + (b - a) * f) for a, b in zip(lo, hi))
+
+
+def danger_meter(
+    img: np.ndarray,
+    box: tuple[int, int, int, int],
+    level: float | None,
+    value: str,
+    ticks: list[tuple[float, str]],
+    title: str,
+) -> None:
+    """08 danger meter in box (x, y, w, h): a vertical bar filled to `level` (0-1; None
+    leaves it grey), the value over it, `ticks` [(level, text)] beside it, the title under."""
+    x, y, w, h = box
+    cv2.rectangle(img, (x, y), (x + w, y + h), PANEL_BG, -1)
+    bx, bw = x + 14, 26
+    top, bottom = y + 40, y + h - 34
+    cv2.rectangle(img, (bx, top), (bx + bw, bottom), (70, 70, 70), -1)
+    if level is not None:
+        fill = bottom - round(level * (bottom - top))
+        cv2.rectangle(img, (bx, fill), (bx + bw, bottom), meter_color(level), -1)
+    for lv, s in ticks:
+        ty = bottom - round(lv * (bottom - top))
+        cv2.line(img, (bx + bw, ty), (bx + bw + 6, ty), MUTED, 1)
+        text(img, s, (bx + bw + 9, ty + 4), 0.38, MUTED)
+    text(img, value, (x + w // 2, y + 26), 0.7, TEXT if level is not None else MUTED, 2, "center")
+    text(img, title, (x + w // 2, y + h - 12), 0.38, MUTED, align="center")
