@@ -9,7 +9,7 @@
    "video_start_s": 28.0,
    "video_end_s": 105.0,
    "home_attacks_tv_right_p1": true,
-   "home_cluster": null,
+   "home_cluster": 0,
    "sync_method": "cut edges: 9 hard cuts (first frame of the new shot, 41.700-92.167 s) vs PFF's all-ESTIMATED switches, offsets 2068.483-2068.543 s; the two pairs below are the earliest and the last before the goal (offsets 2068.543 and 2068.515)",
    "sync": [
     {"video_s": 41.7, "timestamp_s": 2110.243},
