@@ -8,6 +8,10 @@ sweep takes seconds. With the run's own config the output matches the detections
 people exactly, and the ball exactly when the run wrote balls.parquet (stage 5 is rerun from
 its candidates). Older runs keep only their detected ball rows, reprojected.
 
+--variant TAG reruns stage 5 at the --set ball_* fields into data/variants/TAG/{vision_cache,
+gamestate}/<match_id>, the run's people kept, so stage 8, inference and demo.video can run on
+it without touching the run.
+
 PnLCalib runs replay from the cached cameras; --revote votes them again from the cached peaks
 on CPU, so pnl_kp_threshold / pnl_line_threshold can be swept (03 Diagnostics).
 """
@@ -15,17 +19,34 @@ on CPU, so pnl_kp_threshold / pnl_line_threshold can be swept (03 Diagnostics).
 import argparse
 import dataclasses
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 
+from converters.common import causal_velocities
+from gamestate.validate import validate_match
 from vision.ball import BallTrack
 from vision.calib import accept, camera_fit, camera_from_peaks
 from vision.config import VisionConfig
+from vision.pipeline import frac_box
 from vision.pitch import HomographyFilter, fit_homography, on_pitch, project, template, to_02
-from vision.types import BALL, GOALKEEPER, MATCH, PLAYER, CalibPeaks, Camera, Detection
-from vision.writer import DETECTIONS_SCHEMA
+from vision.types import (
+    BALL,
+    GOALKEEPER,
+    MATCH,
+    PLAYER,
+    CalibPeaks,
+    Camera,
+    Detection,
+    VisionObject,
+)
+from vision.writer import DETECTIONS_SCHEMA, OBJECT_TYPES, OBJECTS_SCHEMA, on_screen
+
+VARIANT_ROOT = Path("data/variants")
+CACHE_FILES = ("view.parquet", "camera.parquet", "keypoints.parquet", "balls.parquet")
+GS_FILES = ("match.parquet", "frames.parquet", "events.parquet", "players.parquet")
 
 
 def run_config(cache: Path) -> VisionConfig:
@@ -199,22 +220,22 @@ def replay(
     return det, frames
 
 
-def replay_ball(
+def _ball_track(
     balls: pl.DataFrame,
     views: pl.DataFrame,
     times: dict[int, float],
     hs: dict[int, np.ndarray | None],
     config: VisionConfig,
-) -> pl.DataFrame:
-    """Stage 5 rerun from balls.parquet: the ball rows of the detections cache. Segments and
-    detection frames follow the view, as in VisionPipeline.step."""
+):
+    """Stage 5 rerun from balls.parquet: (match_id, frame_id, segment, H, Ball) for every
+    frame with a ball. Segments and detection frames follow the view, as in
+    VisionPipeline.step."""
     by_frame: dict[int, list[Detection]] = {}
     for frame_id, x1, y1, x2, y2, conf in balls.select(
         "frame_id", "x1", "y1", "x2", "y2", "det_confidence"
     ).iter_rows():
         by_frame.setdefault(frame_id, []).append(Detection((x1, y1, x2, y2), BALL, conf))
     track = BallTrack(config)
-    rows = []
     segment, step, before = -1, 0, None
     for match_id, frame_id, view in (
         views.select("match_id", "frame_id", "view").sort("frame_id").iter_rows()
@@ -244,8 +265,20 @@ def replay_ball(
             to_pitch,
             H is not None,
         )
-        if b is None:
-            continue
+        if b is not None:
+            yield match_id, frame_id, segment, H, b
+
+
+def replay_ball(
+    balls: pl.DataFrame,
+    views: pl.DataFrame,
+    times: dict[int, float],
+    hs: dict[int, np.ndarray | None],
+    config: VisionConfig,
+) -> pl.DataFrame:
+    """Stage 5 rerun from balls.parquet: the ball rows of the detections cache."""
+    rows = []
+    for match_id, frame_id, segment, H, b in _ball_track(balls, views, times, hs, config):
         x1, y1, x2, y2 = b.box
         rows.append(
             {
@@ -267,6 +300,114 @@ def replay_ball(
             }
         )
     return pl.DataFrame(rows, schema=DETECTIONS_SCHEMA)
+
+
+def ball_objects(
+    balls: pl.DataFrame,
+    views: pl.DataFrame,
+    times: dict[int, float],
+    hs: dict[int, np.ndarray | None],
+    config: VisionConfig,
+    image_size: tuple[int, int],
+) -> pl.DataFrame:
+    """The ball's 02 objects rows as GameStateWriter.add writes them (no vx / vy), from
+    stage 5 rerun: rows without a pitch position never reach game state."""
+    w, h = image_size
+    rows = []
+    for match_id, frame_id, segment, _, b in _ball_track(balls, views, times, hs, config):
+        if b.x is None:
+            continue
+        o = VisionObject(
+            f"{segment}-ball",
+            BALL,
+            None,
+            None,
+            b.x,
+            b.y,
+            b.confidence,
+            b.interpolated,
+            b.interpolated,
+            b.box,
+            frac_box(b.box, w, h),
+        )
+        rows.append(
+            {
+                "match_id": match_id,
+                "frame_id": frame_id,
+                "object_id": o.object_id,
+                "object_type": OBJECT_TYPES[BALL],
+                "team": None,
+                "player_id": None,
+                "x": b.x,
+                "y": b.y,
+                "z": None,
+                "visible": on_screen(o),
+                "interpolated": b.interpolated,
+                "confidence": b.confidence,
+            }
+        )
+    return pl.DataFrame(rows, schema=OBJECTS_SCHEMA)
+
+
+def write_variant(
+    match_id: str,
+    config: VisionConfig,
+    out_root: Path,
+    cache_dir: Path,
+    gamestate_dir: Path,
+    image_size: tuple[int, int] | None = None,
+) -> tuple[Path, Path]:
+    """Stage 5 rerun at config into out_root/{vision_cache,gamestate}/match_id: the run's
+    people as they are, its ball rows replaced, velocities and the 02 check redone. The
+    run's own dirs are only read. image_size: the frames' (w, h), else camera.parquet's."""
+    cache, gs = Path(cache_dir) / match_id, Path(gamestate_dir) / match_id
+    base = run_config(cache)
+    changed = [
+        f.name
+        for f in dataclasses.fields(VisionConfig)
+        if getattr(base, f.name) != getattr(config, f.name)
+    ]
+    if any(not name.startswith("ball_") for name in changed):
+        raise SystemExit(f"a ball variant changes ball_* fields only, not {changed}")
+    balls = load_balls(cache)
+    if balls is None:
+        raise SystemExit(f"{match_id}: no balls.parquet, stage 5 can't be rerun")
+    det, calls, views, times = load(cache, gs)
+    if image_size is None:
+        if "img_w" not in calls.columns:
+            raise SystemExit(f"{match_id}: no camera.parquet to read the image size from")
+        image_size = calls.select("img_w", "img_h").row(0)
+    hs = frame_homographies(calls, views, times, config, run_every=base.keypoints_every)
+    vcache = Path(out_root) / "vision_cache" / match_id
+    vgs = Path(out_root) / "gamestate" / match_id
+    for d in (vcache, vgs):
+        d.mkdir(parents=True, exist_ok=True)
+    for name in CACHE_FILES:
+        if (cache / name).exists():
+            shutil.copyfile(cache / name, vcache / name)
+    for name in GS_FILES:
+        shutil.copyfile(gs / name, vgs / name)
+    people = det.filter(pl.col("class") != BALL)
+    pl.concat([people, replay_ball(balls, views, times, hs, config)]).sort(
+        "frame_id", maintain_order=True
+    ).write_parquet(vcache / "detections.parquet")
+    run = json.loads((cache / "run.json").read_text())
+    run.update(config=config.__dict__, variant_of=match_id)
+    (vcache / "run.json").write_text(json.dumps(run, indent=2, default=str))
+    old = pl.read_parquet(gs / "objects.parquet").drop("vx", "vy")
+    objects = pl.concat(
+        [
+            old.filter(pl.col("object_type") != OBJECT_TYPES[BALL]),
+            ball_objects(balls, views, times, hs, config, image_size),
+        ]
+    ).sort("frame_id", maintain_order=True)
+    frames = pl.read_parquet(vgs / "frames.parquet")
+    fps = pl.read_parquet(vgs / "match.parquet")["native_fps"][0]
+    causal_velocities(objects, frames, fps=fps).write_parquet(vgs / "objects.parquet")
+    errors = validate_match(vgs)
+    if errors:
+        raise SystemExit(f"{match_id}: the variant fails 02 validation: {errors}")
+    return vcache, vgs
 
 
 def _goalkeeper_clusters(det: pl.DataFrame) -> pl.DataFrame:
@@ -332,6 +473,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE")
     ap.add_argument("--revote", action="store_true", help="PnLCalib: vote cameras again")
     ap.add_argument("--out", type=Path, help="write the replayed detections here")
+    ap.add_argument("--variant", help="stage 5 rerun at --set into <variant-root>/<this tag>")
+    ap.add_argument("--variant-root", type=Path, default=VARIANT_ROOT)
     ap.add_argument("--cache-dir", type=Path, default=Path("data/vision_cache"))
     ap.add_argument("--gamestate-dir", type=Path, default=Path("data/gamestate"))
     args = ap.parse_args(argv)
@@ -339,6 +482,11 @@ def main(argv: list[str] | None = None) -> None:
     cache = args.cache_dir / args.match_id
     base = run_config(cache)
     config = with_overrides(base, args.set)
+    if args.variant:
+        out_root = args.variant_root / args.variant
+        paths = write_variant(args.match_id, config, out_root, args.cache_dir, args.gamestate_dir)
+        print("variant ->", *paths)
+        return
     det, keypoints, views, times = load(cache, args.gamestate_dir / args.match_id)
     _, before = replay(det, keypoints, views, times, base)
     out, after = replay(

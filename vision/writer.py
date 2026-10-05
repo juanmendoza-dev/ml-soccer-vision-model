@@ -54,6 +54,21 @@ BALLS_SCHEMA = {
     "frame_id": pl.Int64,
     **{c: pl.Float64 for c in ("x1", "y1", "x2", "y2", "det_confidence")},
 }
+# 02 objects before velocities, as close() writes them
+OBJECTS_SCHEMA = {
+    "match_id": pl.String,
+    "frame_id": pl.Int64,
+    "object_id": pl.String,
+    "object_type": pl.String,
+    "team": pl.String,
+    "player_id": pl.String,
+    "x": pl.Float64,
+    "y": pl.Float64,
+    "z": pl.Float64,
+    "visible": pl.Boolean,
+    "interpolated": pl.Boolean,
+    "confidence": pl.Float64,
+}
 LIST = pl.List(pl.Float64)
 CAMERA_SCHEMA = {
     "match_id": pl.String,
@@ -262,23 +277,7 @@ class GameStateWriter:
                 "set_play_phase": pl.Boolean,
             },
         )
-        objects = pl.DataFrame(
-            self._objects,
-            schema={
-                "match_id": pl.String,
-                "frame_id": pl.Int64,
-                "object_id": pl.String,
-                "object_type": pl.String,
-                "team": pl.String,
-                "player_id": pl.String,
-                "x": pl.Float64,
-                "y": pl.Float64,
-                "z": pl.Float64,
-                "visible": pl.Boolean,
-                "interpolated": pl.Boolean,
-                "confidence": pl.Float64,
-            },
-        )
+        objects = pl.DataFrame(self._objects, schema=OBJECTS_SCHEMA)
         if objects.height:
             objects = causal_velocities(objects, frames, fps=self.native_fps)
         else:

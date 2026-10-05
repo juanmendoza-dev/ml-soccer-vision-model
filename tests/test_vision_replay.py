@@ -156,3 +156,62 @@ def test_overrides_are_typed_and_checked():
         replay.with_overrides(rf_config(), ["no_such_field=1"])
     with pytest.raises(ValueError):  # VisionConfig's own checks still run
         replay.with_overrides(rf_config(), ["min_inliers=3"])
+
+
+def _sorted_objects(gs):
+    return pl.read_parquet(gs / "objects.parquet").sort("frame_id", "object_id")
+
+
+def _variant(tmp_path, config):
+    from test_vision_pipeline import H as IMG_H
+    from test_vision_pipeline import W as IMG_W
+
+    return replay.write_variant(
+        "synth",
+        config,
+        tmp_path / "var",
+        tmp_path / "cache",
+        tmp_path / "gs",
+        image_size=(IMG_W, IMG_H),
+    )
+
+
+def test_variant_at_the_run_config_is_the_run(tmp_path, monkeypatch):
+    import test_vision_replay
+
+    monkeypatch.setattr(test_vision_replay, "FakeDetector", WeakBallDetector)
+    cache, gs = synth_run(tmp_path, FakeKeypoints(), CONFIG)
+    vcache, vgs = _variant(tmp_path, replay.run_config(cache))
+    assert _sorted_objects(vgs).equals(_sorted_objects(gs))
+    for name in ("frames", "match"):
+        new = pl.read_parquet(vgs / f"{name}.parquet")
+        assert new.equals(pl.read_parquet(gs / f"{name}.parquet"))
+    cols = ["frame_id", "object_id", "class", "pitch_x", "pitch_y", "x1"]
+    cols += ["det_confidence", "tracked_only"]
+    a = pl.read_parquet(vcache / "detections.parquet").select(cols).sort("frame_id", "object_id")
+    b = pl.read_parquet(cache / "detections.parquet").select(cols).sort("frame_id", "object_id")
+    assert a.equals(b)
+    assert json.loads((vcache / "run.json").read_text())["variant_of"] == "synth"
+
+
+def test_variant_leaves_the_run_alone_and_changes_only_the_ball(tmp_path, monkeypatch):
+    import test_vision_replay
+
+    monkeypatch.setattr(test_vision_replay, "FakeDetector", WeakBallDetector)
+    cache, gs = synth_run(tmp_path, FakeKeypoints(), CONFIG)
+    before = {p: p.read_bytes() for d in (cache, gs) for p in d.iterdir()}
+    no_gap = dataclasses.replace(replay.run_config(cache), ball_max_gap_s=0.0)  # no extrapolation
+    _, vgs = _variant(tmp_path, no_gap)
+    assert {p: p.read_bytes() for p in before} == before
+    new, old = _sorted_objects(vgs), _sorted_objects(gs)
+    people = pl.col("object_type") != "ball"
+    assert new.filter(people).equals(old.filter(people))
+    assert not new.filter(~people)["interpolated"].any()
+    assert old.filter(~people)["interpolated"].any()
+
+
+def test_variant_refuses_non_ball_fields(tmp_path):
+    cache, _ = synth_run(tmp_path, FakeKeypoints(), CONFIG)
+    bad = dataclasses.replace(replay.run_config(cache), max_off_pitch_m=5.0)
+    with pytest.raises(SystemExit):
+        _variant(tmp_path, bad)
