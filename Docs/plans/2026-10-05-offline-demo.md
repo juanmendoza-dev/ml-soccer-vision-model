@@ -1242,7 +1242,7 @@ git commit -m "infer: p(goal) on a vision run, with 05's inference mask instead 
   - `video.truth_events(clip: dict, gamestate_dir: Path, video_start_s: float, fps: float) -> pl.DataFrame`
   - the CLI flags `--predictions PATH`, `--truth-clip ID`, `--clip-manifest PATH`
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/test_demo_video.py`)
+- [x] **Step 1: Write the failing tests** (append to `tests/test_demo_video.py`)
 
 ```python
 import json  # at the top with the other imports
@@ -1321,12 +1321,12 @@ def test_main_draws_the_meter_from_predictions(tmp_path):
     assert np.abs(img[y, x].astype(int) - want).max() < 40  # mp4v blurs colors a little
 ```
 
-- [ ] **Step 2: Run them, expect failures**
+- [x] **Step 2: Run them, expect failures**
 
 Run: `.venv/Scripts/python -m pytest tests/test_demo_video.py -q`
 Expected: the four new tests FAIL (`start_frame` / `truth_events` missing, `--predictions` unknown, frame 0 drawn instead of frame 3). The old tests pass.
 
-- [ ] **Step 3: Implement in `demo/video.py`**
+- [x] **Step 3: Implement in `demo/video.py`**
 
 Add the imports `import json`, `from demo import meter as mt`, `from demo import tally` and `from vision.bench import load_manifest, sync_offset`. Then add these functions above `main`:
 
@@ -1417,12 +1417,12 @@ In `main`:
 
 Update the module docstring's usage line to show the new flags and the alignment rule.
 
-- [ ] **Step 4: Run the tests, expect a pass**
+- [x] **Step 4: Run the tests, expect a pass**
 
 Run: `.venv/Scripts/python -m pytest tests/test_demo_video.py tests/test_demo_meter.py -q`
 Expected: PASS. If the meter-color test is flaky because mp4v blurs colors, sample the bar's middle (`y = 80 + (min(H_PX-160,420)) // 2 + 20`). Keep the 40 tolerance. Don't drop the assertion.
 
-- [ ] **Step 5: Commit and push**
+- [x] **Step 5: Commit and push**
 
 ```bash
 git add demo/video.py tests/test_demo_video.py
