@@ -419,6 +419,24 @@ Everything below fixes how xG is trained and applied so the StatsBomb side and t
 - **Live:** the map fitted on all 64 matches' out-of-fold rows, stored next to the run's `pgoal.parquet` as `pgoal_map.json`, with a, b and the row and goal counts per horizon.
 - **Checks (report only):** per fold and pooled, summed calibrated P(goal) vs goal rows, calibration in 10 bins and Brier, before and after. PR-AUC is reported but isn't the point: one map per fold barely changes the ranking.
 
+## Offline demo model (2026-10-05)
+The first end-to-end clip (roadmap Phase 3) needs a saved goal model. A broadcast clip from PFF match M is scored by models that never saw M, so its PFF tracking stays a fair reference.
+- **P(shot):** the CV's outer-fold model for M's fold k (`data/splits/folds.json`), refit and saved. Same LightGBM config as `prediction.cv` (`MODELS["lgbm"]`: v1 features, held ball, H = 5 only), trained on the matches outside fold k, loaded in sorted order like `prediction.cv`. The fit has to reproduce `lgbm-held-2026-09-27`'s fold k: equal `best_iter` and `es_matches`, the same null rows, and p on fold k's rows within 1e-3 of the run's out-of-fold `p_h5` (another machine can move LightGBM a little). Otherwise it stops and nothing is saved.
+- **xG:** `xg-v1` unchanged (never saw World Cup 2022). Its file hash goes into the manifest and is checked on load.
+- **P(goal) map:** fold k's cross-fitted map, refit from the run's `pgoal.parquet` on the other four folds' scored rows (05 Recalibration). It has to equal that fold's row of the `pgoal.md` table. The all-64 `pgoal_map.json` isn't used: it was fitted on M's goal labels.
+- **Stored:** `data/models/goal/<model_id>/` with `model.txt` and `manifest.json`: model_id, fold, training match ids, `best_iter`, `es_matches`, features and version, ball source, horizon, map (a, b), base run, the reproduction check, the xG dir and hash, git commit.
+- **Clean training.** Training with the sensitivity degradations on is the deployable choice (Vision sensitivity test), but the existing map was fitted on clean P(shot). A degraded model needs its own CV run and map first, so it's a follow-up.
+- **Not for live or public use.** Live needs an all-64 fit, and the public demo runs on self-recorded footage (08).
+
+## Vision inference (2026-10-05)
+`python -m prediction.infer --match-id <id> --model <dir>` scores a vision run's game state (02) after stage 8 has filled possession and ball state (03, "Offline stage 8 fill").
+- The match is resampled in memory with `resample.resample_match` (`data/processed` isn't written). Vision has no events, so the label columns are empty and unused.
+- v1 features on the held ball with the grid's own `possession_team` and `flipped` (stage 8's possession).
+- **Mask:** the Inference rule above ("## Inference"), not the training `eligible`. Predict where `possession_team` is set, `ball_state` isn't dead (null counts as not dead, so vision gaps don't blank the meter) and some player is visible. Elsewhere every p is null. The shares of grid rows predicted, with null ball state and with no possession go in the sidecar JSON.
+- A run with no possession anywhere is an error (stage 8 wasn't run).
+- **Output:** `data/predictions/<match_id>/<model_id>.parquet`: `match_id, period, t_s, frame_id, timestamp_s, possession_team, ball_state, predicted, p_shot_h5, xg, p_goal_h5`. A same-stem `.json` holds the model manifest's id, the game state's file hashes and the shares.
+- Causal: resampling, features and stage 8 all are, and a test changes objects after t and checks every row `<= t`.
+
 ## Class imbalance
 - **No class weights and no focal loss** (decided 2026-09-28; this replaces "weighted or focal loss"). Plain log loss keeps p calibrated, which the alarms and P(goal) = P(shot) × xG both need. LightGBM showed it works at a ~2.5% base rate: the top decile predicts 0.186 and sees 0.185. Reweighting inflates p, and undoing that is another calibration step to get right. The GNNs use the same loss.
 - Evaluate with PR-AUC, not accuracy.
