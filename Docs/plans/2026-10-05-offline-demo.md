@@ -1535,7 +1535,7 @@ git commit -m "demo clip manifest: arg-fra 81st minute goal, sync and marks" && 
 - Create: `scripts/demo_compare.py`, `Docs/reviews/offline-demo-<date>.md`
 - Modify: `Docs/Specs/roadmap.md`
 
-- [ ] **Step 1: Predict and render**
+- [x] **Step 1: Predict and render**
 
 ```bash
 .venv/Scripts/python -m prediction.infer --match-id demo01-arg-fra-81 --model data/models/goal/goal-f0-2026-10-05
@@ -1544,7 +1544,7 @@ git commit -m "demo clip manifest: arg-fra 81st minute goal, sync and marks" && 
 
 Write down `predicted_share` and the null shares from infer. Watch the render all the way through.
 
-- [ ] **Step 2: Comparison script** (`scripts/demo_compare.py`, analysis only, like the other scripts)
+- [x] **Step 2: Comparison script** (`scripts/demo_compare.py`, analysis only, like the other scripts)
 
 ```python
 """Vision vs PFF-tracking P(goal) on a demo clip (roadmap Phase 3, "compare predictor
@@ -1614,14 +1614,14 @@ if __name__ == "__main__":
 
 Run: `PYTHONPATH=. .venv/Scripts/python scripts/demo_compare.py --clip demo01-arg-fra-81 --model-id goal-f0-2026-10-05`
 
-- [ ] **Step 3: Commit and push the script**
+- [x] **Step 3: Commit and push the script**
 
 ```bash
 git add scripts/demo_compare.py
 git commit -m "script: vision vs pff tracking p(goal) on the demo clip" && git push
 ```
 
-- [ ] **Step 4: Write `Docs/reviews/offline-demo-<date>.md`**
+- [x] **Step 4: Write `Docs/reviews/offline-demo-<date>.md`**
 
 Write it in the style of the existing reviews: numbers first, short sections. Include:
 - **Footage:** file, source, window, private only (08).
@@ -1631,7 +1631,7 @@ Write it in the style of the existing reviews: numbers first, short sections. In
 - **What to fix first, judged from this clip:** ball, possession (v1h on vision), lead time, direction/teams.
 - **The Task 2 PFF pitch-view notes:** both goals.
 
-- [ ] **Step 5: Roadmap**
+- [x] **Step 5: Roadmap**
 
 In `Docs/Specs/roadmap.md`, Phase 3:
 - Tick "Feed vision game state into trained predictor", with a pointer to the review.
@@ -1640,7 +1640,7 @@ In `Docs/Specs/roadmap.md`, Phase 3:
 
 Phase 2: tick "Plug in stage 8" as "offline fill done (rule-only), live still open". Keep it unticked if you'd rather tick only the live wiring, and say so in the line.
 
-- [ ] **Step 6: Commit and push**
+- [x] **Step 6: Commit and push**
 
 ```bash
 git add Docs/reviews/offline-demo-*.md && git commit -m "review: first offline demo clip, arg-fra goal with the meter" && git push
