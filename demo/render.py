@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 import polars as pl
 
+from demo import meter as mt
 from demo import overlay as ov
 from demo import tally
 from demo.pitch import AWAY, HOME, UNKNOWN, Pitch
@@ -45,7 +46,8 @@ class Scene:
     """One match loaded for rendering: frames, events, every ball row (for the tallies
     and the trail), the possession tally, and the players of frames [first - trail, last]."""
 
-    def __init__(self, match_dir: Path, first: int, last: int):
+    def __init__(self, match_dir: Path, first: int, last: int, meter=None):
+        self.meter = meter
         match = pl.read_parquet(match_dir / "match.parquet").row(0, named=True)
         self.names = {"home": match["home_team"], "away": match["away_team"]}
         self.fps = float(match["native_fps"])
@@ -78,7 +80,7 @@ class Scene:
                 named=True
             )
         }
-        self.size = (PITCH.size[0], HEADER + PITCH.size[1] + FOOTER)
+        self.size = (PITCH.size[0] + (mt.METER_W if meter else 0), HEADER + PITCH.size[1] + FOOTER)
 
     def frame_ids(self, first: int, last: int, step: int = 1) -> list[int]:
         return sorted(f for f in self.frame_at if first <= f <= last)[::step]
@@ -87,7 +89,7 @@ class Scene:
         f = self.frame_at[frame_id]
         w, h = self.size
         img = np.full((h, w, 3), ov.PANEL_BG, dtype=np.uint8)
-        img[HEADER : HEADER + PITCH.size[1]] = PITCH.blank()
+        img[HEADER : HEADER + PITCH.size[1], : PITCH.size[0]] = PITCH.blank()
         PITCH.draw_lines(img, goals=True)
         players = self.players.get((frame_id,), self.empty)
         ball = self.ball_at.get(frame_id)
@@ -132,6 +134,10 @@ class Scene:
             ov.ball_marker(
                 img, center, BALL_R, ov.tint(ball["interpolated"], ball["confidence"]), tip
             )
+
+        if self.meter is not None:
+            p = self.meter.value(f["period"], f["timestamp_s"])
+            mt.draw(img, (PITCH.size[0], HEADER, mt.METER_W, PITCH.size[1]), p)
 
         ov.possession_panel(
             img,
@@ -187,6 +193,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--before", type=float, default=15.0, help="s before the goal")
     ap.add_argument("--after", type=float, default=5.0, help="s after the goal")
     ap.add_argument("--step", type=int, default=1, help="draw every n-th native frame")
+    ap.add_argument("--pgoal", type=Path, help="a CV run's pgoal.parquet: draws the danger meter")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
 
@@ -195,7 +202,11 @@ def main(argv: list[str] | None = None) -> None:
         first, last = goal_window(d, args.goal, args.before, args.after)
     else:
         first, last = (int(v) for v in args.frames.split("-"))
-    scene = Scene(d, first, last)
+    meter = None
+    if args.pgoal:
+        rows = pl.read_parquet(args.pgoal).filter(pl.col("match_id") == args.match)
+        meter = mt.Meter(rows, "p_goal_cal_h5")
+    scene = Scene(d, first, last, meter)
     ids = scene.frame_ids(first, last, args.step)
     if not ids:
         raise SystemExit(f"no frames in {first}-{last}")
