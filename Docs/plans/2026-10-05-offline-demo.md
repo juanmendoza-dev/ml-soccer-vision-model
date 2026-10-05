@@ -425,7 +425,7 @@ If the bar is unreadable (flat or pinned), change `P_MIN` / `P_MAX` once, update
   - `goal_model.fold_map(pgoal: pl.DataFrame, fold: int) -> tuple[float, float]`
   - `goal_model.GoalModel(model_dir: Path)` with `.manifest: dict` and `.predict(feats: pl.DataFrame) -> pl.DataFrame`. `predict` returns the columns `p_shot_h5, xg, p_goal_h5`, unmasked; nulls where there's no held ball.
 
-- [ ] **Step 1: Write the failing tests** (`tests/test_goal_model.py`)
+- [x] **Step 1: Write the failing tests** (`tests/test_goal_model.py`)
 
 ```python
 """05 "Offline demo model": the fold map, and GoalModel's P(shot) x xG -> map."""
@@ -534,12 +534,12 @@ def test_a_changed_xg_file_is_refused(tmp_path):
         gm.GoalModel(d)
 ```
 
-- [ ] **Step 2: Run them, expect failures**
+- [x] **Step 2: Run them, expect failures**
 
 Run: `.venv/Scripts/python -m pytest tests/test_goal_model.py -q`
 Expected: FAIL, `ModuleNotFoundError: No module named 'prediction.goal_model'`
 
-- [ ] **Step 3: Implement `prediction/goal_model.py`**
+- [x] **Step 3: Implement `prediction/goal_model.py`**
 
 ```python
 """The demo's goal model (05 "Offline demo model"): LightGBM P(shot) refit exactly like CV
@@ -705,19 +705,19 @@ if __name__ == "__main__":
 
 Check that `converters.common` exports `git_commit` and `sha256`. `vision/writer.py` and `vision/run.py` import them from there, so it should.
 
-- [ ] **Step 4: Run the tests, expect a pass**
+- [x] **Step 4: Run the tests, expect a pass**
 
 Run: `.venv/Scripts/python -m pytest tests/test_goal_model.py -q`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit and push**
+- [x] **Step 5: Commit and push**
 
 ```bash
 git add prediction/goal_model.py tests/test_goal_model.py
 git commit -m "goal model: refit cv outer fold, check it against the base run, save with its fold map" && git push
 ```
 
-- [ ] **Step 6: Fit the fold-0 model on the workstation**
+- [x] **Step 6: Fit the fold-0 model on the workstation**
 
 Run: `.venv/Scripts/python -m prediction.goal_model --fold 0 --model-id goal-f0-2026-10-05`
 
