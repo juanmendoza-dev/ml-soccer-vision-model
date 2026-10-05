@@ -337,3 +337,29 @@ def test_pff_score_and_agreement(ball_dirs, monkeypatch):
     a = bench.agreement(recs)
     assert a["n"] == 3 and a["within_25"] == pytest.approx(2 / 3)
     assert a["verdict_40"] == pytest.approx(1.0)
+
+
+def test_ball_labels_round_trip_keeps_the_lists(tmp_path):
+    path = tmp_path / "labels.json"
+    clips = {
+        "c": {
+            "video_sha256": "abc",
+            "every": 5,
+            "labels": {5: [1.0, 2.0], 10: "none"},
+            "auto": [5],
+            "spot_checked": [5],
+            "flag_checked": [10],
+            "auto_off": True,
+        }
+    }
+    bench.save_ball_labels(clips, path)
+    back = bench.load_ball_labels(path)["c"]
+    assert back["labels"] == {5: [1.0, 2.0], 10: "none"}
+    assert (back["auto"], back["spot_checked"], back["flag_checked"], back["auto_off"]) == (
+        [5],
+        [5],
+        [10],
+        True,
+    )
+    bench.save_ball_labels({"d": {"video_sha256": "x", "every": 5, "labels": {}}}, path)
+    assert "auto" not in bench.load_ball_labels(path)["d"]  # absent stays absent

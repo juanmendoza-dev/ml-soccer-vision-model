@@ -41,6 +41,9 @@ BALL_EVERY = 5  # label every 5th source frame
 BALL_NONE, BALL_UNSURE = "none", "unsure"
 BALL_R_PX = 15.0  # a hit: about one ball diameter at 1080p on the bench
 BALL_RS = (10.0, 25.0)  # printed next to it
+# per clip, source frames: auto-accepted by ball_click --assist, auto frames shown in the
+# spot check, flagged frames a person looked at again (10-ball 1c)
+LABEL_LISTS = ("auto", "spot_checked", "flag_checked")
 
 
 def load_manifest(path: Path) -> list[dict]:
@@ -108,6 +111,9 @@ def load_ball_labels(path: Path = BALL_LABELS) -> dict:
         for v in c["labels"].values():
             if not (v in (BALL_NONE, BALL_UNSURE) or (isinstance(v, list) and len(v) == 2)):
                 raise ValueError(f"bad ball label {v!r}")
+        for k in LABEL_LISTS:
+            if k in c and not all(isinstance(i, int) for i in c[k]):
+                raise ValueError(f"{k} must list source frame indices")
     return clips
 
 
@@ -115,9 +121,12 @@ def save_ball_labels(clips: dict, path: Path = BALL_LABELS) -> None:
     """One label per line, so a diff shows what was clicked. Written whole, then swapped in."""
     lines = ['{"version": 1, "clips": {']
     for n, (clip_id, c) in enumerate(sorted(clips.items())):
+        extra = "".join(f'"{k}": {json.dumps(sorted(c[k]))}, ' for k in LABEL_LISTS if k in c)
+        if c.get("auto_off"):
+            extra += '"auto_off": true, '
         lines.append(
             f'  "{clip_id}": {{"video_sha256": "{c["video_sha256"]}", "every": {c["every"]}, '
-            '"labels": {'
+            f'{extra}"labels": {{'
         )
         items = sorted(c["labels"].items())
         for k, (idx, v) in enumerate(items):
