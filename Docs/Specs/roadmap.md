@@ -193,21 +193,23 @@ In priority order from the 2026-09-27 review (`Docs/reviews/vision-review-2026-0
 **6. Later**
 - [ ] Move off `sv.ByteTrack` before supervision 0.31 (pinned below it)
 - [ ] Bounded-memory writer before full-match runs
-- [ ] Plug in stage 8 (possession / ball state) from Phase 1
+- [ ] Plug in stage 8 (possession / ball state) from Phase 1. Offline fill done 2026-10-05 (`python -m vision.stage8`, rule-only, 03 "Offline stage 8 fill"); live wiring still open, so unticked
 - [ ] Jersey OCR → player_id
 - [ ] Evaluate on SoccerNet-GSR clips
 
 Skipped for now: schema 0.7 for empty runs, shootout (period 5) handling in vision.
 
 ## Phase 3 — End to end + demo
-**Next (2026-10-05): offline demo first, before the ball build.** Plan: `Docs/plans/2026-10-05-offline-demo.md`. One private clip (ARG–FRA 81' goal, 10517) through vision → stage 8 fill → the fold-0 goal model → danger meter on video, compared with PFF tracking. Covers the first three items below.
-- [ ] Feed vision game state into trained predictor
+**Offline demo done 2026-10-05** (`Docs/reviews/offline-demo-2026-10-05.md`). **Next from it: the ball build (10-ball): height for aerial balls, a speed gate on tracker jumps; then ball state after a goal, v1h possession on vision runs, keeper team from position.** Was: Plan: `Docs/plans/2026-10-05-offline-demo.md`. One private clip (ARG–FRA 81' goal, 10517) through vision → stage 8 fill → the fold-0 goal model → danger meter on video, compared with PFF tracking. Covers the first three items below.
+- [x] Feed vision game state into trained predictor **Done 2026-10-05 on one clip (`Docs/reviews/offline-demo-2026-10-05.md`): `vision.stage8` → `prediction.infer` with the fold-0 demo model. The meter rises about 2 s out while vision has the ball on the ground, then aerial balls and false detections take over. Ball first (10-ball)**
 - [ ] Compare predictor accuracy on vision vs. dataset tracking
+  - [x] One clip done 2026-10-05 (`scripts/demo_compare.py`, offline demo review): possession agreement 88.8%, log-p correlation 0.62 on 162 rows. Open for more clips
 - [ ] Offline overlay renderer, with debug mode (08)
   - [x] Ball highlight ring + velocity arrow (08; uses existing ball position/vx,vy, no new inference) **Done 2026-10-01 in the pitch view (`python -m demo.render`, 08 "Element definitions"); on video once vision output has screen positions**
   - [x] Possession % and territorial/attacking-third % panels (08; aggregates possession_team + pitch_x over time, no new inference) **Done 2026-10-01: cumulative from kickoff, thirds by each frame's attacking direction**
   - [x] Sprint highlight, ball trail, confidence/uncertainty tint, event ticker, shooting-lane cone (08; all rendering over existing fields, no new inference) **Done 2026-10-01: cone counts 05's `lane_defenders` via `in_lane`; all four goals of 10502 render (20 s in about 7 s on the M1)**
   - [x] Ball marker on real video (`python -m demo.video`, 08 "Ball marker on video"): built 2026-10-01 and watched on real footage the same day: 300 frames of roboflow/sports' sample `2e57b9_0.mp4`, vision on the M1 (`--device mps`, 2.6 fps), ball on 273 frames, a usable mapping on all 273. One ball detection jumped about 25 m in a frame (382 m/s), now drawn without an arrow or trail (08). Still open: smoke04 on the workstation
+  - [x] Danger meter (08 "Danger meter"): causal lookup on the 10 Hz rows, log scale, in the pitch view (`demo.render --pgoal`) and on video (`demo.video --predictions`, with the PFF truth ticker `--truth-clip`). **Done 2026-10-05**
   - [ ] Offside line (08; geometry off team + x-positions, needs solid homography accuracy on the defensive line)
   - [ ] Pitch control / space heatmap (08; Voronoi over player positions, CPU-only, no new inference)
 - [ ] Benchmark each vision stage on the 2060 (FP16 / TensorRT) and pick the live config (09)
