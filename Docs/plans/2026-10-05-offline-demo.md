@@ -1439,7 +1439,7 @@ The goal is from Task 2 Step 9 (default: goal 4, Mbappé, period 2 at PFF t 2158
 - Create: `data/splits/demo_clips.json` (tracked, like `vision_benchmark.json`)
 - Local only: `C:/footage/wc2022/13_argentina-vs-france-goal81.mp4`, an entry in `data/vision_bench/videos.json`
 
-- [ ] **Step 1: Download the window (the user runs this)**
+- [x] **Step 1: Download the window (the user runs this)**
 
 The 01 clip came from YouTube `RgqKdplLIk4` starting at 4465 s, and vb01's sync puts PFF period-2 time at video time + 1167.48 s. So PFF period-2 t ≈ YouTube s − 3297.5, and the goal at 2158.6 s is near YouTube 5456 s. Download 5366–5476 s (110 s). That's a 30 s pre-roll for the gate and the team warmup, then 60 s before the goal and 20 s after it.
 
@@ -1451,7 +1451,7 @@ yt-dlp -f 616+251 --download-sections "*5366-5476" --force-keyframes-at-cuts --r
 
 Check it's 1080p at 30 fps (`ffprobe`), and that the goal is near 90 s into the file. If the broadcast upload has edits and the goal isn't there, widen the window. Don't guess the offset.
 
-- [ ] **Step 2: Two sync pairs inside the clip**
+- [x] **Step 2: Two sync pairs inside the clip**
 
 Estimated offset for this file: PFF t ≈ video_s + 2068.5. List the kicks around it:
 
@@ -1461,7 +1461,7 @@ PYTHONPATH=. .venv/Scripts/python scripts/kick_times.py --match-id 10517 --perio
 
 Open the clip and find two kicks the list predicts: one early (around 10–30 s into the file) and the strike before the goal. Record each as `{"video_s": ..., "timestamp_s": ...}`. The two offsets must agree within 0.1 s (the bench's drift check). Otherwise mark them again.
 
-- [ ] **Step 3: Marks and manifest**
+- [x] **Step 3: Marks and manifest**
 
 Watch 28–105 s and mark every replay, close-up or other non-live stretch, as in vb01. The celebration after the goal will be one. Then write `data/splits/demo_clips.json`:
 
@@ -1489,7 +1489,7 @@ Watch 28–105 s and mark every replay, close-up or other non-live stretch, as i
 
 Fill in the real sha256 (`sha256sum`), the sync pairs and the marks. `video_start_s` is 28, not 30: the bench allows at most `MAX_PREROLL_S` = 30 s of unscored pre-roll, so this stays clear of that limit. `home_attacks_tv_right_p1: true` is vb01's value for the same broadcast; Step 5 checks it. Add `"demo01-arg-fra-81": "C:/footage/wc2022/13_argentina-vs-france-goal81.mp4"` to `data/vision_bench/videos.json` (local, gitignored). Keep the clip out of `vision_benchmark.json`: adding it would shift the pooled bench numbers.
 
-- [ ] **Step 4: Vision run (no home cluster yet)**
+- [x] **Step 4: Vision run (no home cluster yet)**
 
 ```bash
 .venv/Scripts/python -m vision.run --video C:/footage/wc2022/13_argentina-vs-france-goal81.mp4 --weights-dir ../sports/examples/soccer/data --pnl-weights-dir C:/Users/superCookie/Desktop/PnLCalib --match-id demo01-arg-fra-81 --home Argentina --away France --period 2 --max-frames 3150
@@ -1497,7 +1497,7 @@ Fill in the real sha256 (`sha256sum`), the sync pairs and the marks. `video_star
 
 Expect about 3 fps on the 2060, so roughly 17 minutes. 3150 frames is 105 s at 30 fps.
 
-- [ ] **Step 5: Bench check against PFF (direction, sync, teams)**
+- [x] **Step 5: Bench check against PFF (direction, sync, teams)**
 
 ```bash
 .venv/Scripts/python -m vision.bench --manifest data/splits/demo_clips.json --offset-check
@@ -1510,7 +1510,7 @@ Pass looks like:
 
 If within 2 m is near zero, the direction is wrong. Set `home_attacks_tv_right_p1` to false, rerun Step 4 with `--home-attacks-left` and check again. If the offset is off, redo Step 2.
 
-- [ ] **Step 6: Rerun with the home cluster, check again, then fill stage 8**
+- [x] **Step 6: Rerun with the home cluster, check again, then fill stage 8**
 
 ```bash
 .venv/Scripts/python -m vision.run ... (as Step 4) --home-cluster <N>
@@ -1520,7 +1520,7 @@ If within 2 m is near zero, the direction is wrong. Set `home_attacks_tv_right_p
 
 The bench numbers should be the same as in Step 5, with the cluster now set rather than picked. From stage 8, write down `possession_set_share` and `ball_state_null_share` for the review.
 
-- [ ] **Step 7: Commit and push the manifest**
+- [x] **Step 7: Commit and push the manifest**
 
 ```bash
 git add data/splits/demo_clips.json
