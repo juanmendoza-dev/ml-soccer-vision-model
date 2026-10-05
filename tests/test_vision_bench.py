@@ -299,3 +299,41 @@ def test_ball_labels_on_another_video_are_refused(ball_dirs):
     fake_pff(gs_dir)
     with pytest.raises(SystemExit):
         bench.Clip(clip(), cache_dir, gs_dir, {"synth": {"video_sha256": "x", "labels": {}}})
+
+
+def test_pff_score_and_agreement(ball_dirs, monkeypatch):
+    from vision import ball_truth
+
+    cache_dir, gs_dir = ball_dirs
+    fake_pff(gs_dir)
+    u, v = (float(c) for c in feet_px(BALL_AT))
+    truth = pl.DataFrame(
+        {
+            "src": [22, 30, 34, 36, 38],
+            "kind": ["pff", "pff", "pff", "estimated", "pff"],
+            "u": [u, u + 30, u + 100, u, 10.0],
+            "v": [v, v, v, v, 10.0],
+        }
+    )
+    monkeypatch.setattr(ball_truth, "load", lambda c: truth)
+    # 22: extrapolated row on the projection (hit at 40 and 25); only the weak (10, 10)
+    #     candidate on the frame, so no candidate near it (ceiling no)
+    # 30: detected row 30 px from the projection: hit at 40, miss at 25; ceiling yes
+    # 34: projection 100 px from the row and every candidate: miss, ceiling no
+    # 36: estimated: no hit/miss, a row on an estimated frame
+    # 38: projection on the 0.2 candidate, the row is at the real ball: miss, ceiling yes
+    labels = {22: [u + 3, v], 30: [u, v], 34: [u + 100, v], 38: bench.BALL_NONE}
+    c = bench.Clip(
+        clip(), cache_dir, gs_dir, {"synth": {"video_sha256": "abc", "every": 5, "labels": labels}}
+    )
+    recs = c.score([])["pff_ball"]
+    h = bench.pff_headline(recs)
+    assert h["n_pff"] == 4 and h["rows_estimated"] == 1
+    assert h["recall"] == pytest.approx(2 / 4) and h["recall_25"] == pytest.approx(1 / 4)
+    assert h["precision"] == pytest.approx(2 / 4)  # all four pff frames have a row
+    assert h["ceiling"] == pytest.approx(2 / 4)
+    # labels on pff frames: 22 is 3 px from the projection, 30 is 30 px, 34 is 0 px
+    # verdicts (click hit at 15 px vs PFF hit at 40): 22 hit/hit, 30 hit/hit, 34 miss/miss
+    a = bench.agreement(recs)
+    assert a["n"] == 3 and a["within_25"] == pytest.approx(2 / 3)
+    assert a["verdict_40"] == pytest.approx(1.0)

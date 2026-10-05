@@ -546,6 +546,130 @@ def fmt_ball(recs: list[dict]) -> str:
     )
 
 
+PFF_R_PX = 40.0  # 10-ball 1d: a hit against PFF's projected ball
+PFF_RS = 25.0  # printed next to it
+AGREE_PX = 25.0  # a good label this close to the projection agrees with PFF
+AGREE_MIN = 0.70  # below this on a labeled clip the PFF score is withheld (vb02: 84.4%)
+AGREE_MIN_N = 20  # labels needed before the agreement can withhold anything
+
+
+def pff_frames(
+    truth: pl.DataFrame,
+    labels: dict | None,
+    skip: int,
+    det: pl.DataFrame,
+    balls: pl.DataFrame,
+    frames: pl.DataFrame,
+    hs: dict,
+    config,
+) -> list[dict]:
+    """Per PFF reference frame inside the run (10-ball 1d): its kind, vision's ball row and
+    the nearest candidate as pixel distances to PFF's projection, and, where the frame has
+    an [x, y] label, the label's distance to the projection and whether the row hits it."""
+    rows = {r["frame_id"]: r for r in det.filter(pl.col("class") == BALL).iter_rows(named=True)}
+    cands: dict[int, list] = {}
+    for f, x1, y1, x2, y2 in balls.select("frame_id", "x1", "y1", "x2", "y2").iter_rows():
+        cands.setdefault(f, []).append(((x1 + x2) / 2, (y1 + y2) / 2))
+    views = dict(frames.select("frame_id", "view").iter_rows())
+    out = []
+    for src, kind, u, v in truth.select("src", "kind", "u", "v").iter_rows():
+        f = src - skip
+        if f not in views:
+            continue
+        rec = {
+            "frame": src,
+            "kind": kind,
+            "match_view": views[f] == MATCH,
+            "row": None,
+            "has_xy": False,
+            "d_px": None,
+            "cand_px": None,
+            "lab_px": None,
+            "click_hit": None,
+        }
+        r = rows.get(f)
+        at_px = None
+        if r is not None:
+            rec["row"] = "extrap" if r["tracked_only"] else "det"
+            rec["has_xy"] = r["pitch_x"] is not None
+            if rec["has_xy"] or not r["tracked_only"]:
+                at_px = np.array(ball_px(r, hs.get(f), config.home_attacks_tv_right_p1))
+        if u is not None:
+            proj = np.array([u, v])
+            if at_px is not None:
+                rec["d_px"] = float(np.linalg.norm(at_px - proj))
+            near = [float(np.hypot(x - u, y - v)) for x, y in cands.get(f, [])]
+            rec["cand_px"] = min(near) if near else None
+            lab = (labels or {}).get(src)
+            if isinstance(lab, list):
+                rec["lab_px"] = float(np.linalg.norm(np.array(lab) - proj))
+                rec["click_hit"] = bool(
+                    rec["has_xy"]
+                    and at_px is not None
+                    and np.linalg.norm(at_px - np.array(lab)) <= BALL_R_PX
+                )
+        out.append(rec)
+    return out
+
+
+def pff_headline(recs: list[dict], r_px: float = PFF_R_PX) -> dict:
+    """PFF score (10-ball 1d) on `pff` frames: recall, precision, the candidates' ceiling,
+    recall at 25 px, and how many vision rows fall on `estimated` frames."""
+
+    def hit(x, r=r_px):
+        return x["has_xy"] and x["d_px"] is not None and x["d_px"] <= r
+
+    pff = [x for x in recs if x["kind"] == "pff"]
+    shown = [x for x in pff if x["has_xy"]]
+
+    def frac(a, b):
+        return a / b if b else float("nan")
+
+    return {
+        "n_pff": len(pff),
+        "recall": frac(sum(map(hit, pff)), len(pff)),
+        "recall_25": frac(sum(hit(x, PFF_RS) for x in pff), len(pff)),
+        "precision": frac(sum(map(hit, shown)), len(shown)),
+        "ceiling": frac(
+            sum(x["cand_px"] is not None and x["cand_px"] <= r_px for x in pff), len(pff)
+        ),
+        "rows_estimated": sum(x["has_xy"] for x in recs if x["kind"] == "estimated"),
+    }
+
+
+def agreement(recs: list[dict]) -> dict:
+    """10-ball 1d's check on a labeled clip, over [x, y] labels on `pff` frames: the share
+    within 25 px of the projection, and how often a hit under the click (15 px) and under
+    PFF (40 px) agree."""
+    lab = [x for x in recs if x["kind"] == "pff" and x["lab_px"] is not None]
+    if not lab:
+        return {"n": 0, "within_25": float("nan"), "verdict_40": float("nan")}
+    pff_hit = [x["has_xy"] and x["d_px"] is not None and x["d_px"] <= PFF_R_PX for x in lab]
+    return {
+        "n": len(lab),
+        "within_25": sum(x["lab_px"] <= AGREE_PX for x in lab) / len(lab),
+        "verdict_40": sum(x["click_hit"] == h for x, h in zip(lab, pff_hit, strict=True))
+        / len(lab),
+    }
+
+
+def fmt_pff(recs: list[dict]) -> str:
+    h, a = pff_headline(recs), agreement(recs)
+    agree = ""
+    if a["n"]:
+        agree = (
+            f"; agreement: labels within 25 px {a['within_25']:.1%} of {a['n']}, "
+            f"verdict at 40 px {a['verdict_40']:.1%}"
+        )
+        if a["n"] >= AGREE_MIN_N and a["within_25"] < AGREE_MIN:
+            return f"PFF score withheld: agreement {a['within_25']:.1%} (sync or camera?){agree}"
+    return (
+        f"PFF score ({h['n_pff']} pff frames): recall {h['recall']:.1%} at 40 px "
+        f"({h['recall_25']:.1%} at 25 px), precision {h['precision']:.1%}, "
+        f"ceiling {h['ceiling']:.1%}, rows on estimated frames {h['rows_estimated']}{agree}"
+    )
+
+
 class Clip:
     """One clip's caches and truth, loaded once so a sweep only replays."""
 
@@ -580,6 +704,11 @@ class Clip:
             self.ball_labels = lab["labels"]
         self.fps = pl.read_parquet(vision_gs / "match.parquet")["native_fps"][0]
         self.pff = gamestate_dir / clip["match_id"] if clip["match_id"] is not None else None
+        self.truth = None  # 10-ball 1b, built by python -m vision.ball_truth
+        if self.balls is not None and clip["match_id"] is not None:
+            from vision import ball_truth  # it imports bench
+
+            self.truth = ball_truth.load(clip)
         self._check_replay()
 
     def _check_replay(self) -> None:
@@ -619,13 +748,18 @@ class Clip:
             self.fps,
             offset_check,
         )
-        if self.ball_labels is not None:
+        if self.ball_labels is not None or self.truth is not None:
             _, keypoints, views, times = self.inputs
             hs = replay.frame_homographies(
                 keypoints, views, times, config, revote, self.config.keypoints_every
             )
             skip = round(self.run_start_s * self.fps)
+        if self.ball_labels is not None:
             out["ball"] = ball_frames(self.ball_labels, skip, det, self.balls, frames, hs, config)
+        if self.truth is not None:
+            out["pff_ball"] = pff_frames(
+                self.truth, self.ball_labels, skip, det, self.balls, frames, hs, config
+            )
         return out
 
 
@@ -681,6 +815,9 @@ def main(argv: list[str] | None = None) -> None:
             print(" ".join(combo) or "(run config)", "|", fmt(h))
             if ball:
                 print("   ", fmt_ball(ball))
+            pff_ball = [x for c in per_clip for x in c.get("pff_ball", [])]
+            if pff_ball:
+                print("   ", fmt_pff(pff_ball))
 
     if len(combos) == 1:
         ((run, h),) = results
@@ -705,10 +842,17 @@ def main(argv: list[str] | None = None) -> None:
                 )
             if c.get("ball"):
                 print("   ", fmt_ball(c["ball"]))
+            if c.get("pff_ball"):
+                print("   ", fmt_pff(c["pff_ball"]))
+            elif c["n_truth_frames"]:
+                print(f"    no PFF reference (python -m vision.ball_truth --clip {c['clip_id']})")
         print(f"pooled ({len(loaded)} clips): {fmt(h)}")
         ball = [x for c in run["clips"] for x in c.get("ball", [])]
         if ball:
             print("   ", fmt_ball(ball))
+        pff_ball = [x for c in run["clips"] for x in c.get("pff_ball", [])]
+        if pff_ball:
+            print("   ", fmt_pff(pff_ball))
     else:
         chosen = pick(results)
         if chosen is None:
