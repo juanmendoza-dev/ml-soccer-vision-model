@@ -222,6 +222,6 @@ Each step is a commit series with its own bench check.
    - Done per 3c.
 6. **Carrier hold** (2d), after stage 8 runs inside `VisionPipeline`.
    - Check by replay on the PFF score's filled frames: median distance to the projection lower than extrapolation's.
-3b. **Ball in the air** (2g; ball fix plan Phase D, design approved by the user 2026-10-05).
+3b. **Done 2026-10-06** (ball fix review, "Phase D: built"), default `inf` at the user's call. **Ball in the air** (2g; ball fix plan Phase D, design approved by the user 2026-10-05).
    - Done per 2g. Built; the default stays `inf` until step 5 re-derives `ball_air_ratio` on the fine-tuned boxes, then it's switched on if the bench clips keep their ball.
 7. **Live ball model** (smaller YOLO, TensorRT fp16, rate). Measured against 09's budget.
