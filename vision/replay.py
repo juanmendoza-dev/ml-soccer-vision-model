@@ -27,7 +27,7 @@ import polars as pl
 
 from converters.common import causal_velocities
 from gamestate.validate import validate_match
-from vision.ball import BallTrack
+from vision.ball import BallTrack, expected_width
 from vision.calib import accept, camera_fit, camera_from_peaks
 from vision.config import VisionConfig
 from vision.pipeline import frac_box
@@ -259,11 +259,19 @@ def _ball_track(
                 return None, None
             return float(xy[0]), float(xy[1])
 
+        width_at = None
+        if H is not None:
+            Hinv = np.linalg.inv(H)
+
+            def width_at(px, H=H, Hinv=Hinv):
+                return expected_width(Hinv, H, px)
+
         b = track.update(
             times[frame_id],
             by_frame.get(frame_id, []) if detect_now else [],
             to_pitch,
             H is not None,
+            width_at,
         )
         if b is not None:
             yield match_id, frame_id, segment, H, b

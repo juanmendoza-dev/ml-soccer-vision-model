@@ -1,7 +1,9 @@
 """Stage 5: BallTrack, the ball from the frame's candidates (03)."""
 
+import numpy as np
 import pytest
 
+from vision import ball
 from vision.ball import BallTrack
 from vision.config import VisionConfig
 from vision.types import BALL, Detection
@@ -51,3 +53,40 @@ def test_ball_seen_without_a_pitch_position_resets_the_track():
     # next good fix starts fresh: no velocity carried from before the bad frame
     track.update(0.4, [ball_det(10, 0)], meters)
     assert track.update(0.5, [], meters).x == pytest.approx(10.0)
+
+
+def filt(**kw):
+    return VisionConfig(ball_cand_margin_m=2.0, ball_size_lo=0.5, ball_size_hi=2.0, **kw)
+
+
+def wide(x, y, w, conf=0.9):
+    return Detection((x - w / 2, y - 1, x + w / 2, y + 1), BALL, conf)
+
+
+def width10(px):  # every candidate expects a 10 px ball
+    return 10.0
+
+
+def test_speck_and_boot_sized_boxes_are_dropped():
+    track = BallTrack(filt())
+    assert track.update(0.0, [wide(0, 0, 4)], meters, width_at=width10) is None  # < 5 px
+    assert track.update(0.1, [wide(0, 0, 27)], meters, width_at=width10) is None  # > 26 px
+    assert track.update(0.2, [wide(0, 0, 25)], meters, width_at=width10).x == 0.0
+
+
+def test_logo_off_the_pitch_dropped_touchline_ball_kept():
+    track = BallTrack(filt())
+    logo, ball = wide(52.5 + 5, 0, 10), wide(0, 34.0, 10, conf=0.4)
+    b = track.update(0.0, [logo, ball], meters, width_at=width10)
+    assert (b.x, b.y) == (0.0, 34.0)
+
+
+def test_filters_are_skipped_without_geometry():
+    track = BallTrack(filt())
+    b = track.update(0.0, [wide(0, 0, 4)], lambda px: (None, None), h_ok=False, width_at=None)
+    assert b is not None and b.x is None  # today's rule: seen, no position
+
+
+def test_expected_width_is_the_ball_through_the_homography():
+    H = np.diag([0.1, 0.1, 1.0])  # 10 px a meter
+    assert ball.expected_width(np.linalg.inv(H), H, (500.0, 300.0)) == pytest.approx(2.2)

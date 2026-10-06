@@ -10,7 +10,7 @@ from typing import Protocol
 
 import numpy as np
 
-from vision.ball import BallTrack
+from vision.ball import BallTrack, expected_width
 from vision.calib import accept, camera_fit, camera_from_peaks
 from vision.config import VisionConfig
 from vision.pitch import HomographyFilter, fit_homography, on_pitch, project, template, to_02
@@ -224,7 +224,14 @@ class VisionPipeline:
                 )
             )
         objects = self._goalkeeper_teams(objects)
-        b = self.ball.update(t, balls, to_pitch, h_ok)
+        width_at = None
+        if h_ok:
+            Hinv = np.linalg.inv(H)
+
+            def width_at(px: tuple[float, float]) -> float | None:
+                return expected_width(Hinv, H, px)
+
+        b = self.ball.update(t, balls, to_pitch, h_ok, width_at)
         ball = None
         if b is not None:
             ball = VisionObject(

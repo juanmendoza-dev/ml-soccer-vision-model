@@ -5,16 +5,30 @@ change here replays exactly. Causal: extrapolated forward only, never filled
 from later frames.
 """
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
 
 from vision.config import VisionConfig
-from vision.pitch import on_pitch
+from vision.pitch import on_pitch, project
 from vision.types import Box, Detection
 
 ToPitch = Callable[[tuple[float, float]], tuple[float | None, float | None]]
+WidthAt = Callable[[tuple[float, float]], float | None]
+BALL_D = 0.22
+
+
+def expected_width(Hinv: np.ndarray, H: np.ndarray, px: tuple[float, float]) -> float | None:
+    """Pixel width of a 0.22 m ball centered at px, at the ground point under it (10-ball
+    2a): that point +-0.11 m along the pitch's x, back through the homography."""
+    g = project(H, [px])[0]
+    if not np.isfinite(g).all():
+        return None
+    a, b = project(Hinv, [g - (BALL_D / 2, 0.0), g + (BALL_D / 2, 0.0)])
+    w = float(np.linalg.norm(b - a))
+    return w if np.isfinite(w) else None
 
 
 @dataclass(frozen=True)
@@ -34,33 +48,67 @@ class BallTrack:
     def reset(self) -> None:
         self._last: tuple[float, np.ndarray, np.ndarray, Box, float] | None = None  # t xy v box conf
 
-    def pick(self, candidates: list[Detection]) -> Detection | None:
-        balls = [d for d in candidates if d.confidence >= self.config.min_det_conf]
-        return max(balls, key=lambda d: d.confidence) if balls else None
+    def _candidates(
+        self,
+        candidates: list[Detection],
+        to_pitch: ToPitch,
+        h_ok: bool,
+        width_at: WidthAt | None,
+    ) -> list[tuple[Detection, np.ndarray | None]]:
+        """(detection, pitch xy or None) for each candidate that passes 10-ball 2a. Without
+        geometry nothing can be judged, so all stay (today's rule)."""
+        c = self.config
+        margin = c.ball_cand_margin_m < c.max_off_pitch_m
+        sized = width_at is not None and (c.ball_size_lo > 0 or math.isfinite(c.ball_size_hi))
+        out = []
+        for d in candidates:
+            x1, y1, x2, y2 = d.box
+            center = ((x1 + x2) / 2, (y1 + y2) / 2)
+            x, y = to_pitch(center)
+            xy = None if x is None else np.array([x, y])
+            if h_ok and margin and (xy is None or not on_pitch(xy, c.ball_cand_margin_m)):
+                continue
+            if h_ok and sized:
+                w = width_at(center)
+                if w is not None and not (
+                    c.ball_size_lo * w <= x2 - x1 <= c.ball_size_hi * w + c.ball_size_pad_px
+                ):
+                    continue
+            out.append((d, xy))
+        return out
+
+    def pick(self, cands: list[tuple[Detection, np.ndarray | None]], t: float):
+        """The (detection, xy) to use, or None."""
+        ok = [dx for dx in cands if dx[0].confidence >= self.config.min_det_conf]
+        return max(ok, key=lambda dx: dx[0].confidence) if ok else None
 
     def update(
-        self, t: float, candidates: list[Detection], to_pitch: ToPitch, h_ok: bool = True
+        self,
+        t: float,
+        candidates: list[Detection],
+        to_pitch: ToPitch,
+        h_ok: bool = True,
+        width_at: WidthAt | None = None,
     ) -> Ball | None:
-        """candidates: the frame's ball detections ([] when the detector didn't run)."""
-        det = self.pick(candidates)
+        """candidates: the frame's ball detections ([] when the detector didn't run).
+        width_at: the expected ball width in pixels at an image point (size filter)."""
         # expire old history before anything uses it: a ball seen 3 s ago must not give
         # the next detection a velocity measured across the gap
         if self._last is not None and t - self._last[0] > self.config.ball_max_gap_s:
             self._last = None
-        if det is not None:
-            x1, y1, x2, y2 = det.box
-            x, y = to_pitch(((x1 + x2) / 2, (y1 + y2) / 2))
-            if x is not None:
-                xy = np.array([x, y])
+        picked = self.pick(self._candidates(candidates, to_pitch, h_ok, width_at), t)
+        if picked is not None:
+            det, xy = picked
+            if xy is not None:
                 v = np.zeros(2)
                 if self._last is not None and t > self._last[0]:
                     v = (xy - self._last[1]) / (t - self._last[0])
                 self._last = (t, xy, v, det.box, det.confidence)
-            else:
-                # seen but no pitch position (bad geometry, off the pitch): the old track
-                # can't bridge this, start over from the next good fix
-                self._last = None
-            return Ball(x, y, det.confidence, det.box, False)
+                return Ball(float(xy[0]), float(xy[1]), det.confidence, det.box, False)
+            # seen but no pitch position (bad geometry, off the pitch): the old track
+            # can't bridge this, start over from the next good fix
+            self._last = None
+            return Ball(None, None, det.confidence, det.box, False)
         if self._last is None:
             return None
         if not h_ok:
