@@ -1,5 +1,6 @@
 """Vision config. Every threshold in 03 lives here; the numbers are starting guesses."""
 
+import math
 from dataclasses import dataclass
 
 
@@ -65,8 +66,19 @@ class VisionConfig:
     # its x/y go null. Under the 02 validator's 15 m on purpose
     max_off_pitch_m: float = 10.0
 
-    # Stage 5: ball
+    # Stage 5: ball (10-ball 2). Defaults are today's rule until the bench passes (ball fix
+    # plan Task C6); runs before these fields replay with the old-rule values (replay.run_config)
     ball_max_gap_s: float = 1.0  # extrapolate at most this long, then null
+    ball_picker: str = "max"  # "max": most confident >= min_det_conf; "gate": 10-ball 2b
+    ball_gate_m: float = 3.0  # gate radius around the predicted position ...
+    ball_gate_mps: float = 25.0  # ... plus this times the time since the last detection
+    ball_gate_conf: float = 0.15  # candidates inside the gate down to this
+    ball_reacq_conf: float = 0.5  # outside the gate only this restarts the track
+    ball_cand_margin_m: float = 10.0  # candidates further off the pitch are dropped (2a)
+    ball_size_lo: float = 0.0  # box width under lo x the expected width is dropped (2a)
+    ball_size_hi: float = math.inf  # over hi x expected + ball_size_pad_px is dropped
+    ball_size_pad_px: float = 6.0  # motion blur
+    ball_max_speed_mps: float = math.inf  # faster: keep the position, zero the velocity (2b)
 
     # Teams and direction (03)
     home_attacks_tv_right_p1: bool = True
@@ -113,6 +125,24 @@ class VisionConfig:
         ):
             if not getattr(self, name) > 0:
                 errors.append(f"{name} must be > 0")
+        if self.ball_picker not in ("max", "gate"):
+            errors.append("ball_picker must be max or gate")
+        for name in ("ball_gate_conf", "ball_reacq_conf"):
+            if not 0 <= getattr(self, name) <= 1:
+                errors.append(f"{name} must be in 0-1")
+        for name in (
+            "ball_gate_m",
+            "ball_gate_mps",
+            "ball_cand_margin_m",
+            "ball_size_lo",
+            "ball_size_pad_px",
+        ):
+            if not getattr(self, name) >= 0:
+                errors.append(f"{name} must be >= 0")
+        if not self.ball_size_hi > self.ball_size_lo:
+            errors.append("ball_size_hi must be > ball_size_lo")
+        if not self.ball_max_speed_mps > 0:
+            errors.append("ball_max_speed_mps must be > 0")
         if self.pnl_blind_kp < 0:
             errors.append("pnl_blind_kp must be >= 0")
         if self.camera_max_height_m <= self.camera_min_height_m:

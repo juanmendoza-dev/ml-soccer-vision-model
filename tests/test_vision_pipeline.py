@@ -389,6 +389,16 @@ def test_single_frame_run_has_null_velocity(tmp_path):
         {"min_inliers": 3},
         {"max_homography_err_m": 0},
         {"max_homography_jump_m": -1},
+        {"ball_picker": "nearest"},
+        {"ball_gate_conf": 1.5},
+        {"ball_reacq_conf": -0.1},
+        {"ball_gate_m": -1.0},
+        {"ball_gate_mps": -1.0},
+        {"ball_size_lo": -0.5},
+        {"ball_size_lo": 2.0, "ball_size_hi": 1.0},
+        {"ball_size_pad_px": -1.0},
+        {"ball_max_speed_mps": 0.0},
+        {"ball_cand_margin_m": -1.0},
     ],
 )
 def test_config_rejects_bad_values(bad):
