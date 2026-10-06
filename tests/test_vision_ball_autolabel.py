@@ -372,8 +372,8 @@ def test_piece_ids_are_unique(tmp_path):
 TRUE = 100.0 - 2600 / FPS + 1.0  # src 2600 is PFF t 101
 
 
-def fake_world(no_ball=(), no_camera=(), extra=None):
-    pff = pff_track(secs=8.0)
+def fake_world(no_ball=(), no_camera=(), extra=None, secs=8.0):
+    pff = pff_track(secs=secs)
     srcs = al.source_frames(2600 / FPS, 2700 / FPS, FPS)
 
     def frames():
@@ -584,3 +584,36 @@ def test_a_weak_candidate_near_the_ball_is_no_rival():
     # the detector runs at 0.05, so weak boots near the ball are common (the user's call)
     f = lf(0, 0.0, (500.0, 400.0), [box(505, 400, 0.6), box(470, 400, 0.29)])
     assert al.label(f, (0.0, 0.0), True).kind == "positive"
+
+
+def test_a_cutaway_at_every_offset_in_the_sweep_skips_the_camera():
+    ts = np.arange(0, 20, 1 / PFF_FPS)
+    cut = (ts, (ts > 10) & (ts < 15))  # a 5 s cutaway
+    assert al.surely_cutaway(cut, 12.5 - al.SWEEP_S, 12.5 + al.SWEEP_S)
+    assert not al.surely_cutaway(cut, 11.0 - al.SWEEP_S, 11.0 + al.SWEEP_S)  # 9.5 s isn't
+    assert al.surely_cutaway(cut, 30.0, 33.0)  # no PFF there: is_cutaway everywhere
+
+
+def test_the_camera_never_runs_on_a_sure_cutaway(tmp_path):
+    pff, _, _, camera_fn, detect_fn = fake_world(secs=10.0)
+    calls = []
+
+    def counting(src, image):
+        calls.append(src)
+        return camera_fn(src, image)
+
+    # PFF t >= 106 is a cutaway: srcs whose PFF t is past 106 + 1.5 s at the starting offset
+    players = players_all_visible(pff).with_columns(visible=pl.col("t") < 106.0)
+    cut = al.cutaways(players)
+    srcs = al.source_frames(2600 / FPS, 2800 / FPS, FPS)  # PFF t 101-109
+    entry = al.run_piece(
+        piece(offset_s=TRUE), frames_to(2810), srcs, FPS, pff, cut, counting, detect_fn, tmp_path
+    )
+    assert entry["status"] == "ok"
+    assert max(calls) / FPS + TRUE < 106.0 + al.SWEEP_S + 1 / PFF_FPS
+    assert len(calls) < len(srcs) and entry["skipped"]["cutaway"] >= len(srcs) - len(calls)
+
+
+def frames_to(last):
+    for s in range(2590, last):
+        yield s, np.zeros((SIZE[1], SIZE[0], 3), np.uint8)

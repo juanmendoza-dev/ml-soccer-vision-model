@@ -178,6 +178,14 @@ def is_cutaway(cut: tuple[np.ndarray, np.ndarray], t: float) -> bool:
     return bool(abs(ts[i] - t) > 1 / PFF_FPS or flags[i])
 
 
+def surely_cutaway(cut: tuple[np.ndarray, np.ndarray], lo: float, hi: float) -> bool:
+    """is_cutaway at every PFF time in [lo, hi]: every PFF frame within one frame of the
+    range is flagged (none there counts too)."""
+    ts, flags = cut
+    a, b = np.searchsorted(ts, [lo - 1 / PFF_FPS, hi + 1 / PFF_FPS], side="left")
+    return bool(flags[a:b].all())
+
+
 def load_pieces(path: Path = PIECES) -> list[dict]:
     """The auto-label pieces: one match period's stretch of footage each, with the offset to
     start the sync sweep from (PFF timestamp_s = video seconds + offset_s)."""
@@ -283,15 +291,19 @@ class Seen:
     boxes: list[Box]
 
 
-def collect(frames, srcs, camera_fn, detect_fn, stage: Path):
+def collect(frames, srcs, camera_fn, detect_fn, stage: Path, skip=lambda src: False):
     """Pass 1 over (src, image) in order: the srcs with an accepted camera, each image saved
-    to stage/<src>.jpg for pass 2. Cutaways can't be told yet: PFF's flags are on its clock,
-    and the offset comes from the sync. Returns the kept frames, the count without a camera
-    and the image size (w, h)."""
-    want, kept, size, no_camera = set(srcs), [], None, 0
+    to stage/<src>.jpg for pass 2. Most cutaways can't be told yet: PFF's flags are on its
+    clock, and the offset comes from the sync; skip(src) drops the sure ones before the
+    camera runs. Returns the kept frames, the counts without a camera and skipped, and the
+    image size (w, h)."""
+    want, kept, size, no_camera, skipped = set(srcs), [], None, 0, 0
     stage.mkdir(parents=True, exist_ok=True)
     for src, image in frames:
         if src not in want:
+            continue
+        if skip(src):
+            skipped += 1
             continue
         cam = camera_fn(src, image)
         if cam is None:
@@ -300,7 +312,7 @@ def collect(frames, srcs, camera_fn, detect_fn, stage: Path):
         size = (image.shape[1], image.shape[0])
         cv2.imwrite(str(stage / f"{src}.jpg"), image, [cv2.IMWRITE_JPEG_QUALITY, 95])
         kept.append(Seen(src, cam, detect_fn(src, image)))
-    return kept, no_camera, size
+    return kept, no_camera, skipped, size
 
 
 def sync_piece(seen, pff, offset, fps, home_right, size) -> tuple[float | None, dict, str]:
@@ -344,9 +356,15 @@ def run_piece(piece, frames, srcs, fps, pff, cut, camera_fn, detect_fn, out: Pat
     pid, home_right = piece["piece_id"], piece["home_attacks_tv_right_p1"]
     clear_piece(out, pid)
     stage = out / "stage" / pid
-    seen, no_camera, size = collect(frames, srcs, camera_fn, detect_fn, stage)
-    entry = {"match_id": piece["match_id"], "start_offset_s": piece["offset_s"]}
-    entry |= {"frames": len(srcs), "skipped": {"no_camera": no_camera, "cutaway": 0}}
+    off0 = piece["offset_s"]
+
+    def sure(src):  # a cutaway at every offset the sweep can pick: no camera needed
+        t = src / fps + off0
+        return surely_cutaway(cut, t - SWEEP_S, t + SWEEP_S)
+
+    seen, no_camera, pre_cut, size = collect(frames, srcs, camera_fn, detect_fn, stage, sure)
+    entry = {"match_id": piece["match_id"], "start_offset_s": off0}
+    entry |= {"frames": len(srcs), "skipped": {"no_camera": no_camera, "cutaway": pre_cut}}
     offset, p, status = (
         (None, None, "FAIL: no frames")
         if not seen
@@ -361,7 +379,7 @@ def run_piece(piece, frames, srcs, fps, pff, cut, camera_fn, detect_fn, out: Pat
     cutaway = {x.src for x in seen if is_cutaway(cut, x.src / fps + offset)}
     for src in cutaway:
         (stage / f"{src}.jpg").unlink()
-    entry["skipped"]["cutaway"] = len(cutaway)
+    entry["skipped"]["cutaway"] += len(cutaway)
     seen = [x for x in seen if x.src not in cutaway]
     lfs = label_frames(seen, pff, offset, fps, home_right, size)
     counts: dict[str, int] = {}
