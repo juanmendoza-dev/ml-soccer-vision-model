@@ -129,7 +129,7 @@ def measure_clip(clip: dict, labels: dict) -> list[dict]:
         print(f"{clip_id}: no ball_truth reference, skipped")
         return []
     cache, gs = Path("data/vision_cache") / clip_id, Path("data/gamestate") / clip_id
-    hs, fixes, times, config = track_fixes(cache, gs)
+    hs, fixes, times, _ = track_fixes(cache, gs)
     home_right = clip["home_attacks_tv_right_p1"]
     balls = replay.load_balls(cache)
     people = pl.read_parquet(cache / "detections.parquet").filter(
