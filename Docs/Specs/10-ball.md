@@ -127,7 +127,7 @@ Each clears the track:
 
 - **Problem:** a ball in the air is projected through the ground homography to a point ~14 m too far from the camera (median, p90 24 m; ball fix review, Phase D measurements). The goal model then reads a confident, fresh, wrong ball; on the demo the meter falls to 0.3% where PFF has 2.2–2.6%.
 - **No height is written.** Height from the box size (depth = fx × 0.22 / (w / 1.38)) is right on average but 6 m off in the plane at the median (p90 17 m) and 4× worse than the ground plane on the ground; `z` stays null.
-- **Airborne flag:** a detection with a pitch position is airborne when its box width is at least `ball_air_ratio` × `expected_width` at its ground projection (the 2a function). Default **1.5** for new runs; old runs replay as `inf` (never airborne), like the 2a–2b fields. Measured as a classifier of PFF z > 1 m: recall 95%, precision 33%, 32% of ground detections flagged (vb02 most: its boxes run 1.5× the ball against 1.32–1.38 elsewhere).
+- **Airborne flag:** a detection with a pitch position is airborne when its box width is at least `ball_air_ratio` × `expected_width` at its ground projection (the 2a function). The rule works at **1.5**, but the default is **`inf`** (off) for new runs until §4 step 5's fine-tune re-derives the ratio on its boxes (user's call, 2026-10-06): at 1.5, vb01 and vb02 have no usable ball on 23% and 29% of ball frames, so the meter blanks there. The demo runs it as the `air15` variant (`--set ball_air_ratio=1.5`). Old runs replay as `inf` (never airborne), like the 2a–2b fields. Measured as a classifier of PFF z > 1 m: recall 95%, precision 33%, 32% of ground detections flagged (vb02 most: its boxes run 1.5× the ball against 1.32–1.38 elsewhere).
 - **Extrapolated rows** take the airborne flag of the detection they extrapolate. A detection that isn't airborne clears it. Without geometry there's no ratio, so no flag.
 - **Output:** an airborne row is written `visible = False, interpolated = True` with its ground-projected x/y, as 02 writes PFF's ESTIMATED ball: its position is a guess.
   - The goal model's held ball (05) and stage 8 read only visible balls. So they hold the last ground ball (≤ `BALL_HOLD_S`, 1 s), which is the input the model was trained on for PFF's aerial ball, and give no carrier from the wrong spot. A hold longer than 1 s leaves no ball, so there's no xG or P(goal) there, as with PFF.
@@ -205,5 +205,5 @@ Each step is a commit series with its own bench check.
 6. **Carrier hold** (2d), after stage 8 runs inside `VisionPipeline`.
    - Check by replay on the PFF score's filled frames: median distance to the projection lower than extrapolation's.
 3b. **Ball in the air** (2g; ball fix plan Phase D, design approved by the user 2026-10-05).
-   - Done per 2g.
+   - Done per 2g. Built; the default stays `inf` until step 5 re-derives `ball_air_ratio` on the fine-tuned boxes, then it's switched on if the bench clips keep their ball.
 7. **Live ball model** (smaller YOLO, TensorRT fp16, rate). Measured against 09's budget.
