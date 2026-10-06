@@ -94,11 +94,11 @@ Each clears the track:
 - a new match segment (exists);
 - invalid geometry, or a detection without a pitch position (exists);
 - history older than `ball_max_gap_s` (exists);
-- a period change;
+- a period change: by construction, since one run is one period (`VisionConfig.period`) and a new run starts a new `BallTrack`;
 - a confirmed cut, once W3 provides one (03 Open questions).
 
 ### 2d. Gaps
-- Extrapolate at the last velocity for at most `ball_max_gap_s` (1 s), `interpolated = True` (as now).
+- Extrapolate at the last velocity for at most `ball_max_gap_s`, `interpolated = True`. **0.5 s since 2026-10-05** (was 1 s): with the gate and the speed rule, 1 s of extrapolation cost 2.1 pt of precision on verified aerial (PFF-ESTIMATED) frames; at 0.5 s every clip gains on both scores (ball fix review, Phase C). Old runs keep their 1 s from `run.json`.
 - **Carrier hold** (`ball_carrier_hold`, default off), after stage 8 is wired into the pipeline:
   - if the 2D rule had a carrier on the previous frame, a missing ball is placed at that carrier's position instead of extrapolated, `interpolated = True`, for at most `ball_max_gap_s`;
   - the carrier comes from the 2D rule that reads only `interpolated = False` balls (03 stage 8, Time and visibility contract), so a held ball can't keep its own carrier;
@@ -171,7 +171,7 @@ Each step is a commit series with its own bench check.
 2. **Done 2026-10-05** (`Docs/reviews/ball-fix-2026-10-05.md`, Phase B). **Label tool** (`--assist`, `--flag`).
    - The user re-reviews vb02's flagged frames (`--flag`), then labels vb01 and vb03 with `--assist`. About 290 + 360 frames, around half one key press.
    - Done when all three clips have verified labels with no unresolved flags, and 07's ball score runs on all three.
-3. **Tracker** (2a–2c, 2e–2f; carrier hold waits for stage 8 in the pipeline).
+3. **Done 2026-10-05** (ball fix review, Phase C), with `ball_max_gap_s` 0.5 s at the user's choice: as specced the config lost 2.1 pt aerial precision. **Tracker** (2a–2c, 2e–2f; carrier hold waits for stage 8 in the pipeline).
    - Check by replay, both scores, all three clips. The gate + filters config must:
      - beat `"max"` on pooled recall and precision on verified labels;
      - not lose more than 1 pt on any clip;
