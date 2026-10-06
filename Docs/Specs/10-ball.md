@@ -164,6 +164,19 @@ The ball model's recall is the ceiling (~70% of PFF-VISIBLE frames, review). Inp
   - **left out:** frames with an ESTIMATED ball, frames with a VISIBLE ball and no candidate within 25 px (a missed ball must not become background), frames with a second ball-like candidate ≥ 0.5 within 3 m of the touchline (spare balls).
   - **missed balls:** a random 300 of the frames with a VISIBLE ball and no candidate go through `ball_click --assist`, and only verified boxes (click → box of `diam_px`) join. These teach the model what it misses now.
 - **Output:** YOLO format under `data/ball_train/` (gitignored), with a manifest: matches, offsets, counts, git commit.
+- **As built (2026-10-06, `vision/ball_autolabel.py`):**
+  - **Pieces:** `data/splits/ball_autolabel_pieces.json` lists one stretch of footage per piece: `piece_id`, `match_id` (one of the six), `period`, `video_sha256`, `video_start_s`/`video_end_s`, `offset_s` (the starting guess, PFF timestamp_s − video seconds) with `offset_from` `scoreboard` or `stitched`, and `home_attacks_tv_right_p1`. Local video paths go in `data/ball_train/videos.json`.
+  - **Order per piece:**
+    1. camera and candidates on every 3rd frame;
+    2. the sync sweep;
+    3. cutaways dropped at the synced offset (PFF's flags are on its clock, so not before the sync);
+    4. labels.
+  - **A piece fails, and writes nothing,** when its peak has no hits or under 20 scored frames, or sits within 2 PFF frames of the sweep's edge (the curve may still be rising).
+  - **Rival:** any other candidate, down to the detector's 0.05, within 40 px of the corrected projection.
+  - **Spare ball:** a second candidate ≥ 0.5 whose ground point is within 3 m of either touchline, inside or out.
+  - **Missed-ball frames:** a VISIBLE ball with no candidate within 25 px. They're kept in `data/ball_train/missed/` with PFF's corrected projection and `diam_px`, for the 300-frame sample.
+  - **Hard negatives:** listed per image in `negatives/<piece>.json`. In YOLO they're background anyway, like everything unlabeled on a positive frame.
+  - **A rerun of a piece** first removes its earlier files.
 
 ### 3b. Fine-tune
 - **Start:** the current `football-ball-detection.pt` (YOLOv8x), imgsz 1280.
