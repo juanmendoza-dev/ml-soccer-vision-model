@@ -172,13 +172,18 @@ The ball model's recall is the ceiling (~70% of PFF-VISIBLE frames, review). Inp
     3. cutaways dropped at the synced offset (PFF's flags are on its clock, so not before the sync);
     4. labels.
   - **A piece fails, and writes nothing,** when its peak has no hits or under 20 scored frames, or sits within 2 PFF frames of the sweep's edge (the curve may still be rising).
-  - **Rival:** any other candidate, down to the detector's 0.05, within 40 px of the corrected projection.
+  - **Rival:** another candidate ≥ 0.3 within 40 px of the corrected projection (the user's call, 2026-10-06: weaker ones, common at 0.05, would drop too many frames).
   - **Spare ball:** a second candidate ≥ 0.5 whose ground point is within 3 m of either touchline, inside or out.
-  - **Missed-ball frames:** a VISIBLE ball with no candidate within 25 px. They're kept in `data/ball_train/missed/` with PFF's corrected projection and `diam_px`, for the 300-frame sample.
+  - **Missed-ball frames:** a VISIBLE ball with no candidate within 40 px. They're kept in `data/ball_train/missed/` with PFF's corrected projection and `diam_px`, for the 300-frame sample (`ball_click --missed`).
+  - **Drift:** a nearest candidate 25–40 px off is left out, neither a positive nor a missed ball: it may be PFF's drift (the user's call, 2026-10-06).
+  - **Cutaways before the camera:** a frame that's a cutaway at every offset the sweep can pick (±1.5 s) is skipped before PnLCalib runs. That's 25–35% of the frames on the six matches.
   - **Hard negatives:** listed per image in `negatives/<piece>.json`. In YOLO they're background anyway, like everything unlabeled on a positive frame.
   - **A rerun of a piece** first removes its earlier files.
 
 ### 3b. Fine-tune
+- **As built (2026-10-06):**
+  - `vision/ball_dataset.py` writes `train.txt` / `val.txt` / `dataset.yaml`. Train is the auto-labels and joined clicks of five matches, plus the Roboflow export's train and valid images; the export's only class must be the ball. Val is the sixth match: by default the one with the median label count.
+  - `vision/ball_finetune.py --timing` is F4's timing run.
 - **Start:** the current `football-ball-detection.pt` (YOLOv8x), imgsz 1280.
 - **Mix:** the auto-labels + the Roboflow set it was trained on (v2), so it doesn't forget other broadcasts.
 - **Validation for early stopping:** a held-out match from the six, never the bench.
