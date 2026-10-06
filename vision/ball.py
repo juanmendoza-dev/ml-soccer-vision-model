@@ -39,6 +39,7 @@ class Ball:
     confidence: float  # the last detection's when extrapolated
     box: Box  # the last detection's when extrapolated
     interpolated: bool
+    airborne: bool = False  # the box says it's in the air (10-ball 2g); extrapolation inherits
 
 
 class BallTrack:
@@ -47,8 +48,8 @@ class BallTrack:
         self.reset()
 
     def reset(self) -> None:
-        self._last: tuple[float, np.ndarray, np.ndarray, Box, float] | None = (
-            None  # t xy v box conf
+        self._last: tuple[float, np.ndarray, np.ndarray, Box, float, bool] | None = (
+            None  # t xy v box conf airborne
         )
 
     def _candidates(
@@ -90,7 +91,7 @@ class BallTrack:
             return dx[0].confidence
 
         if c.ball_picker == "gate" and self._last is not None:
-            t0, xy0, v, _, _ = self._last
+            t0, xy0, v, _, _, _ = self._last
             p = xy0 + v * (t - t0)
             r = c.ball_gate_m + c.ball_gate_mps * (t - t0)
 
@@ -108,6 +109,15 @@ class BallTrack:
             return (max(strong, key=conf), True) if strong else (None, False)
         ok = [dx for dx in cands if conf(dx) >= c.min_det_conf]
         return (max(ok, key=conf) if ok else None), False
+
+    def _airborne(self, box: Box, width_at: WidthAt | None) -> bool:
+        """10-ball 2g: the box is at least ball_air_ratio x the width a ball on the ground
+        would have there, so its ground projection is far off. No geometry, no flag."""
+        if width_at is None:
+            return False
+        x1, y1, x2, y2 = box
+        w = width_at(((x1 + x2) / 2, (y1 + y2) / 2))
+        return w is not None and x2 - x1 >= self.config.ball_air_ratio * w
 
     def update(
         self,
@@ -129,13 +139,14 @@ class BallTrack:
         if picked is not None:
             det, xy = picked
             if xy is not None:
+                air = self._airborne(det.box, width_at)
                 v = np.zeros(2)
                 if self._last is not None and t > self._last[0]:
                     v = (xy - self._last[1]) / (t - self._last[0])
                     if np.linalg.norm(v) > self.config.ball_max_speed_mps:
                         v = np.zeros(2)  # faster than any kick: a jump between two objects
-                self._last = (t, xy, v, det.box, det.confidence)
-                return Ball(float(xy[0]), float(xy[1]), det.confidence, det.box, False)
+                self._last = (t, xy, v, det.box, det.confidence, air)
+                return Ball(float(xy[0]), float(xy[1]), det.confidence, det.box, False, air)
             # seen but no pitch position (bad geometry, off the pitch): the old track
             # can't bridge this, start over from the next good fix
             self._last = None
@@ -145,9 +156,9 @@ class BallTrack:
         if not h_ok:
             self._last = None  # no valid geometry now: don't keep guessing in meters
             return None
-        t0, xy0, v, box, conf = self._last
+        t0, xy0, v, box, conf, air = self._last
         x, y = xy0 + v * (t - t0)
         if not on_pitch(np.array([x, y]), self.config.max_off_pitch_m):
             self._last = None  # flew off with a bad velocity: stop guessing
             return None
-        return Ball(float(x), float(y), conf, box, True)
+        return Ball(float(x), float(y), conf, box, True, air)

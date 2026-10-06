@@ -97,6 +97,31 @@ def test_filters_are_skipped_without_geometry():
     assert b is not None and b.x is None  # today's rule: seen, no position
 
 
+def test_a_box_at_the_air_ratio_is_airborne():
+    track = BallTrack(VisionConfig())
+    assert track.update(0.0, [wide(0, 0, 15)], meters, width_at=width10).airborne
+    assert not track.update(0.1, [wide(1, 0, 14)], meters, width_at=width10).airborne
+
+
+def test_extrapolation_inherits_airborne_and_a_ground_detection_clears_it():
+    track = BallTrack(VisionConfig())
+    track.update(0.0, [wide(0, 0, 10)], meters, width_at=width10)
+    track.update(0.1, [wide(1, 0, 16)], meters, width_at=width10)
+    gap = track.update(0.2, [], meters, width_at=width10)
+    assert gap.interpolated and gap.airborne
+    assert not track.update(0.3, [wide(3, 0, 10)], meters, width_at=width10).airborne
+    assert not track.update(0.4, [], meters, width_at=width10).airborne
+
+
+def test_no_airborne_flag_without_geometry_or_when_off():
+    no_geo = BallTrack(VisionConfig()).update(
+        0.0, [wide(0, 0, 18)], lambda px: (None, None), h_ok=False, width_at=None
+    )
+    assert not no_geo.airborne
+    off = BallTrack(VisionConfig(ball_air_ratio=float("inf")))
+    assert not off.update(0.0, [wide(0, 0, 18)], meters, width_at=width10).airborne
+
+
 def test_expected_width_is_the_ball_through_the_homography():
     H = np.diag([0.1, 0.1, 1.0])  # 10 px a meter
     assert ball.expected_width(np.linalg.inv(H), H, (500.0, 300.0)) == pytest.approx(2.2)
