@@ -89,9 +89,23 @@ def apply_spot(entry: dict, sample: list[int]) -> bool:
     for i in entry.get("auto", []):
         if i not in checked:
             entry["labels"].pop(i, None)
-    entry["auto"] = []
+    # checked and unchanged ones stay: a person saw them, and spot_result still reads right
+    entry["auto"] = [i for i in entry.get("auto", []) if i in checked]
     entry["auto_off"] = True
     return True
+
+
+def changed(old, new) -> bool:
+    """Whether a person's decision on an auto-accepted frame differs from it: another
+    answer, or a ball further than the ball score's hit radius (15 px). A click on the
+    same ball lands a few pixels from the box center (vb01's spot check: 1-6 px)."""
+    from vision.bench import BALL_R_PX
+
+    if new is None:
+        return False
+    if not (isinstance(old, list) and isinstance(new, list)):
+        return old != new
+    return float(np.hypot(old[0] - new[0], old[1] - new[1])) > BALL_R_PX
 
 
 def _proj(truth: pl.DataFrame) -> dict[int, tuple[str, float | None, float | None]]:

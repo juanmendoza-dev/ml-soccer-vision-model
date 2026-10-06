@@ -37,7 +37,7 @@ def test_spot_check_turns_auto_off_above_three_percent():
     entry["auto"].remove(5)  # the person moved frame 5
     assert ba.spot_result(entry) == (4, 1, 0.25)
     assert ba.apply_spot(entry, sample) is True
-    assert entry["auto_off"] and entry["auto"] == []
+    assert entry["auto_off"] and sorted(entry["auto"]) == [0, 10, 15]  # checked, unchanged
     assert set(entry["labels"]) == {0, 5, 10, 15}  # unchecked auto labels go back to the person
 
 
@@ -59,3 +59,20 @@ def test_flags_are_resolved_by_a_decision():
     assert ba.unresolved_flags(entry, truth, cands) == [10]
     assert ba.flag_reason(labels, truth, cands, 5) == "label 40 px from PFF"
     assert ba.flag_reason(labels, truth, cands, 10) == "none, candidate 10 px from PFF"
+
+
+def test_a_click_on_the_same_ball_isnt_a_change():
+    assert not ba.changed([100.0, 100.0], [105.7, 100.0])  # vb01's spot clicks: 1-6 px off
+    assert ba.changed([100.0, 100.0], [116.0, 100.0])  # past the 15 px hit radius
+    assert ba.changed([100.0, 100.0], "none")
+    assert not ba.changed([100.0, 100.0], None)  # kept as it is
+
+
+def test_spot_result_stays_readable_after_auto_turns_off():
+    labels = {i: [1.0, 1.0] for i in range(0, 200, 5)}
+    sample = [0, 5, 10, 15]
+    entry = {"labels": dict(labels), "auto": list(labels), "spot_checked": list(sample)}
+    entry["auto"].remove(5)
+    assert ba.apply_spot(entry, sample) is True
+    assert ba.spot_result(entry) == (4, 1, 0.25)  # not "4 of 4 changed"
+    assert sorted(entry["auto"]) == [0, 10, 15]  # checked and unchanged: still auto labels

@@ -62,7 +62,6 @@ FRAMES = Path("data/vision_bench/ball_frames")
 CACHE = Path("data/vision_cache")
 ZOOM, ZOOM_HALF = 4, 30  # magnifier: 61 x 61 source px at 4x
 RING_PX = 15  # 07's hit radius, drawn around labels
-SAME_PX = 3.0  # a decision this close to the auto label didn't change it
 ENTER = 13
 PFF_COLOR, SUGGEST_COLOR = (255, 0, 255), (255, 255, 0)
 
@@ -190,12 +189,7 @@ def main(argv: list[str] | None = None) -> None:
         if new is not None:
             labels[i] = new
         auto = entry.get("auto", [])
-        same = (
-            isinstance(old, list)
-            and isinstance(labels.get(i), list)
-            and np.hypot(old[0] - labels[i][0], old[1] - labels[i][1]) <= SAME_PX
-        )
-        if i in auto and not same:
+        if i in auto and ba.changed(old, new):
             auto.remove(i)  # a person's label now
         if args.flag:
             entry.setdefault("flag_checked", []).append(i)
