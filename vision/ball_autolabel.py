@@ -14,6 +14,7 @@ import argparse
 import json
 import math
 import random
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -338,6 +339,7 @@ def run_piece(piece, frames, srcs, fps, pff, cut, camera_fn, detect_fn, out: Pat
     labels/ (YOLO), their hard negatives to negatives/<piece>.json, missed balls to missed/
     for ball_click --assist (F3); everything else is deleted. Returns the manifest entry."""
     pid, home_right = piece["piece_id"], piece["home_attacks_tv_right_p1"]
+    clear_piece(out, pid)
     stage = out / "stage" / pid
     seen, no_camera, size = collect(frames, srcs, camera_fn, detect_fn, stage)
     entry = {"match_id": piece["match_id"], "start_offset_s": piece["offset_s"]}
@@ -383,6 +385,19 @@ def run_piece(piece, frames, srcs, fps, pff, cut, camera_fn, detect_fn, out: Pat
     (out / "missed" / f"{pid}.json").write_text(json.dumps(missed, indent=1))
     entry |= {"counts": counts, "hard_negatives": sum(len(v) for v in negatives.values())}
     return entry
+
+
+def clear_piece(out: Path, pid: str) -> None:
+    """Remove what an earlier or crashed run of the piece left, so a rerun can't keep stale
+    labels. The missed-ball clicks joined from it go too: join them again."""
+    own = re.compile(rf"{re.escape(pid)}_\d+\.(jpg|txt)")
+    for d in ("images", "labels", "missed"):
+        for f in (out / d).glob("*") if (out / d).exists() else []:
+            if own.fullmatch(f.name):
+                f.unlink()
+    for f in (out / "negatives" / f"{pid}.json", out / "missed" / f"{pid}.json"):
+        f.unlink(missing_ok=True)
+    shutil.rmtree(out / "stage" / pid, ignore_errors=True)
 
 
 def _xyz(pff, t) -> tuple[float, float, float]:
@@ -497,6 +512,9 @@ def join_missed(out: Path, sample: list[dict], clicks: dict) -> dict:
     """The user's verified clicks join the training set: a box of PFF's projected ball size
     at the click. "none", "unsure" and frames not yet clicked never become labels."""
     counts = {"joined": 0, "none": 0, "unsure": 0, "todo": 0}
+    for f in sample:  # a rejoin starts over: a click changed to "none" must not stay
+        (out / "images" / f["image"]).unlink(missing_ok=True)
+        (out / "labels" / f["image"].replace(".jpg", ".txt")).unlink(missing_ok=True)
     for f in sample:
         c = clicks.get(f["image"])
         if c is None:

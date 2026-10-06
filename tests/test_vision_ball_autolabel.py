@@ -554,3 +554,26 @@ def test_the_sample_is_drawn_once_and_joined_from_the_clicks_file(tmp_path):
     al.main(["--out", str(out), "--join-missed"])
     m = json.loads((out / "manifest.json").read_text())
     assert m["clicks"]["missed"]["joined"] == 1 and "pieces" not in m
+
+
+def test_a_rerun_replaces_the_pieces_old_files(tmp_path):
+    run(tmp_path, fake_world())
+    assert (tmp_path / "labels" / "kor-por-1_2604.txt").exists()
+    (tmp_path / "stage" / "kor-por-1").mkdir(parents=True)
+    (tmp_path / "stage" / "kor-por-1" / "9999.jpg").write_bytes(b"left by a crash")
+    (tmp_path / "labels" / "other_1.txt").write_text("another piece's")
+    entry = run(tmp_path, fake_world(no_ball={2604}))
+    assert entry["counts"]["missed"] == 1
+    assert not (tmp_path / "labels" / "kor-por-1_2604.txt").exists()
+    assert not (tmp_path / "images" / "kor-por-1_2604.jpg").exists()
+    assert (tmp_path / "missed" / "kor-por-1_2604.jpg").exists()
+    assert (tmp_path / "labels" / "other_1.txt").exists()
+    assert not (tmp_path / "stage" / "kor-por-1").exists()
+
+
+def test_a_rejoin_drops_a_click_changed_to_none(tmp_path):
+    out = missed_dir(tmp_path, {"a": [3, 6]})
+    sample = al.sample_missed(out, n=2)
+    al.join_missed(out, sample, {"a_3.jpg": [40.0, 30.0]})
+    al.join_missed(out, sample, {"a_3.jpg": "none"})
+    assert not (out / "labels" / "a_3.txt").exists() and not (out / "images" / "a_3.jpg").exists()
