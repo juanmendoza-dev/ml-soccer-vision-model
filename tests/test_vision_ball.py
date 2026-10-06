@@ -90,3 +90,64 @@ def test_filters_are_skipped_without_geometry():
 def test_expected_width_is_the_ball_through_the_homography():
     H = np.diag([0.1, 0.1, 1.0])  # 10 px a meter
     assert ball.expected_width(np.linalg.inv(H), H, (500.0, 300.0)) == pytest.approx(2.2)
+
+
+def gate(**kw):
+    return VisionConfig(ball_picker="gate", **kw)
+
+
+def test_distractor_outside_the_gate_is_ignored_while_the_track_is_fresh():
+    track = BallTrack(gate())
+    track.update(0.0, [ball_det(0, 0)], meters)
+    b = track.update(0.1, [ball_det(0.5, 0, 0.3), ball_det(20, 0, 0.45)], meters)
+    assert b.x == pytest.approx(0.5)  # 0.45 is 20 m out (gate 3 + 2.5 m) and under 0.5
+
+
+def test_a_strong_candidate_outside_the_gate_restarts_the_track():
+    track = BallTrack(gate())
+    track.update(0.0, [ball_det(0, 0)], meters)
+    track.update(0.1, [ball_det(1, 0)], meters)  # moving 10 m/s
+    b = track.update(0.2, [ball_det(30, 0, 0.6)], meters)
+    assert b.x == pytest.approx(30.0)
+    assert track.update(0.3, [], meters).x == pytest.approx(30.0)  # restarted: no velocity
+
+
+def test_a_fast_kick_stays_in_the_gate():
+    track = BallTrack(gate())
+    track.update(0.0, [ball_det(0, 0)], meters)
+    track.update(0.1, [ball_det(3, 0)], meters)  # 30 m/s
+    b = track.update(0.2, [ball_det(6, 0, 0.2), ball_det(-10, 0, 0.45)], meters)
+    assert b.x == pytest.approx(6.0)
+
+
+def test_inside_the_gate_confidence_minus_distance_wins():
+    track = BallTrack(gate())
+    track.update(0.0, [ball_det(0, 0)], meters)
+    b = track.update(0.1, [ball_det(0.2, 0, 0.5), ball_det(4, 0, 0.55)], meters)
+    assert b.x == pytest.approx(0.2)  # 0.5 - 0.004 beats 0.55 - 0.08
+
+
+def test_no_track_takes_the_most_confident_over_min_det_conf():
+    track = BallTrack(gate())
+    assert track.update(0.0, [ball_det(0, 0, 0.2)], meters) is None  # under 0.3, no track
+    assert track.update(0.1, [ball_det(5, 0, 0.35)], meters).x == pytest.approx(5.0)
+
+
+def test_a_jump_faster_than_any_kick_keeps_the_position_zeroes_the_velocity():
+    track = BallTrack(VisionConfig(ball_max_speed_mps=40.0))
+    track.update(0.0, [ball_det(0, 0)], meters)
+    track.update(0.1, [ball_det(20, 0)], meters)  # 200 m/s: a jump between two objects
+    assert track.update(0.2, [], meters).x == pytest.approx(20.0)
+
+
+def test_candidates_after_t_dont_change_the_ball_at_t():
+    def run(later):
+        track = BallTrack(gate(ball_max_speed_mps=40.0, ball_cand_margin_m=2.0))
+        out = [
+            track.update(0.0, [ball_det(0, 0)], meters),
+            track.update(0.1, [ball_det(1, 0)], meters),
+        ]
+        track.update(0.2, later, meters)
+        return out
+
+    assert run([ball_det(5, 0)]) == run([ball_det(40, 0, 0.9)])
