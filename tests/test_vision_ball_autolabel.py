@@ -209,3 +209,90 @@ def test_fmt_check_shows_the_curve_around_the_peak():
     line = al.fmt_check({"clip_id": "c", "frames": 100, "rows": rows, "peak": al.peak(rows)})
     assert line.startswith("c: peak +0 PFF frames") and line.endswith("-> ok")
     assert "-45: " in line and "+5: " in line
+
+
+# F2: labels (10-ball 3a)
+
+
+def box(u, v, conf, w=10.0):
+    return (u - w / 2, v - w / 2, u + w / 2, v + w / 2, conf)
+
+
+@pytest.mark.parametrize("home_right", [True, False])
+def test_ground_point_inverts_the_projection(home_right):
+    for x, y in [(0.0, 0.0), (20.0, -10.0), (-35.0, 30.0)]:
+        u, v, _ = bt.project_ball(cam(), (x, y, 0.0), home_right)
+        assert al.ground_point(cam(), u, v, home_right) == pytest.approx((x, y), abs=1e-6)
+
+
+def lf(src, t, proj, cands, kind="pff"):
+    return al.LabelFrame(src=src, t=t, kind=kind, proj=proj, cam=cam(), boxes=cands)
+
+
+def test_bias_is_the_median_offset_of_confident_candidates_around_the_frame():
+    # neighbors at 0.3-1.0 s see the ball 6 px right, 3 px down of the projection
+    frames = [lf(i, i * 0.1, (500.0, 400.0), [box(506, 403, 0.8)]) for i in range(-10, 11)]
+    frames[10] = lf(0, 0.0, (500.0, 400.0), [box(530, 400, 0.9)])  # the frame itself: excluded
+    frames[11] = lf(1, 0.1, (500.0, 400.0), [box(530, 400, 0.9)])  # within 0.2 s: excluded
+    frames[12] = lf(2, 0.2, (500.0, 400.0), [box(530, 400, 0.9)])  # 0.2 s: excluded
+    du, dv = al.bias(frames, 10)
+    assert (du, dv) == (pytest.approx(6.0), pytest.approx(3.0))
+
+
+def test_bias_ignores_weak_far_and_unprojected_neighbors():
+    frames = [lf(0, 0.0, (500.0, 400.0), [])]
+    frames.append(lf(5, 0.5, (500.0, 400.0), [box(510, 400, 0.4)]))  # under 0.5
+    frames.append(lf(6, 0.6, (500.0, 400.0), [box(545, 400, 0.9)]))  # 45 px off
+    frames.append(lf(7, 0.7, None, [box(500, 400, 0.9)], kind="estimated"))
+    frames.append(lf(30, 3.0, (500.0, 400.0), [box(504, 400, 0.9)]))  # outside 1 s
+    assert al.bias(frames, 0) == (0.0, 0.0)  # nothing to correct by
+
+
+def test_a_lone_candidate_at_the_ball_is_a_positive_with_hard_negatives():
+    f = lf(
+        0,
+        0.0,
+        (500.0, 400.0),
+        [box(510, 400, 0.6), box(700, 400, 0.35), box(560, 400, 0.9), box(900, 400, 0.2)],
+    )
+    lab = al.label(f, (0.0, 0.0), home_right=True)
+    assert lab.kind == "positive"
+    assert lab.box == box(510, 400, 0.6)[:4]
+    # >= 0.3 and > 60 px away; 560 is 60 px (not more), 900 is under 0.3
+    assert lab.negatives == [box(700, 400, 0.35)[:4]]
+
+
+def test_the_bias_moves_the_projection_before_the_rules():
+    f = lf(0, 0.0, (500.0, 400.0), [box(530, 400, 0.6)])
+    assert al.label(f, (0.0, 0.0), True).kind == "missed"  # 30 px
+    assert al.label(f, (10.0, 0.0), True).kind == "positive"  # 20 px after the correction
+
+
+@pytest.mark.parametrize(
+    ("cands", "kind"),
+    [
+        ([], "missed"),
+        ([box(530, 400, 0.9)], "missed"),  # nearest over 25 px
+        ([box(505, 400, 0.6), box(470, 400, 0.06)], "rival"),  # another within 40 px
+    ],
+)
+def test_frames_left_out(cands, kind):
+    assert al.label(lf(0, 0.0, (500.0, 400.0), cands), (0.0, 0.0), True).kind == kind
+
+
+def test_estimated_and_unprojected_balls_are_left_out():
+    for k in ("estimated", "off_image", "no_pff"):
+        assert al.label(lf(0, 0.0, None, [box(500, 400, 0.9)], kind=k), (0, 0), True).kind == k
+
+
+def test_a_second_confident_ball_near_the_touchline_is_a_spare_ball():
+    proj = bt.project_ball(cam(), (0.0, 0.0, 0.0), True)[:2]
+    near_line = bt.project_ball(cam(), (10.0, -33.0, 0.0), True)[:2]  # 1 m inside
+    mid = bt.project_ball(cam(), (10.0, -20.0, 0.0), True)[:2]
+    ball = box(proj[0] + 2, proj[1], 0.7)
+    spare = al.label(lf(0, 0.0, proj, [ball, box(*near_line, 0.6)]), (0, 0), True)
+    assert spare.kind == "spare_ball"
+    weak = al.label(lf(0, 0.0, proj, [ball, box(*near_line, 0.4)]), (0, 0), True)
+    assert weak.kind == "positive"  # a weak one there is a hard negative at most
+    inside = al.label(lf(0, 0.0, proj, [ball, box(*mid, 0.6)]), (0, 0), True)
+    assert inside.kind == "positive" and inside.negatives == [box(*mid, 0.6)[:4]]

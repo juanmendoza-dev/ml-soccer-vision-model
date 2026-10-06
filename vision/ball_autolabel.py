@@ -12,7 +12,7 @@ to sync the six auto-label matches.
 
 import argparse
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -22,6 +22,7 @@ import polars as pl
 from vision import ball_truth as bt
 from vision import bench, replay
 from vision.bench import PFF_FPS
+from vision.pitch import to_02
 from vision.types import MATCH, Camera
 
 SWEEP_S = 1.5
@@ -34,12 +35,100 @@ MANIFESTS = (bench.MANIFEST, Path("data/splits/demo_clips.json"))
 # the six 2022 matches with PFF that aren't on the bench (10-ball 3a)
 MATCHES = ("3857", "10507", "3816", "10510", "10508", "10514")
 
+# labels (10-ball 3a)
+POS_PX = 25.0  # the nearest candidate this close to the projection is the ball ...
+ALONE_PX = 40.0  # ... if no other candidate is this close
+NEG_CONF, NEG_PX = 0.3, 60.0  # hard negatives: this confident, further than this
+SPARE_CONF, SPARE_M = 0.5, 3.0  # a second ball this close to a touchline: spare balls
+BIAS_CONF, BIAS_PX = 0.5, 40.0  # PFF drift: confident candidates this close ...
+BIAS_WIN_S, BIAS_SKIP_S = 1.0, 0.2  # ... within 1 s of the frame, not within 0.2 s
+HALF_WIDTH_M = 34.0  # 02 touchlines at y = +-34
+
 
 @dataclass
 class SyncFrame:
     src: int  # source video frame
     cam: Camera
     cands: list[tuple[float, float, float]]  # ball candidates: center u, v and confidence
+
+
+Box = tuple[float, float, float, float, float]  # x1, y1, x2, y2, confidence (source px)
+
+
+@dataclass
+class LabelFrame:
+    src: int
+    t: float  # source video seconds
+    kind: str  # vision.ball_truth's kind at the synced offset: only "pff" can be labeled
+    proj: tuple[float, float] | None  # PFF's ball in the image, before the bias correction
+    cam: Camera | None
+    boxes: list[Box]  # the ball model's candidates
+
+
+@dataclass
+class Label:
+    kind: str  # "positive", or why the frame is left out
+    box: tuple[float, float, float, float] | None = None
+    negatives: list = field(default_factory=list)
+
+
+def ground_point(cam: Camera, u: float, v: float, home_right: bool) -> tuple[float, float]:
+    """A pixel back to 02 (x, y) on the plane of a ball's center on the grass, the inverse of
+    vision.ball_truth.project_ball at z = 0."""
+    ray = cam.rotation.T @ np.array([(u - cam.cx) / cam.fx, (v - cam.cy) / cam.fy, 1.0])
+    s = (-bt.BALL_D / 2 - cam.position[2]) / ray[2]
+    w = cam.position + s * ray
+    x, y = to_02(np.array([w[0], -w[1]]), home_right)
+    return float(x), float(y)
+
+
+def _center(b) -> tuple[float, float]:
+    return (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+
+
+def bias(frames: list[LabelFrame], i: int) -> tuple[float, float]:
+    """PFF's drift around frame i: the median offset (candidate - projection) of the
+    nearest confident candidate within BIAS_PX on the projected frames 0.2-1 s away.
+    (0, 0) when there's none."""
+    t = frames[i].t
+    offs = []
+    for f in frames:
+        if f.proj is None or not BIAS_SKIP_S < abs(f.t - t) <= BIAS_WIN_S:
+            continue
+        near = [
+            (np.hypot(u - f.proj[0], v - f.proj[1]), u - f.proj[0], v - f.proj[1])
+            for u, v in (_center(b) for b in f.boxes if b[4] >= BIAS_CONF)
+        ]
+        near = [n for n in near if n[0] <= BIAS_PX]
+        if near:
+            offs.append(min(near)[1:])
+    if not offs:
+        return 0.0, 0.0
+    du, dv = np.median(np.array(offs), axis=0)
+    return float(du), float(dv)
+
+
+def label(f: LabelFrame, b: tuple[float, float], home_right: bool) -> Label:
+    """10-ball 3a's rules on one frame, its projection moved by the bias b."""
+    if f.kind != "pff" or f.proj is None:
+        return Label(f.kind)
+    pu, pv = f.proj[0] + b[0], f.proj[1] + b[1]
+    dist = [float(np.hypot(*np.subtract(_center(x), (pu, pv)))) for x in f.boxes]
+    order = np.argsort(dist)
+    if not len(order) or dist[order[0]] > POS_PX:
+        return Label("missed")
+    ball = int(order[0])
+    for j, x in enumerate(f.boxes):
+        if j != ball and x[4] >= SPARE_CONF and f.cam is not None:
+            _, y = ground_point(f.cam, *_center(x), home_right)
+            if abs(abs(y) - HALF_WIDTH_M) <= SPARE_M:
+                return Label("spare_ball")
+    if len(order) > 1 and dist[order[1]] <= ALONE_PX:
+        return Label("rival")
+    negatives = [
+        x[:4] for j, x in enumerate(f.boxes) if j != ball and x[4] >= NEG_CONF and dist[j] > NEG_PX
+    ]
+    return Label("positive", f.boxes[ball][:4], negatives)
 
 
 def refuse(match_id: str, manifests=MANIFESTS) -> None:
