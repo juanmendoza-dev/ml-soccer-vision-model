@@ -29,10 +29,10 @@ import polars as pl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vision import ball_truth, bench, replay  # noqa: E402
-from vision.ball import BALL_D, expected_width  # noqa: E402
-from vision.config import VisionConfig  # noqa: E402
-from vision.pitch import project, to_02  # noqa: E402
+from vision import ball_truth, bench, replay
+from vision.ball import BALL_D, expected_width
+from vision.config import VisionConfig
+from vision.pitch import project, to_02
 
 CLIPS = ("vb01-arg-fra", "vb02-ned-arg", "vb03-jpn-esp", "demo01-arg-fra-81")
 DEMO = Path("data/splits/demo_clips.json")
@@ -197,13 +197,17 @@ def measure_clip(clip: dict, labels: dict) -> list[dict]:
 
 
 def errors(df: pl.DataFrame) -> pl.DataFrame:
-    planar = lambda p: ((pl.col(f"{p}_x") - pl.col("pff_x")) ** 2 + (pl.col(f"{p}_y") - pl.col("pff_y")) ** 2).sqrt()  # noqa: E731
+    planar = lambda p: (
+        (pl.col(f"{p}_x") - pl.col("pff_x")) ** 2 + (pl.col(f"{p}_y") - pl.col("pff_y")) ** 2
+    ).sqrt()
     # hybrid: the run's ground position unless the calibrated size puts the ball above z
     for z in CAL_ZS:
         air = pl.col("size_c_z") > z
         df = df.with_columns(
             **{
-                f"hyb{z:.0f}_{a}": pl.when(air).then(pl.col(f"size_c_{a}")).otherwise(pl.col(f"vis_{a}"))
+                f"hyb{z:.0f}_{a}": pl.when(air)
+                .then(pl.col(f"size_c_{a}"))
+                .otherwise(pl.col(f"vis_{a}"))
                 for a in "xy"
             }
         )
@@ -259,8 +263,15 @@ def flag_table(df: pl.DataFrame) -> list[str]:
     for t in SIZE_RATIOS:
         rows.append((f"size ratio >= {t}", (sel["size_ratio"].fill_null(0) >= t).to_numpy()))
     for j in JUMPS_M:
-        rows.append((f"jump > {j:.0f} m from the last fix within {FIX_S:.0f} s", (sel["jump_m"].fill_null(0) > j).to_numpy()))
-    rows.append(("above every player box within 3 m", sel["above_heads"].fill_null(False).to_numpy()))
+        rows.append(
+            (
+                f"jump > {j:.0f} m from the last fix within {FIX_S:.0f} s",
+                (sel["jump_m"].fill_null(0) > j).to_numpy(),
+            )
+        )
+    rows.append(
+        ("above every player box within 3 m", sel["above_heads"].fill_null(False).to_numpy())
+    )
     for z in CAL_ZS:
         rows.append((f"size cal height > {z:.1f} m", (sel["size_c_z"].fill_null(0) > z).to_numpy()))
     lines = [
@@ -274,7 +285,9 @@ def flag_table(df: pl.DataFrame) -> list[str]:
         fp = int((pred & ~truth).sum())
         prec = tp / (tp + fp) if tp + fp else float("nan")
         rec = tp / truth.sum() if truth.sum() else float("nan")
-        lines.append(f"| {name} | {prec:.0%} ({tp}/{tp + fp}) | {rec:.0%} ({tp}/{int(truth.sum())}) | {fp}/{int((~truth).sum())} |")
+        lines.append(
+            f"| {name} | {prec:.0%} ({tp}/{tp + fp}) | {rec:.0%} ({tp}/{int(truth.sum())}) | {fp}/{int((~truth).sum())} |"
+        )
     return lines
 
 
@@ -287,7 +300,7 @@ def demo_rows(df: pl.DataFrame) -> list[str]:
         "| frame | PFF (x, y, z) | ground | size cal (x, y, z) | size max (x, y, z) | box w x h | ratio | jump m | above heads |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
-    f1 = lambda v: "-" if v is None else f"{v:.1f}"  # noqa: E731
+    f1 = lambda v: "-" if v is None else f"{v:.1f}"
     for r in sel.iter_rows(named=True):
         lines.append(
             f"| {r['frame']} | ({r['pff_x']:.1f}, {r['pff_y']:.1f}, {r['pff_zc'] - BALL_D / 2:.1f}) | "
@@ -304,7 +317,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--clips", nargs="+", default=list(CLIPS))
     ap.add_argument("--out", type=Path)
     args = ap.parse_args(argv)
-    clips = {c["clip_id"]: c for c in bench.load_manifest(bench.MANIFEST) + bench.load_manifest(DEMO)}
+    clips = {
+        c["clip_id"]: c for c in bench.load_manifest(bench.MANIFEST) + bench.load_manifest(DEMO)
+    }
     labels = bench.load_ball_labels()
     recs = []
     for clip_id in args.clips:
@@ -312,7 +327,11 @@ def main(argv: list[str] | None = None) -> None:
     # YOLO's box is wider than the ball: the calibrated size divides by the median
     # box / true diameter ratio on ground frames (PFF VISIBLE, z < 0.5)
     ratios = np.array(
-        [r["w"] / r["diam_px"] for r in recs if r["kind"] == "pff" and r["pff_zc"] - BALL_D / 2 < 0.5]
+        [
+            r["w"] / r["diam_px"]
+            for r in recs
+            if r["kind"] == "pff" and r["pff_zc"] - BALL_D / 2 < 0.5
+        ]
     )
     k = float(np.median(ratios))
     for r in recs:
