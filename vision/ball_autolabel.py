@@ -13,6 +13,8 @@ to sync the six auto-label matches.
 import argparse
 import json
 import math
+import random
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -405,10 +407,11 @@ def require_sync_check(path: Path, clips: list[str] | None = None) -> None:
             raise SystemExit(f"{c}: {verdict(r['peak'])}; no auto-labels")
 
 
-def update_manifest(out: Path, piece_id: str, entry: dict) -> None:
-    """out/manifest.json: the rules and one entry per piece, each with the git commit."""
+def update_manifest(out: Path, key: str, entry: dict, section: str = "pieces") -> None:
+    """out/manifest.json: the rules and one entry per piece (or per section key), each with
+    the git commit."""
     path = out / "manifest.json"
-    m = json.loads(path.read_text()) if path.exists() else {"pieces": {}}
+    m = json.loads(path.read_text()) if path.exists() else {}
     m["rules"] = {
         k: globals()[k]
         for k in (
@@ -426,7 +429,7 @@ def update_manifest(out: Path, piece_id: str, entry: dict) -> None:
             "DET_CONF",
         )
     }
-    m["pieces"][piece_id] = entry | {"git_commit": git_commit()}
+    m.setdefault(section, {})[key] = entry | {"git_commit": git_commit()}
     out.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(m, indent=2))
 
@@ -474,6 +477,44 @@ def models(weights_dir: Path, pnl_dir: Path, device: str):
         return [(*d.box, d.confidence) for d in ball.detect(image) if d.cls == BALL]
 
     return camera_fn, detect_fn
+
+
+MISSED_N = 300  # 10-ball 3a: the missed-ball sample the user labels
+
+
+def sample_missed(out: Path, n: int = MISSED_N, seed: int = 0) -> list[dict]:
+    """A fixed random n of every piece's missed-ball frames (PFF VISIBLE, no candidate within
+    POS_PX), each with PFF's corrected projection and ball size for the click tool's ring."""
+    pool = []
+    for path in sorted((out / "missed").glob("*.json")):
+        pid = path.stem
+        for src, e in sorted(json.loads(path.read_text()).items(), key=lambda kv: int(kv[0])):
+            pool.append({"piece_id": pid, "src": int(src), "image": f"{pid}_{src}.jpg", **e})
+    return random.Random(seed).sample(pool, min(n, len(pool)))
+
+
+def join_missed(out: Path, sample: list[dict], clicks: dict) -> dict:
+    """The user's verified clicks join the training set: a box of PFF's projected ball size
+    at the click. "none", "unsure" and frames not yet clicked never become labels."""
+    counts = {"joined": 0, "none": 0, "unsure": 0, "todo": 0}
+    for f in sample:
+        c = clicks.get(f["image"])
+        if c is None:
+            counts["todo"] += 1
+            continue
+        if not isinstance(c, list):
+            counts[c] += 1
+            continue
+        image = cv2.imread(str(out / "missed" / f["image"]))
+        size = (image.shape[1], image.shape[0])
+        r = f["diam_px"] / 2
+        for d in ("images", "labels"):
+            (out / d).mkdir(parents=True, exist_ok=True)
+        shutil.copy(out / "missed" / f["image"], out / "images" / f["image"])
+        b = (c[0] - r, c[1] - r, c[0] + r, c[1] + r)
+        (out / "labels" / f["image"].replace(".jpg", ".txt")).write_text(yolo_line(b, size))
+        counts["joined"] += 1
+    return counts
 
 
 def camera(row: dict) -> Camera:
@@ -562,10 +603,26 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--weights-dir", type=Path, default=Path("../sports/examples/soccer/data"))
     ap.add_argument("--pnl-weights-dir", type=Path, default=bt.PNL_DIR)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--sample-missed", action="store_true", help="F3: draw the 300 to click")
+    ap.add_argument("--join-missed", action="store_true", help="F3: add the verified clicks")
     args = ap.parse_args(argv)
     refuse_all(MATCHES)
     if args.sync_check:
         sync_check(args)
+        return
+    sample_path, clicks_path = args.out / "missed_sample.json", args.out / "missed_clicks.json"
+    if args.sample_missed:
+        if sample_path.exists():
+            raise SystemExit(f"{sample_path} exists: the sample is drawn once")
+        sample = sample_missed(args.out)
+        sample_path.write_text(json.dumps(sample, indent=1))
+        print(f"{len(sample)} missed-ball frames in {sample_path}")
+        return
+    if args.join_missed:
+        clicks = json.loads(clicks_path.read_text()) if clicks_path.exists() else {}
+        counts = join_missed(args.out, json.loads(sample_path.read_text()), clicks)
+        update_manifest(args.out, "missed", counts, section="clicks")
+        print(counts)
         return
     pieces = load_pieces(args.pieces)  # refuses bench matches first
     if args.piece:

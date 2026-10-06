@@ -504,3 +504,53 @@ def test_labels_refuse_a_bench_piece_before_anything_else(tmp_path):
     pieces = write_pieces(tmp_path, [piece(match_id="10511")])
     with pytest.raises(SystemExit, match="bench"):
         al.main(["--pieces", str(pieces), "--sync-json", str(tmp_path / "none.json")])
+
+
+# F3: the missed-ball sample (the user labels it)
+
+
+def missed_dir(tmp_path, pieces):
+    (tmp_path / "missed").mkdir()
+    for pid, srcs in pieces.items():
+        entries = {str(s): {"u": 100.0 + s, "v": 50.0, "diam_px": 12.0} for s in srcs}
+        (tmp_path / "missed" / f"{pid}.json").write_text(json.dumps(entries))
+        for s in srcs:
+            cv2.imwrite(str(tmp_path / "missed" / f"{pid}_{s}.jpg"), np.zeros((108, 192, 3)))
+    return tmp_path
+
+
+def test_the_sample_is_a_fixed_random_draw_over_every_piece(tmp_path):
+    out = missed_dir(tmp_path, {"a": range(0, 300, 3), "b": range(1, 900, 3)})
+    s = al.sample_missed(out, n=50, seed=0)
+    assert len(s) == 50 and len({(f["piece_id"], f["src"]) for f in s}) == 50
+    assert {f["piece_id"] for f in s} == {"a", "b"}
+    assert s == al.sample_missed(out, n=50, seed=0)
+    assert set(s[0]) == {"piece_id", "src", "image", "u", "v", "diam_px"}
+    assert len(al.sample_missed(out, n=10_000)) == 400  # all of them when there are fewer
+
+
+def test_only_clicked_balls_join_with_a_box_of_the_projected_size(tmp_path):
+    out = missed_dir(tmp_path, {"a": [3, 6, 9]})
+    sample = al.sample_missed(out, n=3)
+    clicks = {"a_3.jpg": [40.0, 30.0], "a_6.jpg": "none", "a_9.jpg": "unsure"}
+    assert al.join_missed(out, sample, clicks) == {"joined": 1, "none": 1, "unsure": 1, "todo": 0}
+    assert (out / "images" / "a_3.jpg").exists() and not (out / "images" / "a_6.jpg").exists()
+    line = (out / "labels" / "a_3.txt").read_text().split()
+    assert line == ["0", f"{40 / 192:.6f}", f"{30 / 108:.6f}", f"{12 / 192:.6f}", f"{12 / 108:.6f}"]
+
+
+def test_a_sample_frame_without_a_click_is_never_labeled(tmp_path):
+    out = missed_dir(tmp_path, {"a": [3, 6]})
+    counts = al.join_missed(out, al.sample_missed(out, n=2), {})
+    assert counts["todo"] == 2 and not (out / "labels").exists()
+
+
+def test_the_sample_is_drawn_once_and_joined_from_the_clicks_file(tmp_path):
+    out = missed_dir(tmp_path, {"a": [3, 6]})
+    al.main(["--out", str(out), "--sample-missed"])
+    with pytest.raises(SystemExit, match="once"):
+        al.main(["--out", str(out), "--sample-missed"])
+    (out / "missed_clicks.json").write_text(json.dumps({"a_3.jpg": [40.0, 30.0]}))
+    al.main(["--out", str(out), "--join-missed"])
+    m = json.loads((out / "manifest.json").read_text())
+    assert m["clicks"]["missed"]["joined"] == 1 and "pieces" not in m
