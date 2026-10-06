@@ -342,9 +342,10 @@ def ball_objects(
             b.y,
             b.confidence,
             b.interpolated,
-            b.interpolated,
+            b.interpolated or b.airborne,
             b.box,
             frac_box(b.box, w, h),
+            b.airborne,
         )
         rows.append(
             {
@@ -358,7 +359,7 @@ def ball_objects(
                 "y": b.y,
                 "z": None,
                 "visible": on_screen(o),
-                "interpolated": b.interpolated,
+                "interpolated": o.interpolated,
                 "confidence": b.confidence,
             }
         )

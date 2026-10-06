@@ -87,7 +87,8 @@ class FakeDetector:
         dets = [Detection(box_at(xy), cls, 0.9) for cls, xy, _ in PEOPLE]
         if not 20 <= self.frame_id < 25:  # ball hidden for half a second
             u, v = feet_px(BALL_AT)
-            dets.append(Detection((u - 4, v - 4, u + 4, v + 4), BALL, 0.8))
+            # 2 px: a 0.22 m ball at this camera (wider reads as airborne, 10-ball 2g)
+            dets.append(Detection((u - 1, v - 1, u + 1, v + 1), BALL, 0.8))
         return dets
 
 

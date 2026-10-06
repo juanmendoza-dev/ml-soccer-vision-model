@@ -117,7 +117,7 @@ class BallTrack:
             return False
         x1, y1, x2, y2 = box
         w = width_at(((x1 + x2) / 2, (y1 + y2) / 2))
-        return w is not None and x2 - x1 >= self.config.ball_air_ratio * w
+        return w is not None and bool(x2 - x1 >= self.config.ball_air_ratio * w)
 
     def update(
         self,

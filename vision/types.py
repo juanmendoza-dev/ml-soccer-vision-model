@@ -99,6 +99,7 @@ class VisionObject:
     interpolated: bool
     box_px: Box  # vision-internal (detections cache)
     box_frac: Box  # display only, 0-1 of the frame (03 Display output)
+    airborne: bool = False  # a ball in the air: its ground position is a guess (10-ball 2g)
 
 
 @dataclass(frozen=True)

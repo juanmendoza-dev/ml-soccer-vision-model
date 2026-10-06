@@ -130,7 +130,10 @@ def camera_row(match_id: str, frame_id: int, call) -> dict:
 def on_screen(o) -> bool:
     """02 visible: a detection is on screen; a filled-in box (tracker fill, ball
     extrapolation) that has drifted fully out of the frame isn't. box_frac is clipped
-    to 0-1, so a fully off-screen box has no area left."""
+    to 0-1, so a fully off-screen box has no area left. A ball in the air isn't visible
+    either: its ground position is a guess (10-ball 2g)."""
+    if o.airborne:
+        return False
     if not o.interpolated:
         return True
     x1, y1, x2, y2 = o.box_frac

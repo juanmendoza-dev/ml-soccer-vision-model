@@ -243,9 +243,10 @@ class VisionPipeline:
                 b.y,
                 b.confidence,
                 b.interpolated,
-                b.interpolated,
+                b.interpolated or b.airborne,
                 b.box,
                 frac_box(b.box, w, h),
+                b.airborne,
             )
 
         polygon = None

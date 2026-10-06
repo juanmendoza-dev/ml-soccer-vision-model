@@ -272,3 +272,44 @@ def test_old_run_json_replays_as_max_with_no_filters(tmp_path, monkeypatch):
 
     det, _ = replay.replay(*replay.load(cache, gs), config, balls=replay.load_balls(cache))
     assert ball(det).equals(ball(pl.read_parquet(cache / "detections.parquet")))
+
+
+class AirDetector(FakeDetector):
+    """The ball's box is 3x wider on frames 30-33: in the air by its size (10-ball 2g)."""
+
+    def detect(self, image):
+        dets = super().detect(image)
+        if not 30 <= self.frame_id <= 33:
+            return dets
+        out = []
+        for d in dets:
+            if d.cls == BALL:
+                x1, y1, x2, y2 = d.box
+                cx, cy, r = (x1 + x2) / 2, (y1 + y2) / 2, 3 * (x2 - x1) / 2
+                d = Detection((cx - r, cy - r, cx + r, cy + r), BALL, d.confidence)
+            out.append(d)
+        return out
+
+
+def test_airborne_ball_rows_are_written_unseen_and_replay_the_same(tmp_path, monkeypatch):
+    import test_vision_replay
+
+    from gamestate.validate import validate_match
+
+    monkeypatch.setattr(test_vision_replay, "FakeDetector", AirDetector)
+    config = dataclasses.replace(CONFIG, detect_every=1, ball_air_ratio=2.0)
+    cache, gs = synth_run(tmp_path, FakeKeypoints(), config)
+    ball = pl.read_parquet(gs / "objects.parquet").filter(pl.col("object_type") == "ball")
+    air = ball.filter(pl.col("frame_id").is_between(30, 33))
+    assert air.height == 4 and not air["visible"].any() and air["interpolated"].all()
+    assert air["x"].is_not_null().all()  # the ground projection stays, as a guess (02)
+    after = ball.filter(pl.col("frame_id") == 34)
+    assert after["visible"].all() and not after["interpolated"].any()
+    # the detections cache still has them as detections: the ball score reads the box
+    det = pl.read_parquet(cache / "detections.parquet").filter(
+        pl.col("class") == BALL, pl.col("frame_id").is_between(30, 33)
+    )
+    assert not det["tracked_only"].any() and det["det_confidence"].is_not_null().all()
+    assert not validate_match(gs)
+    _, vgs = _variant(tmp_path, replay.run_config(cache))
+    assert _sorted_objects(vgs).equals(_sorted_objects(gs))
