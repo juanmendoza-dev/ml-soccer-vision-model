@@ -768,12 +768,13 @@ class Clip:
             self.fps,
             offset_check,
         )
-        if self.ball_labels is not None or self.truth is not None:
+        if self.balls is not None:
             _, keypoints, views, times = self.inputs
             hs = replay.frame_homographies(
                 keypoints, views, times, config, revote, self.config.keypoints_every
             )
             skip = round(self.run_start_s * self.fps)
+            out["ball_airborne"] = replay.airborne_share(self.balls, views, times, hs, config)
         if self.ball_labels is not None:
             kinds = None
             if self.truth is not None:
@@ -867,6 +868,10 @@ def main(argv: list[str] | None = None) -> None:
                 )
             if c.get("ball"):
                 print("   ", fmt_ball(c["ball"]))
+            if c.get("ball_airborne"):
+                air, rows = c["ball_airborne"]
+                share = air / rows if rows else float("nan")
+                print(f"    ball rows written airborne (10-ball 2g): {air} / {rows} ({share:.1%})")
             if c.get("pff_ball"):
                 print("   ", fmt_pff(c["pff_ball"]))
             elif c["n_truth_frames"]:

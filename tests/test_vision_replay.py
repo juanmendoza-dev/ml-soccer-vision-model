@@ -313,3 +313,23 @@ def test_airborne_ball_rows_are_written_unseen_and_replay_the_same(tmp_path, mon
     assert not validate_match(gs)
     _, vgs = _variant(tmp_path, replay.run_config(cache))
     assert _sorted_objects(vgs).equals(_sorted_objects(gs))
+
+
+def test_airborne_share_counts_the_rows_written_in_the_air(tmp_path, monkeypatch):
+    import math
+
+    import test_vision_replay
+
+    monkeypatch.setattr(test_vision_replay, "FakeDetector", AirDetector)
+    config = dataclasses.replace(CONFIG, detect_every=1, ball_air_ratio=2.0)
+    cache, gs = synth_run(tmp_path, FakeKeypoints(), config)
+    balls = replay.load_balls(cache)
+    _, calls, views, times = replay.load(cache, gs)
+
+    def share(c):
+        hs = replay.frame_homographies(calls, views, times, c)
+        return replay.airborne_share(balls, views, times, hs, c)
+
+    air, rows = share(config)
+    assert air == 4 and rows > 4  # frames 30-33
+    assert share(dataclasses.replace(config, ball_air_ratio=math.inf)) == (0, rows)

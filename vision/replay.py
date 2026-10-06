@@ -366,6 +366,18 @@ def ball_objects(
     return pl.DataFrame(rows, schema=OBJECTS_SCHEMA)
 
 
+def airborne_share(
+    balls: pl.DataFrame,
+    views: pl.DataFrame,
+    times: dict[int, float],
+    hs: dict[int, np.ndarray | None],
+    config: VisionConfig,
+) -> tuple[int, int]:
+    """(ball rows written in the air, ball rows with a pitch position): 10-ball 2g."""
+    rows = [b for *_, b in _ball_track(balls, views, times, hs, config) if b.x is not None]
+    return sum(b.airborne for b in rows), len(rows)
+
+
 def write_variant(
     match_id: str,
     config: VisionConfig,
