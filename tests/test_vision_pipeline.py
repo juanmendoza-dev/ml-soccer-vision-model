@@ -674,3 +674,51 @@ def test_run_starts_at_start_s_with_config_overrides(tmp_path, monkeypatch):
     assert run["config"]["on_after_s"] == 0.5
     frames = pl.read_parquet(tmp_path / "gs" / "clip" / "frames.parquet")
     assert frames.height == 20 and frames["timestamp_s"][0] == 0.0
+
+
+GATE = dict(
+    ball_picker="gate",
+    ball_cand_margin_m=2.0,
+    ball_size_lo=0.5,
+    ball_size_hi=2.0,
+    ball_max_speed_mps=40.0,
+)
+DISTRACTOR_AT = (12.0, -11.0)  # 15 m from BALL_AT
+
+
+class DistractorDetector(FakeDetector):
+    """From frame 30 the ball weakens to 0.4 and a 0.45 ball-like thing appears 15 m
+    away: the most confident pick is wrong, the gate keeps the ball."""
+
+    def detect(self, image):
+        dets = super().detect(image)
+        if self.frame_id < 30:
+            return dets
+        out = [Detection(d.box, d.cls, 0.4) if d.cls == BALL else d for d in dets]
+        u, v = feet_px(DISTRACTOR_AT)
+        return [*out, Detection((u - 4, v - 4, u + 4, v + 4), BALL, 0.45)]
+
+
+def run_balls(config):
+    detector = DistractorDetector()
+    pipe = VisionPipeline(
+        config, Stages(detector, FakeTracker(), FakeKeypoints(), ShirtColorTeams())
+    )
+    out = []
+    for i in range(100):
+        detector.frame_id = i
+        out.append(pipe.step(i, i / FPS, render(i)))
+    return out
+
+
+def test_the_gate_keeps_the_ball_when_a_stronger_distractor_appears():
+    def balls(frames, lo, hi):
+        return {(round(f.ball.x), round(f.ball.y)) for f in frames[lo:hi] if f.ball and f.ball.x}
+
+    # frames 30-39: the track is fresh when the distractor appears
+    # "max" jumps to it, and extrapolates the jump (12, -18): the demo's phantom ball
+    assert DISTRACTOR_AT in balls(run_balls(rf_config(detect_every=2)), 30, 40)
+    gate = run_balls(rf_config(detect_every=2, **GATE))
+    assert balls(gate, 30, 40) == {BALL_AT}
+    # after the ad (a new segment) there's no track: the most confident starts it (10-ball 2b)
+    assert DISTRACTOR_AT in balls(gate, 60, 100)

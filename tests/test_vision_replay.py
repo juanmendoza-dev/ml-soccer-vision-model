@@ -215,3 +215,23 @@ def test_variant_refuses_non_ball_fields(tmp_path):
     bad = dataclasses.replace(replay.run_config(cache), max_off_pitch_m=5.0)
     with pytest.raises(SystemExit):
         _variant(tmp_path, bad)
+
+
+def test_gate_run_replays_exactly(tmp_path, monkeypatch):
+    import test_vision_replay
+    from test_vision_pipeline import GATE, DistractorDetector
+
+    monkeypatch.setattr(test_vision_replay, "FakeDetector", DistractorDetector)
+    cache, gs = synth_run(tmp_path, FakeKeypoints(), dataclasses.replace(CONFIG, **GATE))
+    cols = ["frame_id", "object_id", "pitch_x", "pitch_y", "x1", "y1", "x2", "y2"]
+    cols += ["det_confidence", "tracked_only"]
+
+    def ball(d):
+        return d.filter(pl.col("class") == BALL).select(cols).sort("frame_id")
+
+    config = replay.run_config(cache)
+    assert config.ball_picker == "gate"
+    det, _ = replay.replay(*replay.load(cache, gs), config, balls=replay.load_balls(cache))
+    cached = pl.read_parquet(cache / "detections.parquet")
+    assert ball(det).equals(ball(cached))
+    assert (replay.load_balls(cache)["det_confidence"] == 0.45).any()  # the distractor's there
