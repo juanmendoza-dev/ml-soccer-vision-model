@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 import polars as pl
 
-from converters.common import git_commit
+from converters.common import git_commit, sha256
 from vision import ball_truth as bt
 from vision import bench, replay
 from vision.bench import PFF_FPS
@@ -49,6 +49,9 @@ EVERY = 3  # every 3rd source frame of live wide play
 DET_CONF = 0.05  # the ball model's threshold for auto-labels
 PIECES = Path("data/splits/ball_autolabel_pieces.json")
 OFFSET_FROM = ("scoreboard", "stitched")  # where a piece's starting offset came from
+OUT = Path("data/ball_train")  # gitignored
+SYNC_JSON = Path("data/vision_bench/sync_check.json")
+VIDEOS = OUT / "videos.json"  # piece_id -> local video path, like ball_truth's videos.json
 
 
 @dataclass
@@ -428,6 +431,51 @@ def update_manifest(out: Path, piece_id: str, entry: dict) -> None:
     path.write_text(json.dumps(m, indent=2))
 
 
+def video_frames(path: Path, srcs):
+    """(src, image) for the wanted source frames, decoded in order (never seeking, as
+    vision.run and vision.ball_truth do)."""
+    want = set(srcs)
+    cap = cv2.VideoCapture(str(path))
+    try:
+        for i in range(max(want) + 1):
+            if not cap.grab():
+                raise SystemExit(f"{path} ends at frame {i}")
+            if i in want:
+                ok, image = cap.retrieve()
+                if not ok:
+                    raise SystemExit(f"can't decode frame {i} of {path}")
+                yield i, image
+    finally:
+        cap.release()
+
+
+def models(weights_dir: Path, pnl_dir: Path, device: str):
+    """The workstation's camera_fn and detect_fn: PnLCalib with vision's per-call checks, and
+    the current ball model at DET_CONF."""
+    from vision.calib import accept, camera_from_peaks
+    from vision.config import VisionConfig
+    from vision.stages import PnLCalibCamera, YoloDetector
+    from vision.types import BALL
+
+    config = VisionConfig()
+    net = PnLCalibCamera(pnl_dir, config.pnl_weights, device=device)
+    ball = YoloDetector(
+        weights_dir / "football-ball-detection.pt", device, conf=DET_CONF, required=(BALL,)
+    )
+
+    def camera_fn(src, image):
+        size = (image.shape[1], image.shape[0])
+        cam, _, _ = camera_from_peaks(
+            net.detect(image), size, config.pnl_kp_threshold, config.pnl_line_threshold
+        )
+        return cam if accept(cam, config) else None
+
+    def detect_fn(src, image):
+        return [(*d.box, d.confidence) for d in ball.detect(image) if d.cls == BALL]
+
+    return camera_fn, detect_fn
+
+
 def camera(row: dict) -> Camera:
     """A camera from a vision.ball_truth row."""
     return Camera(
@@ -505,11 +553,46 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--manifest", type=Path, default=bench.MANIFEST)
     ap.add_argument("--cache-dir", type=Path, default=bt.CACHE)
     ap.add_argument("--gamestate-dir", type=Path, default=Path("data/gamestate"))
-    ap.add_argument("--json", type=Path, help="write the sweep rows here")
+    ap.add_argument("--json", type=Path, help="--sync-check: write the sweep rows here")
+    ap.add_argument("--pieces", type=Path, default=PIECES)
+    ap.add_argument("--piece", action="append", help="only these piece_ids (default: all)")
+    ap.add_argument("--sync-json", type=Path, default=SYNC_JSON, help="--sync-check's --json")
+    ap.add_argument("--videos", type=Path, default=VIDEOS, help="piece_id -> video path")
+    ap.add_argument("--out", type=Path, default=OUT)
+    ap.add_argument("--weights-dir", type=Path, default=Path("../sports/examples/soccer/data"))
+    ap.add_argument("--pnl-weights-dir", type=Path, default=bt.PNL_DIR)
+    ap.add_argument("--device", default="cuda")
     args = ap.parse_args(argv)
     refuse_all(MATCHES)
-    if not args.sync_check:
-        raise SystemExit("only --sync-check is built (F1); the labels come in F2")
+    if args.sync_check:
+        sync_check(args)
+        return
+    pieces = load_pieces(args.pieces)  # refuses bench matches first
+    if args.piece:
+        pieces = [p for p in pieces if p["piece_id"] in args.piece]
+    require_sync_check(args.sync_json)
+    videos = json.loads(args.videos.read_text())
+    for p in pieces:
+        video = Path(videos[p["piece_id"]])
+        if sha256(video) != p["video_sha256"]:
+            raise SystemExit(f"{video} isn't {p['piece_id']}'s video (sha256)")
+    camera_fn, detect_fn = models(args.weights_dir, args.pnl_weights_dir, args.device)
+    for p in pieces:
+        video = Path(videos[p["piece_id"]])
+        fps = cv2.VideoCapture(str(video)).get(cv2.CAP_PROP_FPS)
+        srcs = source_frames(p["video_start_s"], p["video_end_s"], fps)
+        gs = args.gamestate_dir / p["match_id"]
+        pff = bt.pff_ball(gs, p["period"])
+        cut = cutaways(pff_players(gs, p["period"]))
+        print(f"{p['piece_id']}: {len(srcs)} frames from {video.name}...")
+        entry = run_piece(
+            p, video_frames(video, srcs), srcs, fps, pff, cut, camera_fn, detect_fn, args.out
+        )
+        update_manifest(args.out, p["piece_id"], entry)
+        print(f"  {entry['status']}; {entry.get('counts')}; skipped {entry['skipped']}")
+
+
+def sync_check(args) -> None:
     results = [
         check_clip(c, args.cache_dir, args.gamestate_dir)
         for c in bench.load_manifest(args.manifest)
@@ -518,6 +601,7 @@ def main(argv: list[str] | None = None) -> None:
     for r in results:
         print(fmt_check(r))
     if args.json:
+        args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps(results, indent=2))
     if not all(sync_ok(r["peak"]) for r in results):
         raise SystemExit("the sync check failed: stop before any auto-labels (10-ball 3a)")

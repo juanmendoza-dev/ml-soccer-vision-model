@@ -1,7 +1,8 @@
-"""vision.ball_autolabel: the sync check by the ball (10-ball 3a)."""
+"""vision.ball_autolabel: the sync check by the ball and the auto-labels (10-ball 3a)."""
 
 import json
 
+import cv2
 import numpy as np
 import polars as pl
 import pytest
@@ -475,3 +476,31 @@ def test_the_manifest_keeps_other_pieces_and_records_the_commit(tmp_path):
     m = json.loads((tmp_path / "manifest.json").read_text())
     assert set(m["pieces"]) == {"a", "b"} and "git_commit" in m["pieces"]["a"]
     assert m["rules"]["POS_PX"] == al.POS_PX
+
+
+# F2: the command line's pieces
+
+
+def test_video_frames_decode_in_order_and_yield_only_the_wanted(tmp_path):
+    path = tmp_path / "v.avi"
+    w = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), FPS, (64, 48))
+    for i in range(12):
+        w.write(np.full((48, 64, 3), i * 20, np.uint8))
+    w.release()
+    got = list(al.video_frames(path, [3, 6, 9]))
+    assert [s for s, _ in got] == [3, 6, 9]
+    assert abs(int(got[1][1].mean()) - 120) <= 3  # frame 6, not a seek's neighbor
+    with pytest.raises(SystemExit, match="ends"):
+        list(al.video_frames(path, [30]))
+
+
+def test_labels_refuse_to_start_without_the_sync_check(tmp_path):
+    pieces = write_pieces(tmp_path, [piece()])
+    with pytest.raises(SystemExit, match="sync-check"):
+        al.main(["--pieces", str(pieces), "--sync-json", str(tmp_path / "none.json")])
+
+
+def test_labels_refuse_a_bench_piece_before_anything_else(tmp_path):
+    pieces = write_pieces(tmp_path, [piece(match_id="10511")])
+    with pytest.raises(SystemExit, match="bench"):
+        al.main(["--pieces", str(pieces), "--sync-json", str(tmp_path / "none.json")])
