@@ -28,6 +28,7 @@ SWEEP_S = 1.5
 HIT_PX = 15.0
 MIN_CONF = 0.5
 MIN_SPEED = 5.0  # m/s; a still ball can't tell one offset from the next
+MIN_FRAMES = bench.AGREE_MIN_N  # scored frames the peak needs before it can pass
 BENCH_MATCHES = ("10517", "10511", "3854")  # never auto-labeled (10-ball 3a)
 MANIFESTS = (bench.MANIFEST, Path("data/splits/demo_clips.json"))
 # the six 2022 matches with PFF that aren't on the bench (10-ball 3a)
@@ -96,8 +97,18 @@ def peak(rows: list[dict]) -> dict:
     return tied[(len(tied) - 1) // 2]
 
 
+def verdict(p: dict) -> str:
+    """ok, or why not. An empty sweep ties at 0 everywhere and its middle is shift 0, so a
+    peak needs hits and MIN_FRAMES scored frames before its shift counts."""
+    if p["hits"] == 0 or p["n"] < MIN_FRAMES:
+        return f"FAIL: no scorable frames ({p['hits']}/{p['n']} at the peak, need {MIN_FRAMES})"
+    if abs(p["shift"]) > 1 / PFF_FPS + 1e-9:
+        return f"FAIL: peak at {p['shift'] * PFF_FPS:+.0f} PFF frames"
+    return "ok"
+
+
 def sync_ok(p: dict) -> bool:
-    return abs(p["shift"]) <= 1 / PFF_FPS + 1e-9
+    return verdict(p) == "ok"
 
 
 def camera(row: dict) -> Camera:
@@ -159,12 +170,15 @@ def check_clip(clip: dict, cache_dir: Path, gamestate_dir: Path) -> dict:
 
 def fmt_check(r: dict) -> str:
     p = r["peak"]
-    at0 = next(x for x in r["rows"] if abs(x["shift"]) < 1e-9)
+    by_k = {round(x["shift"] * PFF_FPS): x for x in r["rows"]}
+    at0 = by_k[0]
+    # a sharp peak drops off by +-5 frames and at the edges; a flat curve doesn't
+    around = " ".join(f"{k:+d}: {by_k[k]['share']:.0%}" for k in (min(by_k), -5, 5, max(by_k)))
     return (
         f"{r['clip_id']}: peak {p['shift'] * PFF_FPS:+.0f} PFF frames ({p['shift']:+.3f} s), "
         f"share {p['share']:.1%} ({p['hits']}/{p['n']}); at the manifest's offset "
-        f"{at0['share']:.1%} ({at0['hits']}/{at0['n']}); {r['frames']} frames with a camera"
-        f" -> {'ok' if sync_ok(p) else 'FAIL'}"
+        f"{at0['share']:.1%} ({at0['hits']}/{at0['n']}); {around}; "
+        f"{r['frames']} frames with a camera -> {verdict(p)}"
     )
 
 

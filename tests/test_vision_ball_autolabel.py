@@ -102,10 +102,27 @@ def test_a_candidate_16_px_off_is_no_hit():
     assert al.score(frames, pff, true, FPS, True, SIZE)[0] == 0
 
 
+def row(shift, hits=30, n=40):
+    return {"shift": shift, "hits": hits, "n": n, "share": hits / n if n else 0.0}
+
+
 def test_the_check_passes_within_one_pff_frame_only():
-    assert al.sync_ok({"shift": 1 / PFF_FPS})
-    assert al.sync_ok({"shift": -1 / PFF_FPS})
-    assert not al.sync_ok({"shift": 2 / PFF_FPS})
+    assert al.sync_ok(row(1 / PFF_FPS))
+    assert al.sync_ok(row(-1 / PFF_FPS))
+    assert not al.sync_ok(row(2 / PFF_FPS))
+
+
+def test_a_sweep_with_nothing_to_score_fails():
+    # every share 0 ties, and the middle of the tie is shift 0: that must not read as synced
+    pff = pff_track()
+    true = 100.0 - 2600 / FPS + 1.0
+    none = [al.SyncFrame(f.src, f.cam, []) for f in synth(pff, true)]
+    for frames in (none, []):
+        p = al.peak(al.sweep(frames, pff, true, FPS, True, SIZE))
+        assert p["shift"] == 0.0 and not al.sync_ok(p)
+    assert not al.sync_ok(row(0.0, hits=10, n=al.MIN_FRAMES - 1))
+    assert "no scorable frames" in al.verdict(row(0.0, hits=0, n=0))
+    assert "peak at +2" in al.verdict(row(2 / PFF_FPS))
 
 
 def manifest(path, match_ids):
@@ -183,3 +200,12 @@ def test_bench_frames_map_source_frames_into_the_run(tmp_path):
 def test_bench_frames_refuse_a_run_that_skips_detections(tmp_path):
     with pytest.raises(SystemExit, match="every frame"):
         al.bench_frames({"clip_id": "c"}, truth_rows([100], [True]), fake_cache(tmp_path, 2), FPS)
+
+
+def test_fmt_check_shows_the_curve_around_the_peak():
+    pff = pff_track()
+    true = 100.0 - 2600 / FPS + 1.0
+    rows = al.sweep(synth(pff, true), pff, true, FPS, True, SIZE)
+    line = al.fmt_check({"clip_id": "c", "frames": 100, "rows": rows, "peak": al.peak(rows)})
+    assert line.startswith("c: peak +0 PFF frames") and line.endswith("-> ok")
+    assert "-45: " in line and "+5: " in line
