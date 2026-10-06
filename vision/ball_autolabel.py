@@ -419,6 +419,10 @@ def clear_piece(out: Path, pid: str) -> None:
     for f in (out / "negatives" / f"{pid}.json", out / "missed" / f"{pid}.json"):
         f.unlink(missing_ok=True)
     shutil.rmtree(out / "stage" / pid, ignore_errors=True)
+    joined = out / "missed_joined.json"  # its joined clicks are gone: a later rejoin must not
+    if joined.exists():  # delete an auto-label that now has the same name
+        names = json.loads(joined.read_text())
+        joined.write_text(json.dumps([n for n in names if not own.fullmatch(n)]))
 
 
 def _xyz(pff, t) -> tuple[float, float, float]:
@@ -521,7 +525,7 @@ MISSED_N = 300  # 10-ball 3a: the missed-ball sample the user labels
 
 def sample_missed(out: Path, n: int = MISSED_N, seed: int = 0) -> list[dict]:
     """A fixed random n of every piece's missed-ball frames (PFF VISIBLE, no candidate within
-    POS_PX), each with PFF's corrected projection and ball size for the click tool's ring."""
+    ALONE_PX), each with PFF's corrected projection and ball size for the click tool's ring."""
     pool = []
     for path in sorted((out / "missed").glob("*.json")):
         pid = path.stem
@@ -530,13 +534,29 @@ def sample_missed(out: Path, n: int = MISSED_N, seed: int = 0) -> list[dict]:
     return random.Random(seed).sample(pool, min(n, len(pool)))
 
 
+def check_sample(out: Path, sample: list[dict]) -> None:
+    """A piece rerun after the draw removes its missed frames (a sampled frame may be a
+    positive now): the sample is stale."""
+    gone = [f["image"] for f in sample if not (out / "missed" / f["image"]).exists()]
+    if gone:
+        raise SystemExit(
+            f"{len(gone)} sampled frames ({gone[0]}, ...) are gone from missed/: a piece was "
+            "rerun after the sample; delete missed_sample.json and redraw"
+        )
+
+
 def join_missed(out: Path, sample: list[dict], clicks: dict) -> dict:
     """The user's verified clicks join the training set: a box of PFF's projected ball size
     at the click. "none", "unsure" and frames not yet clicked never become labels."""
+    check_sample(out, sample)
     counts = {"joined": 0, "none": 0, "unsure": 0, "todo": 0}
-    for f in sample:  # a rejoin starts over: a click changed to "none" must not stay
-        (out / "images" / f["image"]).unlink(missing_ok=True)
-        (out / "labels" / f["image"].replace(".jpg", ".txt")).unlink(missing_ok=True)
+    joined_path = out / "missed_joined.json"
+    # a rejoin starts over, removing only what the last join wrote: a click changed to "none"
+    # must not stay, and an auto-label of the same name is never touched
+    for name in json.loads(joined_path.read_text()) if joined_path.exists() else []:
+        (out / "images" / name).unlink(missing_ok=True)
+        (out / "labels" / name.replace(".jpg", ".txt")).unlink(missing_ok=True)
+    joined = []
     for f in sample:
         c = clicks.get(f["image"])
         if c is None:
@@ -553,7 +573,9 @@ def join_missed(out: Path, sample: list[dict], clicks: dict) -> dict:
         shutil.copy(out / "missed" / f["image"], out / "images" / f["image"])
         b = (c[0] - r, c[1] - r, c[0] + r, c[1] + r)
         (out / "labels" / f["image"].replace(".jpg", ".txt")).write_text(yolo_line(b, size))
+        joined.append(f["image"])
         counts["joined"] += 1
+    joined_path.write_text(json.dumps(joined))
     return counts
 
 

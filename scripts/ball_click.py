@@ -62,6 +62,7 @@ import polars as pl
 
 from converters.common import sha256
 from vision import ball_assist as ba
+from vision import ball_autolabel as al
 from vision import bench
 from vision.ball_truth import extract
 
@@ -99,6 +100,7 @@ def click_missed(out: Path, scale: float) -> None:
     if not sample_path.exists():
         raise SystemExit(f"no {sample_path}: python scripts/ball_autolabel.py --sample-missed")
     sample = json.loads(sample_path.read_text())
+    al.check_sample(out, sample)
     clicks = json.loads(clicks_path.read_text()) if clicks_path.exists() else {}
 
     def save():

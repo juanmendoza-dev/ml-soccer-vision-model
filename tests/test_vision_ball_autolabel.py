@@ -654,3 +654,30 @@ def test_ball_click_missed_mode_saves_each_decision(tmp_path, monkeypatch):
     bc.main(["--missed", str(out), "--scale", "0.5"])
     clicks = json.loads((out / "missed_clicks.json").read_text())
     assert clicks == {order[0]: [40.0, 30.0], order[1]: "none", order[2]: "unsure"}
+
+
+def test_a_piece_rerun_after_the_sample_keeps_its_labels_and_the_join_refuses(tmp_path):
+    run(tmp_path, fake_world(no_ball={2604}))
+    al.main(["--out", str(tmp_path), "--sample-missed"])
+    sample = json.loads((tmp_path / "missed_sample.json").read_text())
+    assert [f["image"] for f in sample] == ["kor-por-1_2604.jpg"]
+    run(tmp_path, fake_world())  # rerun: 2604 is a positive now
+    clicks = {"kor-por-1_2604.jpg": [10.0, 10.0]}
+    with pytest.raises(SystemExit, match="redraw"):
+        al.join_missed(tmp_path, sample, clicks)
+    assert (tmp_path / "labels" / "kor-por-1_2604.txt").exists()
+    assert (tmp_path / "images" / "kor-por-1_2604.jpg").exists()
+
+
+def test_a_redraw_after_a_rerun_never_deletes_the_new_auto_labels(tmp_path):
+    run(tmp_path, fake_world(no_ball={2604}))
+    al.main(["--out", str(tmp_path), "--sample-missed"])
+    al.main(["--out", str(tmp_path), "--join-missed"])  # nothing clicked yet
+    sample = json.loads((tmp_path / "missed_sample.json").read_text())
+    al.join_missed(tmp_path, sample, {"kor-por-1_2604.jpg": [10.0, 10.0]})
+    run(tmp_path, fake_world())  # rerun: 2604 is a positive now
+    (tmp_path / "missed_sample.json").unlink()
+    run(tmp_path, fake_world(no_ball={2607}))  # and again, so there's something to draw
+    al.main(["--out", str(tmp_path), "--sample-missed"])
+    al.main(["--out", str(tmp_path), "--join-missed"])
+    assert (tmp_path / "labels" / "kor-por-1_2604.txt").exists()
