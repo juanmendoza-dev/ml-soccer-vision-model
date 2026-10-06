@@ -235,3 +235,38 @@ def test_gate_run_replays_exactly(tmp_path, monkeypatch):
     cached = pl.read_parquet(cache / "detections.parquet")
     assert ball(det).equals(ball(cached))
     assert (replay.load_balls(cache)["det_confidence"] == 0.45).any()  # the distractor's there
+
+
+def test_old_run_json_replays_as_max_with_no_filters(tmp_path, monkeypatch):
+    """Runs before the ball fields picked the most confident, unfiltered, at any speed."""
+    import math
+
+    import test_vision_replay
+
+    monkeypatch.setattr(test_vision_replay, "FakeDetector", WeakBallDetector)
+    old = dataclasses.replace(
+        CONFIG,
+        ball_picker="max",
+        ball_cand_margin_m=CONFIG.max_off_pitch_m,
+        ball_size_lo=0.0,
+        ball_size_hi=math.inf,
+        ball_max_speed_mps=math.inf,
+        ball_max_gap_s=1.0,
+    )
+    cache, gs = synth_run(tmp_path, FakeKeypoints(), old)
+    run = json.loads((cache / "run.json").read_text())
+    for k in [k for k in run["config"] if k.startswith("ball_") and k != "ball_max_gap_s"]:
+        del run["config"][k]
+    (cache / "run.json").write_text(json.dumps(run))
+    config = replay.run_config(cache)
+    assert config.ball_picker == "max" and config.ball_size_hi == math.inf
+    assert config.ball_size_lo == 0.0 and config.ball_max_speed_mps == math.inf
+    assert config.ball_cand_margin_m == config.max_off_pitch_m
+    cols = ["frame_id", "object_id", "pitch_x", "pitch_y", "x1", "y1", "x2", "y2"]
+    cols += ["det_confidence", "tracked_only"]
+
+    def ball(d):
+        return d.filter(pl.col("class") == BALL).select(cols).sort("frame_id")
+
+    det, _ = replay.replay(*replay.load(cache, gs), config, balls=replay.load_balls(cache))
+    assert ball(det).equals(ball(pl.read_parquet(cache / "detections.parquet")))

@@ -19,6 +19,7 @@ on CPU, so pnl_kp_threshold / pnl_line_threshold can be swept (03 Diagnostics).
 import argparse
 import dataclasses
 import json
+import math
 import shutil
 from pathlib import Path
 
@@ -54,6 +55,12 @@ def run_config(cache: Path) -> VisionConfig:
     config.setdefault("circle_kp_x_m", 9.15)  # runs before the field existed (03 Pitch template)
     config.setdefault("calib_backend", "roboflow")  # runs before PnLCalib (03 Pitch calibration)
     config.setdefault("pnl_blind_kp", 0)  # PnLCalib runs before it: always held
+    # runs before the ball fields (10-ball 2): most confident, unfiltered, any speed
+    config.setdefault("ball_picker", "max")
+    config.setdefault("ball_cand_margin_m", config.get("max_off_pitch_m", 10.0))
+    config.setdefault("ball_size_lo", 0.0)
+    config.setdefault("ball_size_hi", math.inf)
+    config.setdefault("ball_max_speed_mps", math.inf)
     return VisionConfig(**config)
 
 

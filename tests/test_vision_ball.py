@@ -9,6 +9,16 @@ from vision.config import VisionConfig
 from vision.types import BALL, Detection
 
 
+# today's rule before the 2026-10-05 defaults (10-ball 2): the tests written for it pin it
+MAX = dict(
+    ball_picker="max",
+    ball_cand_margin_m=10.0,
+    ball_size_lo=0.0,
+    ball_size_hi=float("inf"),
+    ball_max_speed_mps=float("inf"),
+)
+
+
 def ball_det(x, y, conf=0.9):
     return Detection((x - 1, y - 1, x + 1, y + 1), BALL, conf)
 
@@ -18,7 +28,7 @@ def meters(px):  # the box center in pixels is the pitch position, for these tes
 
 
 def test_most_confident_candidate_over_min_det_conf():
-    track = BallTrack(VisionConfig())
+    track = BallTrack(VisionConfig(**MAX))
     b = track.update(0.0, [ball_det(0, 0, 0.5), ball_det(5, 0, 0.8)], meters)
     assert b.x == 5.0 and not b.interpolated
     assert track.update(0.1, [ball_det(9, 0, 0.2)], meters).x == pytest.approx(5.0)  # too weak
@@ -44,7 +54,7 @@ def test_ball_isnt_extrapolated_without_valid_geometry():
 
 
 def test_ball_seen_without_a_pitch_position_resets_the_track():
-    track = BallTrack(VisionConfig())
+    track = BallTrack(VisionConfig(**MAX))
     track.update(0.0, [ball_det(0, 0)], meters)
     track.update(0.1, [ball_det(1, 0)], meters)
     seen = track.update(0.2, [ball_det(2, 0)], lambda px: (None, None))

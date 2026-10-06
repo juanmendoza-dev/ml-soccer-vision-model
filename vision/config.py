@@ -1,6 +1,5 @@
 """Vision config. Every threshold in 03 lives here; the numbers are starting guesses."""
 
-import math
 from dataclasses import dataclass
 
 
@@ -66,19 +65,19 @@ class VisionConfig:
     # its x/y go null. Under the 02 validator's 15 m on purpose
     max_off_pitch_m: float = 10.0
 
-    # Stage 5: ball (10-ball 2). Defaults are today's rule until the bench passes (ball fix
-    # plan Task C6); runs before these fields replay with the old-rule values (replay.run_config)
-    ball_max_gap_s: float = 1.0  # extrapolate at most this long, then null
-    ball_picker: str = "max"  # "max": most confident >= min_det_conf; "gate": 10-ball 2b
+    # Stage 5: ball (10-ball 2). Runs before these fields replay with the old rule ("max",
+    # no filters, any speed: replay.run_config). Bench 2026-10-05 (ball fix review, Phase C)
+    ball_max_gap_s: float = 0.5  # extrapolate at most this long, then null (was 1.0)
+    ball_picker: str = "gate"  # "max": most confident >= min_det_conf; "gate": 10-ball 2b
     ball_gate_m: float = 3.0  # gate radius around the predicted position ...
     ball_gate_mps: float = 25.0  # ... plus this times the time since the last detection
     ball_gate_conf: float = 0.15  # candidates inside the gate down to this
     ball_reacq_conf: float = 0.5  # outside the gate only this restarts the track
-    ball_cand_margin_m: float = 10.0  # candidates further off the pitch are dropped (2a)
-    ball_size_lo: float = 0.0  # box width under lo x the expected width is dropped (2a)
-    ball_size_hi: float = math.inf  # over hi x expected + ball_size_pad_px is dropped
+    ball_cand_margin_m: float = 2.0  # candidates further off the pitch are dropped (2a)
+    ball_size_lo: float = 0.5  # box width under lo x the expected width is dropped (2a)
+    ball_size_hi: float = 2.0  # over hi x expected + ball_size_pad_px is dropped
     ball_size_pad_px: float = 6.0  # motion blur
-    ball_max_speed_mps: float = math.inf  # faster: keep the position, zero the velocity (2b)
+    ball_max_speed_mps: float = 40.0  # faster: keep the position, zero the velocity (2b)
 
     # Teams and direction (03)
     home_attacks_tv_right_p1: bool = True

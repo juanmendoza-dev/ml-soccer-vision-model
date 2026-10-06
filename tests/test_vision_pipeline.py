@@ -683,6 +683,13 @@ GATE = dict(
     ball_size_hi=2.0,
     ball_max_speed_mps=40.0,
 )
+MAX = dict(  # today's rule before the 2026-10-05 defaults
+    ball_picker="max",
+    ball_cand_margin_m=10.0,
+    ball_size_lo=0.0,
+    ball_size_hi=float("inf"),
+    ball_max_speed_mps=float("inf"),
+)
 DISTRACTOR_AT = (12.0, -11.0)  # 15 m from BALL_AT
 
 
@@ -717,7 +724,7 @@ def test_the_gate_keeps_the_ball_when_a_stronger_distractor_appears():
 
     # frames 30-39: the track is fresh when the distractor appears
     # "max" jumps to it, and extrapolates the jump (12, -18): the demo's phantom ball
-    assert DISTRACTOR_AT in balls(run_balls(rf_config(detect_every=2)), 30, 40)
+    assert DISTRACTOR_AT in balls(run_balls(rf_config(detect_every=2, **MAX)), 30, 40)
     gate = run_balls(rf_config(detect_every=2, **GATE))
     assert balls(gate, 30, 40) == {BALL_AT}
     # after the ad (a new segment) there's no track: the most confident starts it (10-ball 2b)
