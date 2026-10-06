@@ -12,6 +12,7 @@ to sync the six auto-label matches.
 
 import argparse
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,6 +44,9 @@ SPARE_CONF, SPARE_M = 0.5, 3.0  # a second ball this close to a touchline: spare
 BIAS_CONF, BIAS_PX = 0.5, 40.0  # PFF drift: confident candidates this close ...
 BIAS_WIN_S, BIAS_SKIP_S = 1.0, 0.2  # ... within 1 s of the frame, not within 0.2 s
 HALF_WIDTH_M = 34.0  # 02 touchlines at y = +-34
+EVERY = 3  # every 3rd source frame of live wide play
+PIECES = Path("data/splits/ball_autolabel_pieces.json")
+OFFSET_FROM = ("scoreboard", "stitched")  # where a piece's starting offset came from
 
 
 @dataclass
@@ -129,6 +133,62 @@ def label(f: LabelFrame, b: tuple[float, float], home_right: bool) -> Label:
         x[:4] for j, x in enumerate(f.boxes) if j != ball and x[4] >= NEG_CONF and dist[j] > NEG_PX
     ]
     return Label("positive", f.boxes[ball][:4], negatives)
+
+
+def source_frames(start_s: float, end_s: float, fps: float, every: int = EVERY) -> list[int]:
+    """Source frames in [start_s, end_s) that are multiples of every."""
+    first = math.ceil(start_s * fps / every) * every
+    return [i for i in range(first, math.ceil(end_s * fps) + 1, every) if i / fps < end_s]
+
+
+def pff_players(gs_dir: Path, period: int) -> pl.DataFrame:
+    """PFF's player rows of the period: frame_id, t, visible."""
+    frames = pl.scan_parquet(gs_dir / "frames.parquet").filter(pl.col("period") == period)
+    obj = pl.scan_parquet(gs_dir / "objects.parquet").filter(pl.col("object_type") == "player")
+    return (
+        obj.join(frames.select("frame_id", t="timestamp_s"), on="frame_id")
+        .select("frame_id", "t", "visible")
+        .collect()
+    )
+
+
+def cutaways(players: pl.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Per PFF frame, in time order: its t, and whether every player is ESTIMATED."""
+    per = players.group_by("frame_id").agg(pl.col("t").first(), pl.col("visible").any()).sort("t")
+    return per["t"].to_numpy(), ~per["visible"].to_numpy()
+
+
+def is_cutaway(cut: tuple[np.ndarray, np.ndarray], t: float) -> bool:
+    """The nearest PFF frame's flag; no PFF frame within one frame counts as a cutaway."""
+    ts, flags = cut
+    if not len(ts):
+        return True
+    i = int(np.abs(ts - t).argmin())
+    return bool(abs(ts[i] - t) > 1 / PFF_FPS or flags[i])
+
+
+def load_pieces(path: Path = PIECES) -> list[dict]:
+    """The auto-label pieces: one match period's stretch of footage each, with the offset to
+    start the sync sweep from (PFF timestamp_s = video seconds + offset_s)."""
+    pieces = json.loads(Path(path).read_text())["pieces"]
+    seen = set()
+    for p in pieces:
+        name = p.get("piece_id", "?")
+        refuse(p["match_id"])
+        if p["match_id"] not in MATCHES:
+            raise SystemExit(f"{name}: match {p['match_id']} isn't one of the six (10-ball 3a)")
+        if not name or name.strip() != name or "/" in name:
+            raise SystemExit(f"{name!r}: a piece_id is a plain name")
+        if name in seen:
+            raise SystemExit(f"{name}: piece_id twice")
+        seen.add(name)
+        if not p["video_start_s"] < p["video_end_s"]:
+            raise SystemExit(f"{name}: ends before it starts")
+        if p["offset_from"] not in OFFSET_FROM:
+            raise SystemExit(f"{name}: offset_from must be one of {OFFSET_FROM}")
+        if p["period"] not in (1, 2, 3, 4):
+            raise SystemExit(f"{name}: period must be 1-4")
+    return pieces
 
 
 def refuse(match_id: str, manifests=MANIFESTS) -> None:

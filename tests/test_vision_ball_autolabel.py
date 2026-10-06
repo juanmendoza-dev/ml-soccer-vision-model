@@ -296,3 +296,70 @@ def test_a_second_confident_ball_near_the_touchline_is_a_spare_ball():
     assert weak.kind == "positive"  # a weak one there is a hard negative at most
     inside = al.label(lf(0, 0.0, proj, [ball, box(*mid, 0.6)]), (0, 0), True)
     assert inside.kind == "positive" and inside.negatives == [box(*mid, 0.6)[:4]]
+
+
+# F2: which frames
+
+
+def test_every_third_source_frame_inside_the_piece():
+    assert al.source_frames(1.0, 1.5, FPS) == [27, 30, 33, 36]  # 25..37, multiples of 3
+
+
+def players(rows):
+    return pl.DataFrame(rows, schema=["frame_id", "t", "visible"], orient="row")
+
+
+def test_cutaway_when_every_pff_player_is_estimated():
+    p = players([(1, 0.0, True), (1, 0.0, False), (2, 1 / PFF_FPS, False), (2, 1 / PFF_FPS, False)])
+    cut = al.cutaways(p)
+    assert not al.is_cutaway(cut, 0.0)
+    assert al.is_cutaway(cut, 1 / PFF_FPS)
+    assert al.is_cutaway(cut, 5.0)  # no PFF frame near: skipped too
+
+
+def piece(**kw):
+    p = {
+        "piece_id": "kor-por-1",
+        "match_id": "3857",
+        "period": 1,
+        "video_sha256": "ab",
+        "video_start_s": 10.0,
+        "video_end_s": 310.0,
+        "offset_s": 100.0,
+        "offset_from": "scoreboard",
+        "home_attacks_tv_right_p1": True,
+    }
+    return p | kw
+
+
+def write_pieces(tmp_path, pieces):
+    path = tmp_path / "pieces.json"
+    path.write_text(json.dumps({"version": 1, "pieces": pieces}))
+    return path
+
+
+def test_pieces_load_and_refuse_bench_and_unknown_matches(tmp_path):
+    assert al.load_pieces(write_pieces(tmp_path, [piece()]))[0]["piece_id"] == "kor-por-1"
+    with pytest.raises(SystemExit, match="bench"):
+        al.load_pieces(write_pieces(tmp_path, [piece(match_id="10517")]))
+    with pytest.raises(SystemExit, match="six"):
+        al.load_pieces(write_pieces(tmp_path, [piece(match_id="3812")]))
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"video_end_s": 5.0},
+        {"offset_from": "guess"},
+        {"period": 5},
+        {"piece_id": "kor-por-1 "},
+    ],
+)
+def test_pieces_reject_bad_values(tmp_path, bad):
+    with pytest.raises(SystemExit):
+        al.load_pieces(write_pieces(tmp_path, [piece(**bad)]))
+
+
+def test_piece_ids_are_unique(tmp_path):
+    with pytest.raises(SystemExit, match="twice"):
+        al.load_pieces(write_pieces(tmp_path, [piece(), piece()]))
