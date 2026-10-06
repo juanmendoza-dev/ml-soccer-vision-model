@@ -165,8 +165,13 @@ A clip that fails any of these is refused.
   - **Auto-accept:** a confident, isolated candidate within 15 px of a VISIBLE projection is saved without being shown and listed under the clip's `auto`. On vb02, 81 of 82 such frames match the click within 15 px. A random 10% of them is shown for checking.
   - Every other label is what the person chose.
 - **`--flag`** reopens labels that disagree with PFF's projection (> 30 px from a VISIBLE one, or `"none"` with a candidate near it) for a second look. PFF has its own biased stretches, so a flag never rejects a label by itself.
-- vb02's first pass (2026-10-02) has known bad clicks (specks at 240–280, trailing clicks at 575–610, guesses where the ball wasn't visible); they're redone with `--flag` before vb02's ball score counts.
-- `version`, and `clips`: `clip_id` → `video_sha256`, `every` (N), `labels`.
+- vb02's first pass (2026-10-02) had known bad clicks (specks at 240–280, trailing clicks at 575–610, guesses where the ball wasn't visible). They were redone with `--flag` on 2026-10-05, when vb01, vb03 and the demo clip were labeled with `--assist` (`Docs/reviews/ball-fix-2026-10-05.md`, Phase B).
+- `version`, and `clips`: `clip_id` → `video_sha256`, `every` (N), `labels`, and optional lists of source frame indices:
+  - `auto`: auto-accepted;
+  - `spot_checked`: auto frames shown in the spot check and decided. One no longer in `auto` was changed: a different answer, or a ball more than 15 px (the hit radius) from the auto label;
+  - `flag_checked`: flagged frames a person looked at again;
+  - `auto_off: true`: the spot check changed more than 3%, so the unchecked auto frames went back to the person.
+- `python -m vision.ball_assist --status` prints each clip's labeled share, auto frames, spot check and unresolved flags.
 - **Which frames:** source-video frames whose index is a multiple of N, inside `[video_start_s, video_end_s)` and outside the marks (frame index / fps, as the scored frames). N = 5, so 6 labels a second, about 930 on the three clips:
   - neighbouring frames at 30 fps are near duplicates (the ball moves a few pixels), so N = 1 or 3 mostly re-measures the same frames for 5× or 1.7× the clicking;
   - 6 a second still puts 6 labels inside the longest gap the ball may be extrapolated over (`ball_max_gap_s` 1 s), so gaps and drift show up;
