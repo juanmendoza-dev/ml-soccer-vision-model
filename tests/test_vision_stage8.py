@@ -70,3 +70,19 @@ def test_a_failed_validation_leaves_the_frames_as_they_were(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="02 validation failed"):
         stage8.fill(d)
     assert (d / "frames.parquet").read_bytes() == before
+
+
+def test_a_carrier_gone_from_the_frame_is_dropped(tmp_path):
+    # stage 8 holds the carrier through a short ball gap (carrier_gap_s), but vision may
+    # lose that player's track too (demo clip, just after the goal): 02 wants the
+    # carrier among the frame's objects
+    d = write_match(tmp_path / "m")
+    objs = pl.read_parquet(d / "objects.parquet")
+    gone = pl.col("frame_id").is_between(40, 43) & pl.col("object_id").is_in(["h1", "ball"])
+    objs.filter(~gone).write_parquet(d / "objects.parquet")
+    stats = stage8.fill(d)
+    frames = pl.read_parquet(d / "frames.parquet")
+    assert validate_match(d) == []
+    assert frames.filter(pl.col("frame_id").is_between(40, 43))["ball_carrier_id"].is_null().all()
+    assert frames.filter(pl.col("frame_id") == 39)["ball_carrier_id"][0] == "h1"
+    assert stats["carrier_not_in_frame_dropped"] == 4

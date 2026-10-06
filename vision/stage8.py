@@ -43,6 +43,19 @@ def fill(match_dir: Path, config: StateConfig | None = None) -> dict:
     state = state.with_columns(
         ball_carrier_id=pl.when(orphan).then(None).otherwise(pl.col("ball_carrier_id"))
     )
+    # a carrier held through a ball gap whose track vision lost too: 02 wants the carrier
+    # among the frame's objects, so it's dropped there and counted
+    present = (
+        objects.filter(pl.col("object_type").is_in(PLAYER_TYPES))
+        .select("frame_id", ball_carrier_id="object_id", present=pl.lit(True))
+        .collect()
+    )
+    state = state.join(present, on=["frame_id", "ball_carrier_id"], how="left")
+    gone = pl.col("ball_carrier_id").is_not_null() & pl.col("present").is_null()
+    missing = state.filter(gone).height
+    state = state.with_columns(
+        ball_carrier_id=pl.when(gone).then(None).otherwise(pl.col("ball_carrier_id"))
+    ).drop("present")
     out = (
         frames.drop(*STATE_COLS)
         .join(state, on="frame_id", how="left", validate="1:1")
@@ -63,6 +76,7 @@ def fill(match_dir: Path, config: StateConfig | None = None) -> dict:
         "dead_share": round(float((bs == "dead").fill_null(False).mean()), 4),
         "ball_state_null_share": round(float(bs.is_null().mean()), 4),
         "carrier_without_team_dropped": dropped,
+        "carrier_not_in_frame_dropped": missing,
     }
 
 
