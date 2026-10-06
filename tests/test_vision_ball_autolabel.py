@@ -617,3 +617,40 @@ def test_the_camera_never_runs_on_a_sure_cutaway(tmp_path):
 def frames_to(last):
     for s in range(2590, last):
         yield s, np.zeros((SIZE[1], SIZE[0], 3), np.uint8)
+
+
+def ball_click():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).parents[1] / "scripts" / "ball_click.py"
+    spec = importlib.util.spec_from_file_location("ball_click", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_ball_click_missed_mode_saves_each_decision(tmp_path, monkeypatch):
+    out = missed_dir(tmp_path, {"a": [3, 6, 9]})
+    al.main(["--out", str(out), "--sample-missed"])
+    order = [f["image"] for f in json.loads((out / "missed_sample.json").read_text())]
+    bc = ball_click()
+    cb = []
+    keys = iter(["click", ord(" "), ord("u")])
+
+    def wait_key(ms):
+        k = next(keys)
+        if k == "click":
+            cb[0](cv2.EVENT_LBUTTONDOWN, 20, 15, 0, None)
+            return 255
+        return k
+
+    monkeypatch.setattr(bc.cv2, "namedWindow", lambda *a: None)
+    monkeypatch.setattr(bc.cv2, "setMouseCallback", lambda win, f: cb.append(f))
+    monkeypatch.setattr(bc.cv2, "imshow", lambda *a: None)
+    monkeypatch.setattr(bc.cv2, "waitKey", wait_key)
+    monkeypatch.setattr(bc.cv2, "getWindowProperty", lambda *a: 1.0)
+    monkeypatch.setattr(bc.cv2, "destroyAllWindows", lambda: None)
+    bc.main(["--missed", str(out), "--scale", "0.5"])
+    clicks = json.loads((out / "missed_clicks.json").read_text())
+    assert clicks == {order[0]: [40.0, 30.0], order[1]: "none", order[2]: "unsure"}

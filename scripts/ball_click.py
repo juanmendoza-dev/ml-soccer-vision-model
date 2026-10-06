@@ -42,6 +42,14 @@ from another model's run (balls.parquet's columns) instead of the clip's balls.p
 --flag opens the frames whose label disagrees with PFF: a ball more than 30 px from PFF's,
 or "none" where a candidate sits on PFF's ball. A flag is a prompt, not an error: PFF's
 ball drifts by up to 1 m for seconds, so press k when the label is right.
+
+--missed DIR (10-ball 3a, ball fix plan F3) walks DIR/missed_sample.json, the frames where
+PFF sees the ball and the ball model has nothing within 40 px, with PFF's ball as a magenta
+ring. Click the ball only where you can see it; the click becomes a training box of PFF's
+ball size, so space / u where you can't. Saved to DIR/missed_clicks.json as you go; then
+python scripts/ball_autolabel.py --join-missed.
+
+    PYTHONPATH=. python scripts/ball_click.py --missed data/ball_train
 """
 
 import argparse
@@ -71,9 +79,96 @@ def dashed_circle(image, center, radius, color):
         cv2.ellipse(image, center, (radius, radius), 0, start, start + 15, color, 2)
 
 
+def magnify(view, src, mouse) -> None:
+    """The 4x box under the mouse, from the full-resolution frame, in view's corner."""
+    mx, my = (round(v) for v in mouse)
+    pad = cv2.copyMakeBorder(src, *[ZOOM_HALF] * 4, cv2.BORDER_CONSTANT)
+    crop = pad[my : my + 2 * ZOOM_HALF + 1, mx : mx + 2 * ZOOM_HALF + 1]
+    side = (2 * ZOOM_HALF + 1) * ZOOM
+    if crop.shape[:2] == (2 * ZOOM_HALF + 1,) * 2 and min(view.shape[:2]) >= side:
+        big = cv2.resize(crop, None, fx=ZOOM, fy=ZOOM, interpolation=cv2.INTER_NEAREST)
+        c = ZOOM_HALF * ZOOM + ZOOM // 2
+        cv2.line(big, (c, 0), (c, big.shape[0]), (0, 0, 255), 1)
+        cv2.line(big, (0, c), (big.shape[1], c), (0, 0, 255), 1)
+        view[: big.shape[0], view.shape[1] - big.shape[1] :] = big
+
+
+def click_missed(out: Path, scale: float) -> None:
+    """--missed: label the missed-ball sample (ball fix plan F3)."""
+    sample_path, clicks_path = out / "missed_sample.json", out / "missed_clicks.json"
+    if not sample_path.exists():
+        raise SystemExit(f"no {sample_path}: python scripts/ball_autolabel.py --sample-missed")
+    sample = json.loads(sample_path.read_text())
+    clicks = json.loads(clicks_path.read_text()) if clicks_path.exists() else {}
+
+    def save():
+        clicks_path.write_text(json.dumps(clicks, indent=1))
+
+    pos = next((k for k, f in enumerate(sample) if f["image"] not in clicks), len(sample) - 1)
+    mouse, clicked = [None], []
+    win = "ball_click missed"
+    cv2.namedWindow(win, cv2.WINDOW_AUTOSIZE)
+
+    def on_mouse(event, x, y, flags, param):
+        mouse[0] = (x / scale, y / scale)
+        if event == cv2.EVENT_LBUTTONDOWN:
+            clicked.append([round(x / scale, 1), round(y / scale, 1)])
+
+    cv2.setMouseCallback(win, on_mouse)
+    while True:
+        f = sample[pos]
+        src = cv2.imread(str(out / "missed" / f["image"]))
+        image = src.copy()
+        r = max(round(f["diam_px"] / 2), 6)
+        cv2.circle(image, (round(f["u"]), round(f["v"])), r, PFF_COLOR, 2)
+        cur = clicks.get(f["image"])
+        if isinstance(cur, list):
+            cv2.circle(image, (round(cur[0]), round(cur[1])), RING_PX, (0, 255, 0), 2)
+        view = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        if mouse[0] is not None:
+            magnify(view, src, mouse[0])
+        text = (
+            f"missed {pos + 1}/{len(sample)}  {f['image']}  "
+            f"done {sum(g['image'] in clicks for g in sample)}/{len(sample)}  "
+            f"now: {cur if cur is not None else '-'}"
+        )
+        cv2.rectangle(view, (0, 0), (view.shape[1], 26), (0, 0, 0), -1)
+        cv2.putText(view, text, (8, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        cv2.imshow(win, view)
+        key = cv2.waitKey(30) & 0xFF
+        if cv2.getWindowProperty(win, cv2.WND_PROP_VISIBLE) < 1:
+            break
+        decided = False
+        if clicked:
+            clicks[f["image"]] = clicked[-1]
+            clicked.clear()
+            decided = True
+        elif key in (ord(" "), ord("n"), ord("u")):
+            clicks[f["image"]] = "unsure" if key == ord("u") else "none"
+            decided = True
+        elif key in (ord("a"), 8):
+            pos = max(pos - 1, 0)
+        elif key == ord("d"):
+            pos = min(pos + 1, len(sample) - 1)
+        elif key == ord("x"):
+            clicks.pop(f["image"], None)
+            save()
+        elif key in (ord("q"), 27):
+            break
+        if decided:
+            save()
+            if pos == len(sample) - 1 and all(g["image"] in clicks for g in sample):
+                break
+            pos = min(pos + 1, len(sample) - 1)
+    cv2.destroyAllWindows()
+    done = sum(g["image"] in clicks for g in sample)
+    print(f"missed sample: {done} of {len(sample)} decided -> {clicks_path}")
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="ball_click")
-    ap.add_argument("--clip", required=True)
+    ap.add_argument("--clip")
+    ap.add_argument("--missed", type=Path, help="label the missed-ball sample in this dir (F3)")
     ap.add_argument("--manifest", type=Path, default=bench.MANIFEST)
     ap.add_argument("--scale", type=float, default=0.85, help="window size vs 1080p")
     ap.add_argument("--labels", type=Path, default=bench.BALL_LABELS)
@@ -85,6 +180,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--candidates", type=Path, help="another run's balls.parquet")
     ap.add_argument("--flag", action="store_true", help="labels that disagree with PFF")
     args = ap.parse_args(argv)
+    if args.missed:
+        click_missed(args.missed, args.scale)
+        return
+    if not args.clip:
+        ap.error("--clip is required (or --missed DIR)")
 
     clip = next((c for c in bench.load_manifest(args.manifest) if c["clip_id"] == args.clip), None)
     if clip is None:
@@ -242,16 +342,7 @@ def main(argv: list[str] | None = None) -> None:
             cv2.circle(image, (round(cur[0]), round(cur[1])), RING_PX, (0, 255, 0), 2)
         view = cv2.resize(image, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
         if mouse[0] is not None:  # magnifier from the full-resolution frame
-            mx, my = (round(v) for v in mouse[0])
-            src = load(shown)
-            pad = cv2.copyMakeBorder(src, *[ZOOM_HALF] * 4, cv2.BORDER_CONSTANT)
-            crop = pad[my : my + 2 * ZOOM_HALF + 1, mx : mx + 2 * ZOOM_HALF + 1]
-            if crop.shape[:2] == (2 * ZOOM_HALF + 1,) * 2:
-                big = cv2.resize(crop, None, fx=ZOOM, fy=ZOOM, interpolation=cv2.INTER_NEAREST)
-                c = ZOOM_HALF * ZOOM + ZOOM // 2
-                cv2.line(big, (c, 0), (c, big.shape[0]), (0, 0, 255), 1)
-                cv2.line(big, (0, c), (big.shape[1], c), (0, 0, 255), 1)
-                view[: big.shape[0], view.shape[1] - big.shape[1] :] = big
+            magnify(view, load(shown), mouse[0])
         done = sum(j in labels for j in idx)
         tags = []
         if i in sample and i not in entry.get("spot_checked", []):
