@@ -1,5 +1,6 @@
 """Vision config. Every threshold in 03 lives here; the numbers are starting guesses."""
 
+import math
 from dataclasses import dataclass
 
 
@@ -78,7 +79,9 @@ class VisionConfig:
     ball_size_hi: float = 2.0  # over hi x expected + ball_size_pad_px is dropped
     ball_size_pad_px: float = 6.0  # motion blur
     ball_max_speed_mps: float = 40.0  # faster: keep the position, zero the velocity (2b)
-    ball_air_ratio: float = 1.5  # box >= this x the ground-expected width: airborne (2g)
+    # box >= this x the ground-expected width: airborne (2g). Off until F6 re-derives it;
+    # the demo runs it as the air15 variant (--set ball_air_ratio=1.5)
+    ball_air_ratio: float = math.inf
 
     # Teams and direction (03)
     home_attacks_tv_right_p1: bool = True

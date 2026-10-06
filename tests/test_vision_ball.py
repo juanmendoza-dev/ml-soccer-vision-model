@@ -97,14 +97,18 @@ def test_filters_are_skipped_without_geometry():
     assert b is not None and b.x is None  # today's rule: seen, no position
 
 
+def air(**kw):
+    return VisionConfig(ball_air_ratio=1.5, **kw)
+
+
 def test_a_box_at_the_air_ratio_is_airborne():
-    track = BallTrack(VisionConfig())
+    track = BallTrack(air())
     assert track.update(0.0, [wide(0, 0, 15)], meters, width_at=width10).airborne
     assert not track.update(0.1, [wide(1, 0, 14)], meters, width_at=width10).airborne
 
 
 def test_extrapolation_inherits_airborne_and_a_ground_detection_clears_it():
-    track = BallTrack(VisionConfig())
+    track = BallTrack(air())
     track.update(0.0, [wide(0, 0, 10)], meters, width_at=width10)
     track.update(0.1, [wide(1, 0, 16)], meters, width_at=width10)
     gap = track.update(0.2, [], meters, width_at=width10)
@@ -114,12 +118,19 @@ def test_extrapolation_inherits_airborne_and_a_ground_detection_clears_it():
 
 
 def test_no_airborne_flag_without_geometry_or_when_off():
-    no_geo = BallTrack(VisionConfig()).update(
+    no_geo = BallTrack(air()).update(
         0.0, [wide(0, 0, 18)], lambda px: (None, None), h_ok=False, width_at=None
     )
     assert not no_geo.airborne
     off = BallTrack(VisionConfig(ball_air_ratio=float("inf")))
     assert not off.update(0.0, [wide(0, 0, 18)], meters, width_at=width10).airborne
+
+
+def test_new_runs_are_never_airborne_until_f6():
+    # the user's call 2026-10-06: 1.5 blanks a quarter of vb01/vb02's ball (10-ball 2g)
+    assert VisionConfig().ball_air_ratio == float("inf")
+    track = BallTrack(VisionConfig())
+    assert not track.update(0.0, [wide(0, 0, 18)], meters, width_at=width10).airborne
 
 
 def test_expected_width_is_the_ball_through_the_homography():
