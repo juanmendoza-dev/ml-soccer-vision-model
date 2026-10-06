@@ -38,7 +38,9 @@ CLIPS = ("vb01-arg-fra", "vb02-ned-arg", "vb03-jpn-esp", "demo01-arg-fra-81")
 DEMO = Path("data/splits/demo_clips.json")
 LABEL_PX, PFF_PX = 15.0, 25.0
 SIZE_RATIOS = (1.3, 1.5, 1.8, 2.0)
-CAL_ZS = (1.0, 1.5, 2.0)  # calibrated size height as the flag, m
+CAL_ZS = (1.0, 1.5, 2.0)
+RUN_S, RUN_MIN = 10.0, 20  # running median of the track's ratios: window s, detections needed
+RUN_RATIOS = (1.05, 1.1, 1.15, 1.2)  # calibrated size height as the flag, m
 JUMPS_M = (5.0, 10.0)
 FIX_S = 1.0
 HEAD_M = 3.0
@@ -96,9 +98,12 @@ def track_fixes(cache: Path, gs: Path) -> tuple:
     _, calls, views, times = replay.load(cache, gs)
     hs = replay.frame_homographies(calls, views, times, config, run_every=base.keypoints_every)
     fixes = {}
-    for _, frame_id, _, _, b in replay._ball_track(balls, views, times, hs, config):
+    for _, frame_id, _, H, b in replay._ball_track(balls, views, times, hs, config):
         if not b.interpolated and b.x is not None:
-            fixes[frame_id] = (times[frame_id], b.x, b.y)
+            x1, y1, x2, y2 = b.box
+            ew = expected_width(np.linalg.inv(H), H, ((x1 + x2) / 2, (y1 + y2) / 2))
+            ratio = (x2 - x1) / ew if ew else np.nan
+            fixes[frame_id] = (times[frame_id], b.x, b.y, ratio)
     return hs, fixes, times, config
 
 
@@ -184,8 +189,12 @@ def measure_clip(clip: dict, labels: dict) -> list[dict]:
             prev = fix_frames[(fix_frames < f)]
             prev = [p for p in prev[-60:] if t - fixes[p][0] <= FIX_S + 1e-9]
             if prev:
-                _, lx, ly = fixes[prev[-1]]
+                _, lx, ly, _ = fixes[prev[-1]]
                 rec["jump_m"] = float(np.hypot(rec["vis_x"] - lx, rec["vis_y"] - ly))
+            # causal per-broadcast scale: the track's detections over the last RUN_S
+            past = [fixes[p][3] for p in fix_frames[fix_frames < f] if t - fixes[p][0] <= RUN_S]
+            if len(past) >= RUN_MIN and rec["size_ratio"]:
+                rec["size_ratio_run"] = rec["size_ratio"] / float(np.nanmedian(past))
             near = people.filter(pl.col("frame_id") == f).filter(
                 ((pl.col("pitch_x") - rec["vis_x"]) ** 2 + (pl.col("pitch_y") - rec["vis_y"]) ** 2)
                 <= HEAD_M**2
@@ -272,6 +281,13 @@ def flag_table(df: pl.DataFrame) -> list[str]:
     rows.append(
         ("above every player box within 3 m", sel["above_heads"].fill_null(False).to_numpy())
     )
+    for t in RUN_RATIOS:
+        rows.append(
+            (
+                f"ratio / running median (last {RUN_S:.0f} s of detections) >= {t}",
+                (sel["size_ratio_run"].fill_null(0) >= t).to_numpy(),
+            )
+        )
     for z in CAL_ZS:
         rows.append((f"size cal height > {z:.1f} m", (sel["size_c_z"].fill_null(0) > z).to_numpy()))
     lines = [
