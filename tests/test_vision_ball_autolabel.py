@@ -265,7 +265,7 @@ def test_a_lone_candidate_at_the_ball_is_a_positive_with_hard_negatives():
 
 def test_the_bias_moves_the_projection_before_the_rules():
     f = lf(0, 0.0, (500.0, 400.0), [box(530, 400, 0.6)])
-    assert al.label(f, (0.0, 0.0), True).kind == "missed"  # 30 px
+    assert al.label(f, (0.0, 0.0), True).kind == "drift"  # 30 px: seen, but not close enough
     assert al.label(f, (10.0, 0.0), True).kind == "positive"  # 20 px after the correction
 
 
@@ -273,8 +273,9 @@ def test_the_bias_moves_the_projection_before_the_rules():
     ("cands", "kind"),
     [
         ([], "missed"),
-        ([box(530, 400, 0.9)], "missed"),  # nearest over 25 px
-        ([box(505, 400, 0.6), box(470, 400, 0.06)], "rival"),  # another within 40 px
+        ([box(545, 400, 0.9)], "missed"),  # nothing within 40 px: the model missed it
+        ([box(530, 400, 0.9)], "drift"),  # nearest 25-40 px: PFF drift or a near miss
+        ([box(505, 400, 0.6), box(470, 400, 0.3)], "rival"),  # another >= 0.3 within 40 px
     ],
 )
 def test_frames_left_out(cands, kind):
@@ -577,3 +578,9 @@ def test_a_rejoin_drops_a_click_changed_to_none(tmp_path):
     al.join_missed(out, sample, {"a_3.jpg": [40.0, 30.0]})
     al.join_missed(out, sample, {"a_3.jpg": "none"})
     assert not (out / "labels" / "a_3.txt").exists() and not (out / "images" / "a_3.jpg").exists()
+
+
+def test_a_weak_candidate_near_the_ball_is_no_rival():
+    # the detector runs at 0.05, so weak boots near the ball are common (the user's call)
+    f = lf(0, 0.0, (500.0, 400.0), [box(505, 400, 0.6), box(470, 400, 0.29)])
+    assert al.label(f, (0.0, 0.0), True).kind == "positive"

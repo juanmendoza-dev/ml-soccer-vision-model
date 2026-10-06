@@ -42,7 +42,8 @@ MATCHES = ("3857", "10507", "3816", "10510", "10508", "10514")
 
 # labels (10-ball 3a)
 POS_PX = 25.0  # the nearest candidate this close to the projection is the ball ...
-ALONE_PX = 40.0  # ... if no other candidate is this close
+ALONE_PX = 40.0  # ... if no other candidate is this close ...
+RIVAL_CONF = 0.3  # ... at this confidence (the user's call 2026-10-06: weak boots are common)
 NEG_CONF, NEG_PX = 0.3, 60.0  # hard negatives: this confident, further than this
 SPARE_CONF, SPARE_M = 0.5, 3.0  # a second ball this close to a touchline: spare balls
 BIAS_CONF, BIAS_PX = 0.5, 40.0  # PFF drift: confident candidates this close ...
@@ -127,15 +128,17 @@ def label(f: LabelFrame, b: tuple[float, float], home_right: bool) -> Label:
     pu, pv = f.proj[0] + b[0], f.proj[1] + b[1]
     dist = [float(np.hypot(*np.subtract(_center(x), (pu, pv)))) for x in f.boxes]
     order = np.argsort(dist)
-    if not len(order) or dist[order[0]] > POS_PX:
-        return Label("missed")
+    if not len(order) or dist[order[0]] > ALONE_PX:
+        return Label("missed")  # nothing near: the model missed it (F3's pool)
+    if dist[order[0]] > POS_PX:
+        return Label("drift")  # seen 25-40 px off: PFF drift or a near miss, not F3's
     ball = int(order[0])
     for j, x in enumerate(f.boxes):
         if j != ball and x[4] >= SPARE_CONF and f.cam is not None:
             _, y = ground_point(f.cam, *_center(x), home_right)
             if abs(abs(y) - HALF_WIDTH_M) <= SPARE_M:
                 return Label("spare_ball")
-    if len(order) > 1 and dist[order[1]] <= ALONE_PX:
+    if any(j != ball and x[4] >= RIVAL_CONF and dist[j] <= ALONE_PX for j, x in enumerate(f.boxes)):
         return Label("rival")
     negatives = [
         x[:4] for j, x in enumerate(f.boxes) if j != ball and x[4] >= NEG_CONF and dist[j] > NEG_PX
@@ -432,6 +435,7 @@ def update_manifest(out: Path, key: str, entry: dict, section: str = "pieces") -
         for k in (
             "POS_PX",
             "ALONE_PX",
+            "RIVAL_CONF",
             "NEG_CONF",
             "NEG_PX",
             "SPARE_CONF",
