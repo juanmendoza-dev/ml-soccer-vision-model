@@ -363,3 +363,115 @@ def test_pieces_reject_bad_values(tmp_path, bad):
 def test_piece_ids_are_unique(tmp_path):
     with pytest.raises(SystemExit, match="twice"):
         al.load_pieces(write_pieces(tmp_path, [piece(), piece()]))
+
+
+# F2: one piece end to end, with a fake camera and detector
+
+TRUE = 100.0 - 2600 / FPS + 1.0  # src 2600 is PFF t 101
+
+
+def fake_world(no_ball=(), no_camera=(), extra=None):
+    pff = pff_track(secs=8.0)
+    srcs = al.source_frames(2600 / FPS, 2700 / FPS, FPS)
+
+    def frames():
+        for s in range(2590, 2710):
+            yield s, np.zeros((SIZE[1], SIZE[0], 3), np.uint8)
+
+    def camera_fn(src, image):
+        return None if src in no_camera else cam()
+
+    def detect_fn(src, image):
+        if src in no_ball:
+            return []
+        b = bt.ball_at(pff, src / FPS + TRUE)
+        u, v, _ = bt.project_ball(cam(), (b["x"], b["y"], b["z"]), True)
+        out = [box(u + 1, v, 0.8, w=8.0)]
+        return out + ([extra] if extra else [])
+
+    return pff, srcs, frames, camera_fn, detect_fn
+
+
+def run(tmp_path, world, start=TRUE - 0.5, players=None):
+    pff, srcs, frames, camera_fn, detect_fn = world
+    p = piece(offset_s=start)
+    cut = al.cutaways(players if players is not None else players_all_visible(pff))
+    return al.run_piece(p, frames(), srcs, FPS, pff, cut, camera_fn, detect_fn, tmp_path)
+
+
+def players_all_visible(pff):
+    return pl.DataFrame({"frame_id": pff["frame_id"], "t": pff["t"], "visible": True})
+
+
+def test_a_piece_syncs_by_the_ball_and_writes_yolo_labels(tmp_path):
+    far = box(1500, 900, 0.4)
+    entry = run(tmp_path, fake_world(extra=far))
+    assert entry["status"] == "ok"
+    assert entry["offset_s"] == pytest.approx(TRUE, abs=1 / PFF_FPS)
+    n = len(al.source_frames(2600 / FPS, 2700 / FPS, FPS))
+    assert entry["counts"]["positive"] == n
+    assert entry["hard_negatives"] == n  # the far 0.4 box on every frame
+    images = sorted((tmp_path / "images").glob("*.jpg"))
+    assert len(images) == n and images[0].name == "kor-por-1_2601.jpg"
+    line = (tmp_path / "labels" / "kor-por-1_2601.txt").read_text().split()
+    assert line[0] == "0" and float(line[3]) == pytest.approx(8 / SIZE[0], abs=1e-6)
+    neg = json.loads((tmp_path / "negatives" / "kor-por-1.json").read_text())
+    assert neg["kor-por-1_2601.jpg"] == [pytest.approx(list(far[:4]))]
+    assert not (tmp_path / "stage" / "kor-por-1").exists()
+
+
+def test_missed_balls_are_kept_for_the_click_tool_and_never_labeled(tmp_path):
+    entry = run(tmp_path, fake_world(no_ball={2604, 2607}, no_camera={2610}))
+    assert entry["counts"]["missed"] == 2 and entry["skipped"]["no_camera"] == 1
+    assert not (tmp_path / "labels" / "kor-por-1_2604.txt").exists()
+    assert (tmp_path / "missed" / "kor-por-1_2604.jpg").exists()
+    missed = json.loads((tmp_path / "missed" / "kor-por-1.json").read_text())
+    assert sorted(missed) == ["2604", "2607"]
+    assert set(missed["2604"]) == {"u", "v", "diam_px"}
+
+
+def test_cutaways_are_skipped(tmp_path):
+    pff = pff_track(secs=8.0)
+    players = players_all_visible(pff).with_columns(
+        visible=(pl.col("t") < 104.0)  # everything after PFF t 104 is a cutaway
+    )
+    entry = run(tmp_path, fake_world(), players=players)
+    assert entry["skipped"]["cutaway"] > 0
+    assert entry["counts"]["positive"] + entry["skipped"]["cutaway"] == len(
+        al.source_frames(2600 / FPS, 2700 / FPS, FPS)
+    )
+
+
+def test_a_piece_that_cannot_sync_writes_nothing(tmp_path):
+    srcs = al.source_frames(2600 / FPS, 2700 / FPS, FPS)
+    entry = run(tmp_path, fake_world(no_ball=set(srcs)))
+    assert entry["status"].startswith("FAIL")
+    assert not list(tmp_path.rglob("*.jpg")) and not list(tmp_path.rglob("*.txt"))
+
+
+def test_a_peak_at_the_edge_of_the_sweep_fails(tmp_path):
+    entry = run(tmp_path, fake_world(), start=TRUE - 1.5)  # the curve still rising at the end
+    assert entry["status"].startswith("FAIL") and "edge" in entry["status"]
+
+
+def test_labels_need_a_passing_bench_sync_check(tmp_path):
+    path = tmp_path / "sync.json"
+    with pytest.raises(SystemExit, match="sync-check"):
+        al.require_sync_check(path)
+    good = {"clip_id": "vb01", "frames": 9, "rows": [], "peak": row(0.0)}
+    bad = {"clip_id": "vb02", "frames": 9, "rows": [], "peak": row(3 / PFF_FPS)}
+    path.write_text(json.dumps([good, bad]))
+    with pytest.raises(SystemExit, match="vb02"):
+        al.require_sync_check(path, ["vb01", "vb02"])
+    path.write_text(json.dumps([good]))
+    with pytest.raises(SystemExit, match="vb02"):  # every bench clip with PFF must be in it
+        al.require_sync_check(path, ["vb01", "vb02"])
+    al.require_sync_check(path, ["vb01"])
+
+
+def test_the_manifest_keeps_other_pieces_and_records_the_commit(tmp_path):
+    al.update_manifest(tmp_path, "a", {"status": "ok"})
+    al.update_manifest(tmp_path, "b", {"status": "ok"})
+    m = json.loads((tmp_path / "manifest.json").read_text())
+    assert set(m["pieces"]) == {"a", "b"} and "git_commit" in m["pieces"]["a"]
+    assert m["rules"]["POS_PX"] == al.POS_PX

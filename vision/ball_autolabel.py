@@ -20,6 +20,7 @@ import cv2
 import numpy as np
 import polars as pl
 
+from converters.common import git_commit
 from vision import ball_truth as bt
 from vision import bench, replay
 from vision.bench import PFF_FPS
@@ -45,6 +46,7 @@ BIAS_CONF, BIAS_PX = 0.5, 40.0  # PFF drift: confident candidates this close ...
 BIAS_WIN_S, BIAS_SKIP_S = 1.0, 0.2  # ... within 1 s of the frame, not within 0.2 s
 HALF_WIDTH_M = 34.0  # 02 touchlines at y = +-34
 EVERY = 3  # every 3rd source frame of live wide play
+DET_CONF = 0.05  # the ball model's threshold for auto-labels
 PIECES = Path("data/splits/ball_autolabel_pieces.json")
 OFFSET_FROM = ("scoreboard", "stitched")  # where a piece's starting offset came from
 
@@ -258,6 +260,172 @@ def verdict(p: dict) -> str:
 
 def sync_ok(p: dict) -> bool:
     return verdict(p) == "ok"
+
+
+EDGE_FRAMES = 2  # a peak this close to the sweep's end: the curve may still be rising
+
+
+@dataclass
+class Seen:
+    """A kept frame of a piece: an accepted camera and the ball model's candidates."""
+
+    src: int
+    cam: Camera
+    boxes: list[Box]
+
+
+def collect(frames, srcs, camera_fn, detect_fn, stage: Path):
+    """Pass 1 over (src, image) in order: the srcs with an accepted camera, each image saved
+    to stage/<src>.jpg for pass 2. Cutaways can't be told yet: PFF's flags are on its clock,
+    and the offset comes from the sync. Returns the kept frames, the count without a camera
+    and the image size (w, h)."""
+    want, kept, size, no_camera = set(srcs), [], None, 0
+    stage.mkdir(parents=True, exist_ok=True)
+    for src, image in frames:
+        if src not in want:
+            continue
+        cam = camera_fn(src, image)
+        if cam is None:
+            no_camera += 1
+            continue
+        size = (image.shape[1], image.shape[0])
+        cv2.imwrite(str(stage / f"{src}.jpg"), image, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        kept.append(Seen(src, cam, detect_fn(src, image)))
+    return kept, no_camera, size
+
+
+def sync_piece(seen, pff, offset, fps, home_right, size) -> tuple[float | None, dict, str]:
+    """The sweep around the piece's starting offset: (offset or None, peak, status)."""
+    frames = [SyncFrame(x.src, x.cam, [(*_center(b), b[4]) for b in x.boxes]) for x in seen]
+    rows = sweep(frames, pff, offset, fps, home_right, size)
+    p = peak(rows)
+    k, last = round(p["shift"] * PFF_FPS), round(rows[-1]["shift"] * PFF_FPS)
+    if p["hits"] == 0 or p["n"] < MIN_FRAMES:
+        return None, p, f"FAIL: no scorable frames ({p['hits']}/{p['n']} at the peak)"
+    if abs(k) >= last - EDGE_FRAMES:
+        return None, p, f"FAIL: peak at {k:+d} PFF frames, the sweep's edge"
+    return offset + p["shift"], p, "ok"
+
+
+def label_frames(seen, pff, offset, fps, home_right, size) -> list[LabelFrame]:
+    out = []
+    for x in seen:
+        b = bt.ball_at(pff, x.src / fps + offset)
+        proj = bt.project_ball(x.cam, (b["x"], b["y"], b["z"]), home_right) if b else None
+        kind = bt.kind_of(b, True, proj, size)
+        out.append(
+            LabelFrame(
+                x.src, x.src / fps, kind, proj[:2] if kind == "pff" else None, x.cam, x.boxes
+            )
+        )
+    return out
+
+
+def yolo_line(b, size) -> str:
+    """Class 0 (the ball model's only class), center and size as fractions of the image."""
+    w, h = size
+    cx, cy = _center(b)
+    return f"0 {cx / w:.6f} {cy / h:.6f} {(b[2] - b[0]) / w:.6f} {(b[3] - b[1]) / h:.6f}\n"
+
+
+def run_piece(piece, frames, srcs, fps, pff, cut, camera_fn, detect_fn, out: Path) -> dict:
+    """One piece: collect, sync by the ball, label, write. Positives go to images/ and
+    labels/ (YOLO), their hard negatives to negatives/<piece>.json, missed balls to missed/
+    for ball_click --assist (F3); everything else is deleted. Returns the manifest entry."""
+    pid, home_right = piece["piece_id"], piece["home_attacks_tv_right_p1"]
+    stage = out / "stage" / pid
+    seen, no_camera, size = collect(frames, srcs, camera_fn, detect_fn, stage)
+    entry = {"match_id": piece["match_id"], "start_offset_s": piece["offset_s"]}
+    entry |= {"frames": len(srcs), "skipped": {"no_camera": no_camera, "cutaway": 0}}
+    offset, p, status = (
+        (None, None, "FAIL: no frames")
+        if not seen
+        else sync_piece(seen, pff, piece["offset_s"], fps, home_right, size)
+    )
+    entry |= {"status": status, "offset_s": offset, "peak": p}
+    if offset is None:
+        for f in stage.glob("*.jpg"):
+            f.unlink()
+        stage.rmdir()
+        return entry
+    cutaway = {x.src for x in seen if is_cutaway(cut, x.src / fps + offset)}
+    for src in cutaway:
+        (stage / f"{src}.jpg").unlink()
+    entry["skipped"]["cutaway"] = len(cutaway)
+    seen = [x for x in seen if x.src not in cutaway]
+    lfs = label_frames(seen, pff, offset, fps, home_right, size)
+    counts: dict[str, int] = {}
+    negatives, missed = {}, {}
+    for d in ("images", "labels", "negatives", "missed"):
+        (out / d).mkdir(parents=True, exist_ok=True)
+    for i, f in enumerate(lfs):
+        b = bias(lfs, i)
+        lab = label(f, b, home_right)
+        counts[lab.kind] = counts.get(lab.kind, 0) + 1
+        name, staged = f"{pid}_{f.src}.jpg", stage / f"{f.src}.jpg"
+        if lab.kind == "positive":
+            staged.replace(out / "images" / name)
+            (out / "labels" / f"{pid}_{f.src}.txt").write_text(yolo_line(lab.box, size))
+            negatives[name] = [list(n) for n in lab.negatives]
+        elif lab.kind == "missed":
+            staged.replace(out / "missed" / name)
+            diam = bt.project_ball(f.cam, _xyz(pff, f.t + offset), home_right)[2]
+            missed[str(f.src)] = {"u": f.proj[0] + b[0], "v": f.proj[1] + b[1], "diam_px": diam}
+        else:
+            staged.unlink()
+    stage.rmdir()
+    (out / "negatives" / f"{pid}.json").write_text(json.dumps(negatives))
+    (out / "missed" / f"{pid}.json").write_text(json.dumps(missed, indent=1))
+    entry |= {"counts": counts, "hard_negatives": sum(len(v) for v in negatives.values())}
+    return entry
+
+
+def _xyz(pff, t) -> tuple[float, float, float]:
+    b = bt.ball_at(pff, t)
+    return b["x"], b["y"], b["z"]
+
+
+def require_sync_check(path: Path, clips: list[str] | None = None) -> None:
+    """Auto-labels only after --sync-check passed on every bench clip with PFF (10-ball 3a)."""
+    if not Path(path).exists():
+        raise SystemExit(f"no {path}: run --sync-check --json {path} first")
+    results = {r["clip_id"]: r for r in json.loads(Path(path).read_text())}
+    if clips is None:
+        clips = [c["clip_id"] for c in bench.load_manifest(bench.MANIFEST) if c["match_id"]]
+    for c in clips:
+        if c not in results:
+            raise SystemExit(f"{c} isn't in {path}: rerun --sync-check")
+        if not sync_ok(results[c]["peak"]):
+            raise SystemExit(f"{c}: {verdict(results[c]['peak'])}; no auto-labels")
+    for c, r in results.items():
+        if not sync_ok(r["peak"]):
+            raise SystemExit(f"{c}: {verdict(r['peak'])}; no auto-labels")
+
+
+def update_manifest(out: Path, piece_id: str, entry: dict) -> None:
+    """out/manifest.json: the rules and one entry per piece, each with the git commit."""
+    path = out / "manifest.json"
+    m = json.loads(path.read_text()) if path.exists() else {"pieces": {}}
+    m["rules"] = {
+        k: globals()[k]
+        for k in (
+            "POS_PX",
+            "ALONE_PX",
+            "NEG_CONF",
+            "NEG_PX",
+            "SPARE_CONF",
+            "SPARE_M",
+            "BIAS_CONF",
+            "BIAS_PX",
+            "BIAS_WIN_S",
+            "BIAS_SKIP_S",
+            "EVERY",
+            "DET_CONF",
+        )
+    }
+    m["pieces"][piece_id] = entry | {"git_commit": git_commit()}
+    out.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(m, indent=2))
 
 
 def camera(row: dict) -> Camera:
