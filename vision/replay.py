@@ -61,6 +61,7 @@ def run_config(cache: Path) -> VisionConfig:
     config.setdefault("ball_size_lo", 0.0)
     config.setdefault("ball_size_hi", math.inf)
     config.setdefault("ball_max_speed_mps", math.inf)
+    config.setdefault("ball_air_ratio", math.inf)  # never airborne (10-ball 2g)
     return VisionConfig(**config)
 
 

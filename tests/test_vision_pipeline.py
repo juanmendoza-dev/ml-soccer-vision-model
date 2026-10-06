@@ -399,6 +399,7 @@ def test_single_frame_run_has_null_velocity(tmp_path):
         {"ball_size_pad_px": -1.0},
         {"ball_max_speed_mps": 0.0},
         {"ball_cand_margin_m": -1.0},
+        {"ball_air_ratio": 0.0},
     ],
 )
 def test_config_rejects_bad_values(bad):

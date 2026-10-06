@@ -251,6 +251,7 @@ def test_old_run_json_replays_as_max_with_no_filters(tmp_path, monkeypatch):
         ball_size_lo=0.0,
         ball_size_hi=math.inf,
         ball_max_speed_mps=math.inf,
+        ball_air_ratio=math.inf,
         ball_max_gap_s=1.0,
     )
     cache, gs = synth_run(tmp_path, FakeKeypoints(), old)
@@ -262,6 +263,7 @@ def test_old_run_json_replays_as_max_with_no_filters(tmp_path, monkeypatch):
     assert config.ball_picker == "max" and config.ball_size_hi == math.inf
     assert config.ball_size_lo == 0.0 and config.ball_max_speed_mps == math.inf
     assert config.ball_cand_margin_m == config.max_off_pitch_m
+    assert config.ball_air_ratio == math.inf
     cols = ["frame_id", "object_id", "pitch_x", "pitch_y", "x1", "y1", "x2", "y2"]
     cols += ["det_confidence", "tracked_only"]
 

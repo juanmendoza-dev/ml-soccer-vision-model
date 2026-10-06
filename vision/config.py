@@ -78,6 +78,7 @@ class VisionConfig:
     ball_size_hi: float = 2.0  # over hi x expected + ball_size_pad_px is dropped
     ball_size_pad_px: float = 6.0  # motion blur
     ball_max_speed_mps: float = 40.0  # faster: keep the position, zero the velocity (2b)
+    ball_air_ratio: float = 1.5  # box >= this x the ground-expected width: airborne (2g)
 
     # Teams and direction (03)
     home_attacks_tv_right_p1: bool = True
@@ -142,6 +143,8 @@ class VisionConfig:
             errors.append("ball_size_hi must be > ball_size_lo")
         if not self.ball_max_speed_mps > 0:
             errors.append("ball_max_speed_mps must be > 0")
+        if not self.ball_air_ratio > 0:
+            errors.append("ball_air_ratio must be > 0")
         if self.pnl_blind_kp < 0:
             errors.append("pnl_blind_kp must be >= 0")
         if self.camera_max_height_m <= self.camera_min_height_m:
