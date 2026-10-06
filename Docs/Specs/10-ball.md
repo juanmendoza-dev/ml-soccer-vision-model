@@ -123,6 +123,26 @@ Each clears the track:
 - **Causal:** changing candidates after t changes no row at or before t.
 - **Replay:** the run config reproduces the cache; an old `run.json` replays as `"max"`.
 
+### 2g. Ball in the air (`ball_air_ratio`, added 2026-10-05)
+
+- **Problem:** a ball in the air is projected through the ground homography to a point ~14 m too far from the camera (median, p90 24 m; ball fix review, Phase D measurements). The goal model then reads a confident, fresh, wrong ball; on the demo the meter falls to 0.3% where PFF has 2.2–2.6%.
+- **No height is written.** Height from the box size (depth = fx × 0.22 / (w / 1.38)) is right on average but 6 m off in the plane at the median (p90 17 m) and 4× worse than the ground plane on the ground; `z` stays null.
+- **Airborne flag:** a detection with a pitch position is airborne when its box width is at least `ball_air_ratio` × `expected_width` at its ground projection (the 2a function). Default **1.5** for new runs; old runs replay as `inf` (never airborne), like the 2a–2b fields. Measured as a classifier of PFF z > 1 m: recall 95%, precision 33%, 32% of ground detections flagged (vb02 most: its boxes run 1.5× the ball against 1.32–1.38 elsewhere).
+- **Extrapolated rows** take the airborne flag of the detection they extrapolate. A detection that isn't airborne clears it. Without geometry there's no ratio, so no flag.
+- **Output:** an airborne row is written `visible = False, interpolated = True` with its ground-projected x/y, as 02 writes PFF's ESTIMATED ball: its position is a guess.
+  - The goal model's held ball (05) and stage 8 read only visible balls. So they hold the last ground ball (≤ `BALL_HOLD_S`, 1 s), which is the input the model was trained on for PFF's aerial ball, and give no carrier from the wrong spot. A hold longer than 1 s leaves no ball, so there's no xG or P(goal) there, as with PFF.
+  - A false flag on a ground ball costs one held row.
+- **Association is unchanged.** The gate still follows the ground projection, which stays continuous in the air.
+- **Scores:** 07's ball score and PFF score read the row's box and `has_xy`, so they don't change. The bench prints the share of ball rows written airborne.
+- **Tests** (2f):
+  - a box ≥ the ratio × expected width is airborne, one under it isn't;
+  - extrapolation inherits the flag, and a ground detection clears it;
+  - no flag without geometry;
+  - the writer gives an airborne row `visible = False, interpolated = True` with x/y;
+  - an old `run.json` replays with no airborne rows;
+  - the fake-stage pipeline test has one airborne frame.
+- **Done when:** on the demo variant, the aerial rows (2613–2622, 2667–2688) no longer sit at ~0.3%; ball score and PFF score are unchanged on every clip; the replay check passes on all four caches.
+
 ## 3. Detector
 The ball model's recall is the ceiling (~70% of PFF-VISIBLE frames, review). Input size doesn't move it (1280 → 1920: +0.5 pt, false candidates ×2.6).
 
@@ -184,4 +204,6 @@ Each step is a commit series with its own bench check.
    - Done per 3c.
 6. **Carrier hold** (2d), after stage 8 runs inside `VisionPipeline`.
    - Check by replay on the PFF score's filled frames: median distance to the projection lower than extrapolation's.
+3b. **Ball in the air** (2g; ball fix plan Phase D, design approved by the user 2026-10-05).
+   - Done per 2g.
 7. **Live ball model** (smaller YOLO, TensorRT fp16, rate). Measured against 09's budget.

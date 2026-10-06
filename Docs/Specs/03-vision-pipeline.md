@@ -248,6 +248,7 @@ One stateful object, one frame at a time. Offline is a loop over it, so live (so
 - Live forms of stages that are batch-style in roboflow/sports:
   - **Teams:** fit on a warmup window (the first `team_warmup_s` of `match` frames), then assign. `team = null` until fitted.
   - **Ball gaps:** extrapolated forward from the last velocity, `interpolated=True`, never filled from later frames. History older than `ball_max_gap_s` is dropped before a new detection uses it (no velocity measured across a gap), and the ball isn't extrapolated while the homography is invalid or after a detection that has no pitch position.
+  - **Airborne ball (10-ball 2g):** a detection whose box is at least `ball_air_ratio` (1.5; old runs `inf`) × the expected width at its ground projection is airborne, and its extrapolated rows inherit the flag; the next detection that isn't clears it. An airborne row is written `visible=False, interpolated=True` with its ground-projected x/y, so features and stage 8 hold the last ground ball instead of a position ~14 m off. The detections cache is unchanged.
   - **`visible`:** detections are visible. A filled-in box (tracker fill or ball extrapolation) that has drifted entirely out of the frame is written `visible=False` (it's already `interpolated=True`, 02).
   - **Homography:** smoothed over a trailing window only, and only across fits that agree with each other (no averaging across a camera cut). With PnLCalib, the nets run on their own worker and the frame loop uses the last accepted camera (Pitch calibration → Speed).
 

@@ -35,7 +35,7 @@ Parquet files under `data/gamestate/<match_id>/`: `match.parquet`, `objects.parq
 | x, y | float | Meters |
 | z | float/null | Ball height in meters where the source has it (PFF). Always null for non-ball objects |
 | vx, vy | float/null | m/s, smoothed. **Causal:** computed from frames `<= t` of the same track only (backward differences, trailing smoothing), never across a period boundary or a gap in the track. null on a track's first frame after a start or gap |
-| visible | bool | False if outside camera view. `visible=False` implies `interpolated=True` (the position is a guess) |
+| visible | bool | False if outside camera view, or, from vision, a ball detected in the air whose ground-projected position is a guess (03 stage 5, 10-ball 2g). `visible=False` implies `interpolated=True` (the position is a guess) |
 | interpolated | bool | True if filled in, not detected |
 | confidence | float | 0–1. 1.0 for dataset tracking without a confidence field. PFF maps HIGH / MEDIUM / LOW → 1.0 / 0.67 / 0.33 (ordinal, not a probability) |
 
