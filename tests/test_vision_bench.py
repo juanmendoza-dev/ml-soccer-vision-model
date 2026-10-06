@@ -363,3 +363,25 @@ def test_ball_labels_round_trip_keeps_the_lists(tmp_path):
     )
     bench.save_ball_labels({"d": {"video_sha256": "x", "every": 5, "labels": {}}}, path)
     assert "auto" not in bench.load_ball_labels(path)["d"]  # absent stays absent
+
+
+def test_ball_score_on_pff_estimated_frames_apart(ball_dirs, monkeypatch):
+    from vision import ball_truth
+
+    cache_dir, gs_dir = ball_dirs
+    fake_pff(gs_dir)
+    u, v = (float(c) for c in feet_px(BALL_AT))
+    truth = pl.DataFrame(
+        {"src": [30, 34, 22], "kind": ["estimated", "estimated", "pff"], "u": [u] * 3, "v": [v] * 3}
+    )
+    monkeypatch.setattr(ball_truth, "load", lambda c: truth)
+    labels = {22: [u + 3, v], 30: [u, v - 4], 34: [u + 100, v], 36: [10.0, 10.0]}
+    c = bench.Clip(
+        clip(), cache_dir, gs_dir, {"synth": {"video_sha256": "abc", "every": 5, "labels": labels}}
+    )
+    recs = c.score([])["ball"]
+    kinds = {r["frame"]: r["pff_kind"] for r in recs}
+    assert kinds == {22: "pff", 30: "estimated", 34: "estimated", 36: None}
+    est = [r for r in recs if r["pff_kind"] == "estimated"]
+    assert bench.ball_headline(est)["recall"] == pytest.approx(1 / 2)  # 30 hit, 34 miss
+    assert "PFF-estimated frames" in bench.fmt_ball(recs)

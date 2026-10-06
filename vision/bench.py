@@ -434,9 +434,11 @@ def ball_frames(
     frames: pl.DataFrame,
     hs: dict,
     config,
+    kinds: dict[int, str] | None = None,
 ) -> list[dict]:
     """Per labeled frame inside the run ("unsure" left out): the label, vision's ball row and
-    the nearest candidates, as pixel distances. ball_headline scores them at any radius."""
+    the nearest candidates, as pixel distances. ball_headline scores them at any radius.
+    kinds: the PFF reference's kind per source frame (pff_kind, None without one)."""
     rows = {r["frame_id"]: r for r in det.filter(pl.col("class") == BALL).iter_rows(named=True)}
     cands: dict[int, list] = {}
     for f, x1, y1, x2, y2, conf in balls.select(
@@ -461,6 +463,7 @@ def ball_frames(
             "d_m": None,
             "cand_hi_px": None,  # nearest candidate >= min_det_conf
             "cand_px": None,  # nearest candidate at any confidence
+            "pff_kind": (kinds or {}).get(idx),
         }
         r = rows.get(f)
         if r is not None:
@@ -546,12 +549,20 @@ def fmt_ball(recs: list[dict]) -> str:
     h = ball_headline(recs)
     other = ", ".join(f"{r:.0f} px {ball_headline(recs, r)['recall']:.1%}" for r in BALL_RS)
     misses = ", ".join(f"{k} {v}" for k, v in h["misses"].items() if v)
+    est = [x for x in recs if x.get("pff_kind") == "estimated"]
+    aerial = ""
+    if est:  # 10-ball 4 step 3: mostly balls in the air, which the PFF score can't see
+        e = ball_headline(est)
+        aerial = (
+            f"  on PFF-estimated frames ({e['n_visible']} visible): recall {e['recall']:.1%} "
+            f"precision {e['precision']:.1%}"
+        )
     return (
         f"ball ({h['n_visible']} visible of {h['n_labeled']} labeled): recall {h['recall']:.1%} "
         f"(usable frames {h['recall_usable']:.1%}; at {other})  precision {h['precision']:.1%} "
         f"(detected {h['hits_det']}/{h['rows_det']}, extrapolated "
         f"{h['hits_extrap']}/{h['rows_extrap']}, on 'none' frames {h['false_on_none']})  "
-        f"error {h['median_m']:.2f} / {h['p90_m']:.2f} m  misses: {misses or 'none'}"
+        f"error {h['median_m']:.2f} / {h['p90_m']:.2f} m  misses: {misses or 'none'}{aerial}"
     )
 
 
@@ -764,7 +775,12 @@ class Clip:
             )
             skip = round(self.run_start_s * self.fps)
         if self.ball_labels is not None:
-            out["ball"] = ball_frames(self.ball_labels, skip, det, self.balls, frames, hs, config)
+            kinds = None
+            if self.truth is not None:
+                kinds = dict(self.truth.select("src", "kind").iter_rows())
+            out["ball"] = ball_frames(
+                self.ball_labels, skip, det, self.balls, frames, hs, config, kinds
+            )
         if self.truth is not None:
             out["pff_ball"] = pff_frames(
                 self.truth, self.ball_labels, skip, det, self.balls, frames, hs, config
