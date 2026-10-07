@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> None:
     from ultralytics import YOLO
 
     n_train = sum(1 for _ in (args.data.parent / "train.txt").open())
-    project = args.data.parent / "timing_tmp"
+    project = (args.data.parent / "timing_tmp").resolve()  # relative goes under runs/detect/
     for b in args.batch:
 
         def factory():
