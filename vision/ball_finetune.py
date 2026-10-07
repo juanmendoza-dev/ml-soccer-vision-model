@@ -2,7 +2,7 @@
 free Colab (scripts/colab_ball_finetune.ipynb):
 
     python -m vision.ball_finetune --pack --roboflow data/roboflow-ball-v2   # -> data/ball_colab.zip
-    python -m vision.ball_finetune --timing --batch 4 8      # <= 2 min per batch size (F4 hard stop)
+    python -m vision.ball_finetune --timing --batch 4 5      # <= 2 min per batch size (F4 hard stop)
     python -m vision.ball_finetune --train --batch 4 --project <dir on Drive>  # resumes from last.pt
 
 Trains the current ball model on data/ball_train/dataset.yaml (python -m vision.ball_dataset)
@@ -55,6 +55,7 @@ def timing(model_factory, data: Path, batch: int, max_s: float, project: Path, c
             imgsz=IMGSZ,
             batch=batch,
             epochs=1,
+            close_mosaic=0,  # the real run has mosaic on for most epochs; 1 < 10 turns it off
             val=False,
             plots=False,
             save=False,
@@ -129,6 +130,7 @@ def train(model_cls, data: Path, weights: Path, batch: int, project: Path, devic
         patience=PATIENCE,
         project=str(project.resolve()),
         name=RUN_NAME,
+        exist_ok=True,  # cut before epoch 1 ends: start over in ball-ft, not ball-ft2
         device=device,
     )
 

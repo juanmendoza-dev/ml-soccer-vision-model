@@ -42,6 +42,7 @@ def test_timing_stops_at_max_s_and_skips_the_warmup(tmp_path):
     assert r["iters"] < 1000 and clock.t <= 60.0 + 5.0
     assert model.kwargs["batch"] == 2 and model.kwargs["imgsz"] == 1280
     assert model.kwargs["epochs"] == 1 and model.kwargs["val"] is False
+    assert model.kwargs["close_mosaic"] == 0
     assert not (tmp_path / "t").exists()  # nothing it wrote is kept
 
 
@@ -134,6 +135,7 @@ def test_train_starts_fresh_with_early_stopping(tmp_path):
     assert kw["imgsz"] == 1280 and kw["batch"] == 4
     assert kw["epochs"] == ft.TRAIN_EPOCHS and kw["patience"] == ft.PATIENCE
     assert kw["project"] == str((tmp_path / "runs").resolve()) and kw["name"] == ft.RUN_NAME
+    assert kw["exist_ok"] is True
     assert "save_period" not in kw  # one last.pt + best.pt, not a checkpoint per epoch
 
 
