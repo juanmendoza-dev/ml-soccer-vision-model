@@ -5,6 +5,8 @@ demo.pitch.Pitch, and the video overlay will pass screen positions instead. The 
 (bands, cutoffs, durations) are 08's "Element definitions".
 """
 
+from itertools import pairwise
+
 import cv2
 import numpy as np
 
@@ -294,3 +296,170 @@ def danger_meter(
         text(img, s, (bx + bw + 9, ty + 4), 0.38, MUTED)
     text(img, value, (x + w // 2, y + 26), 0.7, TEXT if level is not None else MUTED, 2, "center")
     text(img, title, (x + w // 2, y + h - 12), 0.38, MUTED, align="center")
+
+
+FONT_FILES = {
+    "regular": [
+        "C:/Windows/Fonts/segoeui.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ],
+    "bold": [
+        "C:/Windows/Fonts/segoeuib.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ],
+}
+_fonts: dict = {}
+
+
+def font(weight: str, size: int):
+    """A TrueType font through Pillow, or None when Pillow or every font file is missing
+    (the card then falls back to cv2's Hershey text)."""
+    key = (weight, size)
+    if key not in _fonts:
+        _fonts[key] = None
+        try:
+            from PIL import ImageFont
+        except ImportError:
+            return None
+        for path in FONT_FILES[weight]:
+            try:
+                _fonts[key] = ImageFont.truetype(path, size)
+                break
+            except OSError:
+                continue
+    return _fonts[key]
+
+
+def nice_text(roi: np.ndarray, items: list[tuple]) -> None:
+    """Draw (s, (x, y), size, color, weight, anchor) items on roi in one Pillow pass; y is
+    the text's middle, anchor 'l', 'm' or 'r'. Colors are BGR, like the rest of the overlay."""
+    if not items:
+        return
+    if font("bold", 12) is None:
+        for s, (x, y), size, color, weight, anchor in items:
+            align = {"l": "left", "m": "center", "r": "right"}[anchor]
+            text(roi, s, (x, y + size // 3), size / 30, color, 2 if weight == "bold" else 1, align)
+        return
+    from PIL import Image, ImageDraw
+
+    im = Image.fromarray(roi)  # BGR bytes, drawn with BGR colors, so nothing is swapped
+    d = ImageDraw.Draw(im)
+    for s, (x, y), size, color, weight, anchor in items:
+        d.text((x, y), s, font=font(weight, size), fill=tuple(color), anchor=anchor + "m")
+    roi[:] = np.asarray(im)
+
+
+def rounded_rect(img: np.ndarray, x1: int, y1: int, x2: int, y2: int, r: int, color) -> None:
+    cv2.rectangle(img, (x1 + r, y1), (x2 - r, y2), color, -1)
+    cv2.rectangle(img, (x1, y1 + r), (x2, y2 - r), color, -1)
+    for cx, cy in ((x1 + r, y1 + r), (x2 - r, y1 + r), (x1 + r, y2 - r), (x2 - r, y2 - r)):
+        cv2.circle(img, (cx, cy), r, color, -1, cv2.LINE_AA)
+
+
+CARD_BG = (24, 20, 18)
+GRID = (70, 64, 60)
+UP, DOWN = (110, 220, 60), (80, 80, 240)  # BGR green, red
+
+
+def odds_card(img: np.ndarray, box: tuple[int, int, int, int], v: dict) -> None:
+    """08 market odds panel in box (x, y, w, h), from demo.odds.Odds.view(): a dark glass
+    card with each team's price (counting, with a delta chip and a pulse on a move) and
+    the step chart of both prices so far, halftime shaded, goals marked."""
+    x, y, w, h = box
+    blend(
+        img,
+        lambda L, o: rounded_rect(L, x - o[0], y - o[1], x + w - o[0], y + h - o[1], 18, CARD_BG),
+        0.86,
+        (x, y, x + w + 1, y + h + 1),
+    )
+    items = []
+    items.append((v["title"], (x + 22, y + 26), 17, (255, 255, 255), "bold", "l"))
+    items.append((v["subtitle"], (x + 156, y + 27), 14, MUTED, "regular", "l"))
+    cv2.circle(img, (x + w - 130, y + 26), 5, (60, 60, 235), -1, cv2.LINE_AA)
+    items.append((v["clock"], (x + w - 22, y + 27), 14, MUTED, "regular", "r"))
+
+    # team column
+    for k, t in enumerate(v["teams"]):
+        ty = y + 86 + k * 92
+        cv2.rectangle(img, (x + 22, ty - 26), (x + 27, ty + 26), t["color"], -1)
+        items.append((t["name"], (x + 40, ty - 14), 16, (220, 220, 220), "bold", "l"))
+        price = "--" if t["price"] is None else f"{round(100 * t['price'])}%"
+        items.append((price, (x + 38, ty + 16), 40, (255, 255, 255), "bold", "l"))
+        if t["delta"] is not None:
+            c = UP if t["delta"] > 0 else DOWN
+            cx = x + 118
+            rounded_rect(img, cx, ty - 25, cx + 54, ty - 3, 10, dimmed(c, 0.35))
+            items.append((f"{t['delta']:+d}", (cx + 27, ty - 14), 14, c, "bold", "m"))
+
+    # chart
+    cx1, cy1, cx2, cy2 = x + 200, y + 54, x + w - 24, y + h - 46
+    cw, ch = cx2 - cx1, cy2 - cy1
+    px = lambda f: cx1 + round(min(max(f, 0.0), 1.0) * cw)
+    py = lambda p: cy2 - round(p * ch)
+    if v["ht"] is not None:
+        a, b = px(v["ht"][0]), px(v["ht"][1])
+        blend(
+            img,
+            lambda L, o: cv2.rectangle(
+                L, (a - o[0], cy1 - o[1]), (b - o[0], cy2 - o[1]), (90, 80, 75), -1
+            ),
+            0.5,
+            (a, cy1, b + 1, cy2 + 1),
+        )
+    for p in (0.25, 0.75):
+        cv2.line(img, (cx1, py(p)), (cx2, py(p)), GRID, 1, cv2.LINE_AA)
+    for xx in range(cx1, cx2, 10):
+        cv2.line(img, (xx, py(0.5)), (min(xx + 5, cx2), py(0.5)), (120, 112, 105), 1, cv2.LINE_AA)
+    items.append(("50%", (cx2 + 2, py(0.5) - 9), 11, MUTED, "regular", "r"))
+    for f, s in v["ticks"]:
+        tx = px(f)
+        cv2.line(img, (tx, cy2), (tx, cy2 + 5), MUTED, 1, cv2.LINE_AA)
+        items.append((s, (tx, cy2 + 17), 12, MUTED, "regular", "m"))
+    for f, c in v["goals"]:
+        gx = px(f)
+        for yy in range(cy1, cy2, 8):
+            cv2.line(img, (gx, yy), (gx, min(yy + 4, cy2)), GOLD, 1, cv2.LINE_AA)
+        cv2.circle(img, (gx, cy1 - 4), 5, GOLD, -1, cv2.LINE_AA)
+        cv2.circle(img, (gx, cy1 - 4), 2, c, -1, cv2.LINE_AA)
+    nx = px(v["now"])
+    cv2.line(img, (nx, cy1), (nx, cy2), (110, 104, 98), 1, cv2.LINE_AA)
+
+    for (pts, color), t in zip(v["lines"], v["teams"]):
+        if not pts:
+            continue
+        step = [(px(pts[0][0]), py(pts[0][1]))]
+        for (_, p0), (f1, p1) in pairwise(pts):
+            step += [(px(f1), py(p0)), (px(f1), py(p1))]
+        poly = np.array(step, np.int32)
+        bx1, by1 = poly.min(axis=0) - 6
+        bx2, by2 = poly.max(axis=0) + 7
+        blend(
+            img,
+            lambda L, o, poly=poly, color=color: cv2.polylines(
+                L, [poly - np.array(o)], False, color, 7, cv2.LINE_AA
+            ),
+            0.25,
+            (bx1, by1, bx2, by2),
+        )
+        cv2.polylines(img, [poly], False, color, 2, cv2.LINE_AA)
+        head = step[-1]
+        if t["pulse"] is not None:
+            r = 5 + round(18 * t["pulse"])
+            blend(
+                img,
+                lambda L, o, head=head, r=r, color=color: cv2.circle(
+                    L, shift(head, o), r, color, 2, cv2.LINE_AA
+                ),
+                1 - t["pulse"],
+                (head[0] - r - 3, head[1] - r - 3, head[0] + r + 4, head[1] + r + 4),
+            )
+        cv2.circle(img, head, 5, color, -1, cv2.LINE_AA)
+        cv2.circle(img, head, 2, (255, 255, 255), -1, cv2.LINE_AA)
+
+    x1, y1 = max(x, 0), max(y, 0)
+    nice_text(
+        img[y1 : y + h, x1 : x + w],
+        [(s, (px_ - x1, py_ - y1), *rest) for s, (px_, py_), *rest in items],
+    )
