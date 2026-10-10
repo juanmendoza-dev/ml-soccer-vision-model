@@ -48,7 +48,13 @@ class Rpc:
             except urllib.error.HTTPError as e:
                 # only the code: the error's own text carries the URL, and the URL the key
                 if e.code not in RETRY_CODES or attempt == RETRIES - 1:
-                    raise SystemExit(f"{method}: HTTP {e.code}") from None
+                    hint = " (is Polygon PoS mainnet enabled on the Alchemy app?)" if e.code == 403 else ""
+                    raise SystemExit(f"{method}: HTTP {e.code}{hint}") from None
+                self.sleep(2 + attempt)
+                continue
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                if attempt == RETRIES - 1:
+                    raise SystemExit(f"{method}: {type(e).__name__}") from None
                 self.sleep(2 + attempt)
                 continue
             if "error" in r:

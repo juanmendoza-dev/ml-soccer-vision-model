@@ -109,6 +109,15 @@ def test_errors_never_show_the_key():
     with pytest.raises(SystemExit) as e:
         rpc(FakeChain(fail=fails)).call("eth_blockNumber", [])
     assert "SECRET" not in str(e.value)
+    assert "Polygon PoS mainnet enabled" in str(e.value)
+
+
+def test_transport_errors_retry_and_never_show_the_key():
+    r = rpc(FakeChain(fail=[urllib.error.URLError("reset"), TimeoutError(), ConnectionResetError()]))
+    assert r.call("eth_blockNumber", []) == hex(1000)
+    with pytest.raises(SystemExit) as e:
+        rpc(FakeChain(fail=[urllib.error.URLError("https://x/v2/SECRET")] * chain.RETRIES)).call("eth_blockNumber", [])
+    assert "SECRET" not in str(e.value) and "URLError" in str(e.value)
 
 
 def test_the_cache_has_no_key():
