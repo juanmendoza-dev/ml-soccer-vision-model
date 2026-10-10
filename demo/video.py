@@ -255,6 +255,10 @@ def main(argv: list[str] | None = None) -> None:
         entry = od.load_manifest()[args.odds_match]
         if "sync" not in entry:
             raise SystemExit(f"{args.odds_match} has no sync in odds_markets.json (08 Sync)")
+        if entry["sync"]["video"] != args.video.name:
+            raise SystemExit(
+                f"{args.odds_match} is synced to {entry['sync']['video']}, not {args.video.name} (08 Sync)"
+            )
         odds = od.Odds(entry, od.load_history(args.odds_match), od.load_trades(args.odds_match))
         goals = od.synced_goals(entry)
         u = lambda fid: od.video_utc(entry["sync"], (start + fid) / fps)
