@@ -238,3 +238,20 @@ def test_a_clip_outside_the_cached_trades_is_refused():
         od.require_covered(o, KO - 1, KO + 300)
     with pytest.raises(SystemExit, match="--fetch-trades"):
         od.require_covered(odds(), KO, KO + 1)  # no trades cache at all
+
+
+def test_a_jump_is_the_first_trade_well_above_the_last_minutes_median():
+    ts = [trade(KO + i, i, usdc=6.0, shares=10.0) for i in range(60)]  # home at 0.60
+    ts += [trade(KO + 60, 60, usdc=7.5, shares=10.0), trade(KO + 70, 70, usdc=7.6, shares=10.0)]
+    ts += [trade(KO + 200, 200, outcome="away", usdc=1.0, shares=10.0)]  # home 0.90, a minute later
+    o = od.Odds(ENTRY, history([(-600, 0.5)]), trades_cache(ts, KO, KO + 300))
+    got = od.jumps(o)
+    assert [(t, round(p, 2)) for t, _, p in got] == [(KO + 60, 0.75)]  # 70 s is inside the same minute; 200 s has under 5 trades before it
+
+
+def test_check_prints_minutes_and_jumps(capsys):
+    ts = [trade(KO + i, i, usdc=6.0, shares=10.0) for i in range(60)] + [trade(KO + 60, 60, usdc=7.5, shares=10.0)]
+    od.check_trades(od.Odds(ENTRY, history([(-600, 0.5)]), trades_cache(ts, KO, KO + 300)))
+    out = capsys.readouterr().out
+    assert "15:00    60 trades  AAA 0.60-0.60" in out
+    assert "jump 15:01:00" in out and "0.60 -> 0.75" in out

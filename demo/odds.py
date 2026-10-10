@@ -39,6 +39,8 @@ FEED_N = 6
 BLOCK_S = 2.0  # Polygon's block time: a block's trades spread over at most this long
 CARD_W, CARD_H = 600, 300
 MARGIN = 16
+JUMP = 0.08  # a home price this far above the last minute's median is a jump
+JUMP_MIN_N = 5  # trades the median needs
 
 
 def utc_s(s: str) -> float:
@@ -287,6 +289,39 @@ def require_covered(odds: Odds, u0: float, u1: float) -> None:
         )
 
 
+def home_price(t: dict) -> float:
+    p = t["usdc"] / t["shares"]
+    return p if t["outcome"] == "home" else 1 - p
+
+
+def jumps(odds: Odds) -> list[tuple[float, float, float]]:
+    """Each trade whose home price is JUMP above the median of the TAPE_S of trades before
+    it, at most one a minute: (show time, median, price). Candidates for the goal's sync
+    anchor (08 "Sync")."""
+    p = np.array([home_price(t) for t in odds.trades])
+    out = []
+    for i, u in enumerate(odds.t_show):
+        j = int(np.searchsorted(odds.t_show, u - TAPE_S, side="left"))
+        if i - j < JUMP_MIN_N or (out and u - out[-1][0] < TAPE_S):
+            continue
+        med = float(np.median(p[j:i]))
+        if p[i] >= med + JUMP:
+            out.append((float(u), med, float(p[i])))
+    return out
+
+
+def check_trades(odds: Odds) -> None:
+    """Trades and the home price range per minute, then the jumps (08 "Check")."""
+    name = odds.entry["short"]["home"]
+    by: dict[int, list[float]] = {}
+    for u, t in zip(odds.t_show, odds.trades):
+        by.setdefault(int(u // 60), []).append(home_price(t))
+    for m, ps in sorted(by.items()):
+        print(f"{hhmmss(m * 60)[:5]} {len(ps):5d} trades  {name} {min(ps):.2f}-{max(ps):.2f}")
+    for u, med, p in jumps(odds):
+        print(f"jump {hhmmss(u)}: {name} {med:.2f} -> {p:.2f}")
+
+
 def check(odds: Odds, goals: list[tuple[float, str, str | None]]) -> None:
     """Each goal's mapped UTC with the scoring team's last price before it and the first
     after (08 "Check")."""
@@ -354,10 +389,17 @@ def main(argv: list[str] | None = None) -> None:
         path.write_text(json.dumps(got))
         print(f"wrote {path} ({len(got['trades'])} trades, blocks {got['from_block']}-{got['to_block']})")
         return
-    odds = Odds(entry, load_history(args.match_id, args.cache))
-    goals = goals_utc(args.gamestate / args.match_id, odds)
+    trades_path = args.cache / TRADES.format(args.match_id)
+    trades = json.loads(trades_path.read_text()) if trades_path.exists() else None
+    odds = Odds(entry, load_history(args.match_id, args.cache), trades)
+    goals = [] if "exchange" in entry else goals_utc(args.gamestate / args.match_id, odds)
     if args.check:
-        check(odds, goals)
+        if "exchange" in entry:
+            if trades is None:
+                load_trades(args.match_id, args.cache)  # raises with the fetch command
+            check_trades(odds)
+        else:
+            check(odds, goals)
         return
     if not (args.at and args.out):
         raise SystemExit("--preview needs --at and --out")
