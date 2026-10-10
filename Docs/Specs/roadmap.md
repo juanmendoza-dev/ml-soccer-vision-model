@@ -219,6 +219,9 @@ Skipped for now: schema 0.7 for empty runs, shootout (period 5) handling in visi
 - [ ] Fine-tune detection/keypoints on self-recorded footage
 - [ ] Demo clip + write-up
 - [ ] LinkedIn demo, ARG–FRA + FRA–MAR with the odds card (08 "Market odds panel"; permission noted in 08 "Footage"). Workstation:
-  - [ ] ARG–FRA: rerun `demo.video` on `demo01-arg-fra-81` with `--predictions`, `--truth-clip demo01-arg-fra-81 --odds` (after `git pull` and `python -m demo.odds 10517 --fetch`)
-  - [ ] FRA–MAR: download a clip of a goal (Theo 5' or Kolo Muani 79'), sync it to PFF 10515 by cut edges and add it to `demo_clips.json`, then `vision.run` → `vision.stage8` → `prediction.infer` → `demo.video --odds`, as for demo01
+  - Clip windows (2026-10-10): the market lags goals by 45 s to 2.5 min, so a short goal clip catches no move. demo01 (video 0–110 s = 16:42:01–16:43:51 UTC) has none, and its card would sit still. Each clip has to run on until the moves:
+    - ARG–FRA: PFF P2 t 1992–2262 s (16:40:44–16:45:14 UTC, match clock 78'–83'): the penalty award move (ARG 97 → 87) at 16:41:41, both Mbappé goals, ARG 87 → 77 at 16:45:00. On demo01's YouTube upload (`RgqKdplLIk4`) that's about 5289–5560 s if the upload is continuous (demo01's offset says 5366 s ↔ P2 2068.5 s). Re-sync the new clip by cut edges either way
+    - FRA–MAR: Theo's 5' goal, PFF P1 t 240–555 s (19:04:00–19:09:15 UTC, match clock 4'–9'): FRA 64 → 72 at 19:06:52 and 72 → 86 at 19:08:49. The 79' goal has a single +5 move 2.5 min later, so it's not used
+  - [ ] On the workstation: `git pull`, then `python -m demo.odds 10517 --fetch` and `python -m demo.odds 10515 --fetch` (`data/odds` is gitignored)
+  - [ ] Per match: download the window, sync it to PFF by cut edges and add it to `demo_clips.json`, then `vision.run` over the whole window (`demo.video` only renders the processed range) → `vision.stage8` → `prediction.infer` → `demo.video --predictions ... --truth-clip <clip_id> --odds`, as for demo01
   - [ ] Watch both renders, then cut the post
