@@ -210,6 +210,7 @@ Skipped for now: schema 0.7 for empty runs, shootout (period 5) handling in visi
   - [x] Sprint highlight, ball trail, confidence/uncertainty tint, event ticker, shooting-lane cone (08; all rendering over existing fields, no new inference) **Done 2026-10-01: cone counts 05's `lane_defenders` via `in_lane`; all four goals of 10502 render (20 s in about 7 s on the M1)**
   - [x] Ball marker on real video (`python -m demo.video`, 08 "Ball marker on video"): built 2026-10-01 and watched on real footage the same day: 300 frames of roboflow/sports' sample `2e57b9_0.mp4`, vision on the M1 (`--device mps`, 2.6 fps), ball on 273 frames, a usable mapping on all 273. One ball detection jumped about 25 m in a frame (382 m/s), now drawn without an arrow or trail (08). Still open: smoke04 on the workstation
   - [x] Danger meter (08 "Danger meter"): causal lookup on the 10 Hz rows, log scale, in the pitch view (`demo.render --pgoal`) and on video (`demo.video --predictions`, with the PFF truth ticker `--truth-clip`). **Done 2026-10-05**
+  - [x] Market odds panel (08 "Market odds panel", 2026-10-10): `demo.odds` (fetch, `--check`, `--preview`), the card in `overlay.odds_card`, `demo.video --odds`. Price history cached for 10517 and 10515, both checks recorded in `data/splits/odds_markets.json`. Smoke-rendered on the M1 sample clip
   - [ ] Offside line (08; geometry off team + x-positions, needs solid homography accuracy on the defensive line)
   - [ ] Pitch control / space heatmap (08; Voronoi over player positions, CPU-only, no new inference)
 - [ ] Benchmark each vision stage on the 2060 (FP16 / TensorRT) and pick the live config (09)
@@ -217,3 +218,7 @@ Skipped for now: schema 0.7 for empty runs, shootout (period 5) handling in visi
 - [ ] Record a local match for the public demo (see 08)
 - [ ] Fine-tune detection/keypoints on self-recorded footage
 - [ ] Demo clip + write-up
+- [ ] LinkedIn demo, ARG–FRA + FRA–MAR with the odds card (08 "Market odds panel"; permission noted in 08 "Footage"). Workstation:
+  - [ ] ARG–FRA: rerun `demo.video` on `demo01-arg-fra-81` with `--predictions`, `--truth-clip demo01-arg-fra-81 --odds` (after `git pull` and `python -m demo.odds 10517 --fetch`)
+  - [ ] FRA–MAR: download a clip of a goal (Theo 5' or Kolo Muani 79'), sync it to PFF 10515 by cut edges and add it to `demo_clips.json`, then `vision.run` → `vision.stage8` → `prediction.infer` → `demo.video --odds`, as for demo01
+  - [ ] Watch both renders, then cut the post
