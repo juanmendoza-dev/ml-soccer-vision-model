@@ -16,7 +16,8 @@
     {"period": 1, "start_utc": "2022-12-18T15:00:00Z", "length_s": 3152.787},
     {"period": 2, "start_utc": "2022-12-18T16:07:32.787Z", "length_s": 3216.550}
    ],
-   "sync_method": "period 1 at the scheduled kickoff (PFF date = polymarket gameStartTime); period 2 at period 1 start + its last PFF timestamp_s + 15 min half-time (PFF's video cuts the break)"
+   "sync_method": "period 1 at the scheduled kickoff (PFF date = polymarket gameStartTime); period 2 at period 1 start + its last PFF timestamp_s + 15 min half-time (PFF's video cuts the break)",
+   "check": "2026-10-10, demo.odds --check: every goal's first move comes after its mapped time. ARG pen 23' moved at the award (15:21:52, 30 s before the kick), then +69 s; ARG 36' +46 s; FRA pen 80' moved at the award (16:41:41, 16 s before the kick); FRA 81' +89 s. A 16 min break would put the 80' award after its move, so the break is 15 min or a little under"
   },
   {
    "match_id": "10515",
@@ -33,7 +34,8 @@
     {"period": 1, "start_utc": "2022-12-14T19:00:00Z", "length_s": 2896.196},
     {"period": 2, "start_utc": "2022-12-14T20:03:16.196Z", "length_s": 3058.959}
    ],
-   "sync_method": "period 1 at the scheduled kickoff (PFF date = polymarket gameStartTime); period 2 at period 1 start + its last PFF timestamp_s + 15 min half-time (PFF's video cuts the break)"
+   "sync_method": "period 1 at the scheduled kickoff (PFF date = polymarket gameStartTime); period 2 at period 1 start + its last PFF timestamp_s + 15 min half-time (PFF's video cuts the break)",
+   "check": "2026-10-10, demo.odds --check: FRA 5' first move +132 s (0.64 -> 0.72), FRA 79' +147 s (0.91 -> 0.96). Moves come after both goals; a thin market, so they lag by 2 min or more"
   }
  ]
 }
