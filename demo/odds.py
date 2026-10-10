@@ -6,7 +6,8 @@
     python -m demo.odds esp-arg-2026 --fetch-trades --from 2026-07-19T21:35:00Z --to 2026-07-19T21:48:00Z
 
 Markets, colors and period starts come from data/splits/odds_markets.json (08 "Market odds
-panel"). The points are the market price about once a minute, not trades. Display only:
+panel"). The points are the market price about once a minute; the trades come from Polygon
+(--fetch-trades). Display only:
 prediction never reads any of this.
 """
 

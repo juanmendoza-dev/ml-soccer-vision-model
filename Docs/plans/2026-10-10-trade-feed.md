@@ -1096,6 +1096,9 @@ Expected:
 - `--fetch` writes a few hundred points per team. If it says "no price history", stop and report; the card's line needs it.
 - The fetch-trades output shows roughly 13 min × 300–1,200 trades.
 - `--check` lists the minutes, with a jump at about 21:42 (Spain about 0.60 → 0.9).
+- SELLs are a sizable share of the cache (count BUY vs SELL in `data/odds/esp-arg-2026_trades.json`). Zero or near-zero sells means `decode_matched`'s word layout is wrong: stop and report.
+- Cross-check 21:45-21:48 UTC against Polymarket's data API (it reaches back to 21:45): trade count, side mix, and a few price/size pairs should match.
+- The minute after the reported jump should sit near 0.9 in the per-minute ranges, not snap back; if a stray trade masked the goal's jump, read the anchor off the ranges by hand.
 
 - [ ] **Step 2: Preview the card and tape at the jump**
 
