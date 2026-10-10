@@ -34,6 +34,9 @@ LEAD_S = 300  # the chart starts this long before kickoff
 COUNT_S = 0.5  # a moved price counts to its new value over this long
 PULSE_S = 1.5
 CHIP_S = 3.0
+TAPE_S = 60.0  # the tick plot and volume look back this long
+FEED_N = 6
+BLOCK_S = 2.0  # Polygon's block time: a block's trades spread over at most this long
 CARD_W, CARD_H = 600, 300
 MARGIN = 16
 
@@ -111,11 +114,33 @@ def ease(f: float) -> float:
     return 1 - (1 - f) ** 3
 
 
+def spread(trades: list[dict]) -> list[float]:
+    """When each trade shows (08 "Which trades"): its block's time, with a block's trades
+    spread evenly in chain order over the gap to the next block with trades (at most
+    BLOCK_S). Never before the block's own time. `trades` are in chain order."""
+    out, i = [], 0
+    while i < len(trades):
+        j = i
+        while j < len(trades) and trades[j]["block"] == trades[i]["block"]:
+            j += 1
+        ts = trades[i]["ts"]
+        gap = min(max(trades[j]["ts"] - ts, 0.0), BLOCK_S) if j < len(trades) else BLOCK_S
+        out += [ts + gap * k / (j - i) for k in range(j - i)]
+        i = j
+    return out
+
+
+def feed_text(t: dict, short: dict[str, str]) -> str:
+    w = t["wallet"]
+    price = round(100 * t["usdc"] / t["shares"])
+    return f"{w[:4]}…{w[-2:]} {t['side']} {short[t['outcome']]} ${t['usdc']:,.0f} @ {price}¢"
+
+
 class Odds:
     """One match's two price series, looked up causally by wall-clock time: a moment at
     UTC u sees each team's latest point at or before u, never a later one (08)."""
 
-    def __init__(self, entry: dict, history: dict):
+    def __init__(self, entry: dict, history: dict, trades: dict | None = None):
         self.entry = entry
         self.starts = {p["period"]: utc_s(p["start_utc"]) for p in entry["periods"]}
         self.ends = {p["period"]: utc_s(p["start_utc"]) + p["length_s"] for p in entry["periods"]}
@@ -128,6 +153,9 @@ class Odds:
                 np.flatnonzero(np.diff(p) != 0) + 1
             )  # indices whose price differs from the one before
             self.series[team] = (t, p, moves)
+        self.trades = sorted(trades["trades"], key=lambda r: (r["block"], r["log_index"])) if trades else []
+        self.t_show = np.array(spread(self.trades), dtype=float)
+        self.covered = (trades["from_ts"], trades["to_ts"]) if trades else None
 
     def utc(self, period: int, t: float) -> float:
         return self.starts[period] + t
@@ -162,6 +190,25 @@ class Odds:
         chip = delta if age < CHIP_S and delta != 0 else None
         pulse = age / PULSE_S if age < PULSE_S else None
         return value, chip, pulse
+
+    def tape(self, now: float) -> tuple[list, list[str], dict[str, list[float]]]:
+        """The card's trade fields at UTC now: trades shown in the last TAPE_S as (age, team,
+        side, dollars, price), the newest FEED_N as text (newest first), and dollars per
+        whole second of age by side."""
+        k = int(np.searchsorted(self.t_show, now, side="right"))
+        j = int(np.searchsorted(self.t_show, now - TAPE_S, side="right"))
+        trades = [
+            (now - self.t_show[i], t["outcome"], t["side"], t["usdc"], t["usdc"] / t["shares"])
+            for i, t in zip(range(j, k), self.trades[j:k])
+        ]
+        feed = [feed_text(t, self.entry["short"]) for t in reversed(self.trades[max(k - FEED_N, 0) : k])]
+        volume = {"BUY": [0.0] * int(TAPE_S), "SELL": [0.0] * int(TAPE_S)}
+        for age, _, side, dollars, _ in trades:
+            volume[side][min(int(age), int(TAPE_S) - 1)] += dollars
+        return trades, feed, volume
+
+    def covers(self, u0: float, u1: float) -> bool:
+        return self.covered is not None and self.covered[0] <= u0 and u1 <= self.covered[1]
 
     def view(self, period: int, t: float, goals: list[tuple[float, str, str | None]] = ()) -> dict:
         """Everything overlay.odds_card draws for the moment (period, t). x positions are
@@ -200,6 +247,7 @@ class Odds:
             ticks.append((1.0, "90'"))
         else:
             ticks.append((1.0, e.get("end_label", "45'")))
+        trades, feed, volume = self.tape(now)
         return {
             "title": "POLYMARKET",
             "subtitle": f"{e['label']} - win price",
@@ -210,6 +258,10 @@ class Odds:
             "ticks": ticks,
             "goals": [(fx(g), colors.get(team, ov.GOLD)) for g, team, _ in goals if g <= now],
             "clock": hhmmss(now) + " UTC",
+            "trades": trades,
+            "feed": feed,
+            "volume": volume,
+            "colors": colors,
         }
 
 
@@ -223,6 +275,16 @@ def card_box(
     frame's bottom edge."""
     y = MARGIN if pos == "top-right" else h - bottom - MARGIN - CARD_H
     return w - MARGIN - CARD_W, y, CARD_W, CARD_H
+
+
+def require_covered(odds: Odds, u0: float, u1: float) -> None:
+    """A clip outside the cached trades is refused, never drawn with a silent hole (08)."""
+    if not odds.covers(u0, u1):
+        have = "none" if odds.covered is None else f"{hhmmss(odds.covered[0])}-{hhmmss(odds.covered[1])}"
+        raise SystemExit(
+            f"the clip needs trades {hhmmss(u0)}-{hhmmss(u1)} UTC, cached: {have}. "
+            f"Run python -m demo.odds {odds.entry['match_id']} --fetch-trades --from ... --to ..."
+        )
 
 
 def check(odds: Odds, goals: list[tuple[float, str, str | None]]) -> None:

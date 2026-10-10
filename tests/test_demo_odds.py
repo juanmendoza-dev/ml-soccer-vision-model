@@ -178,3 +178,63 @@ def test_load_history_says_how_to_fetch(tmp_path):
         od.load_history("nope", tmp_path)
     (tmp_path / "x.json").write_text(json.dumps(history([(0, 0.5)])))
     assert od.load_history("x", tmp_path)["home"][0]["p"] == 0.5
+
+
+def trade(ts, block, index=0, side="BUY", outcome="home", usdc=10.0, shares=20.0, wallet="0x" + "ab" * 20):
+    return {"block": block, "log_index": index, "ts": ts, "side": side, "outcome": outcome,
+            "usdc": usdc, "shares": shares, "wallet": wallet, "tx": "0x1"}
+
+
+def trades_cache(trades, from_ts=KO, to_ts=KO + 600):
+    return {"from_ts": from_ts, "to_ts": to_ts, "trades": trades}
+
+
+def test_a_blocks_trades_spread_forward_in_chain_order_never_before_it():
+    ts = [trade(KO + 100, 50, 9), trade(KO + 100, 50, 2), trade(KO + 100, 50, 5), trade(KO + 101, 51, 0),
+          trade(KO + 110, 52, 0)]
+    o = od.Odds(ENTRY, history([(-600, 0.5)]), trades_cache(ts))
+    assert [t["log_index"] for t in o.trades[:3]] == [2, 5, 9]
+    assert list(o.t_show[:3]) == pytest.approx([KO + 100, KO + 100 + 1 / 3, KO + 100 + 2 / 3])
+    assert o.t_show[3] == KO + 101
+    assert all(s >= t["ts"] for s, t in zip(o.t_show, o.trades))
+    assert list(o.t_show) == sorted(o.t_show)
+
+
+def test_a_lone_block_spreads_over_at_most_block_s():
+    o = od.Odds(ENTRY, history([(-600, 0.5)]), trades_cache([trade(KO, 1, 0), trade(KO, 1, 1)]))
+    assert list(o.t_show) == pytest.approx([KO, KO + od.BLOCK_S / 2])
+
+
+def test_the_tape_shows_nothing_past_now_and_only_the_last_60_s():
+    ts = [trade(KO + 10, 1), trade(KO + 100, 2, usdc=9.0, shares=10.0, outcome="away", side="SELL"),
+          trade(KO + 200, 3)]
+    o = od.Odds(ENTRY, history([(-600, 0.5)]), trades_cache(ts))
+    trades, feed, volume = o.tape(KO + 150)
+    assert trades == [(pytest.approx(50.0), "away", "SELL", 9.0, pytest.approx(0.9))]
+    assert feed == ["0xab…ab SELL BBB $9 @ 90¢", "0xab…ab BUY AAA $10 @ 50¢"]
+    assert volume["SELL"][50] == 9.0 and sum(volume["BUY"]) == 0.0
+    assert len(volume["BUY"]) == len(volume["SELL"]) == 60
+
+
+def test_the_feed_is_the_newest_six():
+    o = od.Odds(ENTRY, history([(-600, 0.5)]), trades_cache([trade(KO + i, i, usdc=float(i + 1)) for i in range(9)]))
+    _, feed, _ = o.tape(KO + 100)
+    assert len(feed) == od.FEED_N and feed[0].endswith("$9 @ " + str(round(100 * 9 / 20)) + "¢")
+
+
+def test_the_view_carries_the_tape_and_no_trades_means_empty():
+    o = od.Odds(ENTRY, history([(-600, 0.5)]), trades_cache([trade(KO + 10, 1)]))
+    v = o.view(1, 20.0)
+    assert len(v["trades"]) == 1 and len(v["feed"]) == 1 and set(v["colors"]) == {"home", "away"}
+    v = odds().view(1, 20.0)
+    assert v["trades"] == [] and v["feed"] == [] and sum(v["volume"]["BUY"]) == 0
+
+
+def test_a_clip_outside_the_cached_trades_is_refused():
+    o = od.Odds(ENTRY, history([(-600, 0.5)]), trades_cache([], KO, KO + 600))
+    assert o.covers(KO + 60, KO + 600)
+    od.require_covered(o, KO + 60, KO + 600)
+    with pytest.raises(SystemExit, match="--fetch-trades"):
+        od.require_covered(o, KO - 1, KO + 300)
+    with pytest.raises(SystemExit, match="--fetch-trades"):
+        od.require_covered(odds(), KO, KO + 1)  # no trades cache at all
