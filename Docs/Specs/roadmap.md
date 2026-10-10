@@ -218,7 +218,12 @@ Skipped for now: schema 0.7 for empty runs, shootout (period 5) handling in visi
 - [ ] Record a local match for the public demo (see 08)
 - [ ] Fine-tune detection/keypoints on self-recorded footage
 - [ ] Demo clip + write-up
-- [ ] LinkedIn demo, ARG–FRA + FRA–MAR with the odds card (08 "Market odds panel"; permission noted in 08 "Footage"). Workstation:
+- [ ] LinkedIn demo, 2026 final Spain–Argentina with the trade feed (08 "Trade feed and the 2026 final", decided 2026-10-10: the 2022 markets had 1–3 trades a minute, this one up to 30 a second in extra time)
+  - [ ] Footage permission for the 2026 broadcast, recorded in 08 "Footage" (blocks posting, not building)
+  - [ ] Card design from Claude Design (user), then rebuilt in `overlay.odds_card`
+  - [ ] Manifest entry with three outcomes; `demo.odds --fetch-trades` + trades in `Odds.view()`; `--check` trades per minute; tests
+  - [ ] Pick the goal spike and clip window, download one continuous cut, hand-label the goal, check extra-time attacking direction, then `vision.run` → `vision.stage8` → `prediction.infer` → `demo.video --odds`, bottom-right and top-right
+- [ ] ~~LinkedIn demo, ARG–FRA + FRA–MAR with the odds card~~ superseded by the 2026 final above; kept for the record (08 "Market odds panel"; permission noted in 08 "Footage"). Workstation:
   - Clip windows (2026-10-10): the market lags goals by 45 s to 2.5 min, so a short goal clip catches no move. demo01 (video 0–110 s = 16:42:01–16:43:51 UTC) has none, and its card would sit still. Each clip has to run on until the moves:
     - ARG–FRA: PFF P2 t 1992–2262 s (16:40:44–16:45:14 UTC, match clock 78'–83'): the penalty award move (ARG 97 → 87) at 16:41:41, both Mbappé goals, ARG 87 → 77 at 16:45:00. On demo01's YouTube upload (`RgqKdplLIk4`) that's about 5289–5560 s if the upload is continuous (demo01's offset says 5366 s ↔ P2 2068.5 s). Re-sync the new clip by cut edges either way
     - FRA–MAR: Theo's 5' goal, PFF P1 t 240–555 s (19:04:00–19:09:15 UTC, match clock 4'–9'): FRA 64 → 72 at 19:06:52 and 72 → 86 at 19:08:49. The 79' goal has a single +5 move 2.5 min later, so it's not used

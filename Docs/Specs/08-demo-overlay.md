@@ -65,6 +65,27 @@ The match's Polymarket win price beside the danger meter, so a viewer sees the b
 - **Price move:** when a team's latest point differs from the one before, its number counts to the new value over 0.5 s, a ring pulses at the line's head for 1.5 s, and a delta chip (`+12`) shows for 3 s. The animation starts at the point's own time, so nothing shows early.
 - **On video:** a card at the bottom right above the ticker, under the meter's column (`demo.video --odds`, with `--truth-clip` for the clip's period and sync offset). `--odds-pos top-right` puts it at the top right instead and moves the meter under it, so both layouts can be rendered and compared for the demo. A `--preview` still renders the card at one moment for checking the design (`--pos` for the same choice).
 
+### Trade feed and the 2026 final (2026-10-10, replaces the 2022 matches as the demo)
+The 2022 markets are too thin for what the demo should show: every real buy and sell, fast enough to read as live trading. Counted on-chain (Polygon logs via Alchemy), the ARG–FRA clip window (78'–83', penalty and both Mbappé goals) had 14 trade transactions in 270 s and FRA–MAR's (4'–9') had 5. So the demo moves to the 2026 World Cup final, Spain–Argentina, 2026-07-19 (kickoff 19:00 UTC): 0–0 after 90 minutes, Spain won in extra time, no shootout. Its three match-winner markets (Spain / draw / Argentina, about $47M) had about 1,000–1,900 trades a minute in extra time (21:05–21:15 UTC) and 183 in single seconds (21:00:58, 21:09:25). The 2022 code paths stay as they are.
+
+- **No PFF for this match.** The danger meter doesn't need it: `vision.run` → `vision.stage8` → `prediction.infer` reads only the vision game state, and kit side and direction come from `--home-cluster` / `--home-attacks-left`. What PFF did otherwise, and the substitute:
+  - Truth ticker: the goal is labelled by hand on the clip (video second, team), shown in the ticker without "(PFF)".
+  - Clock: see Sync below.
+  - Accuracy: none on this match. The post quotes 07's numbers, never a claim about this clip.
+  - Extra time is period 3 or 4. The writer's `home_attacks_positive_x = period % 2 == 1` must be checked against the footage before the run, since ends in extra time aren't fixed by period 1.
+- **Markets:** three outcomes, each a binary market whose Yes token is the line on the chart (Spain win, draw, Argentina win), not two complementary tokens. The manifest entry lists `outcomes` (label, color, condition id, Yes token id) in place of `tokens`/`short`, and the panel draws two or three lines from whichever the entry has. Prices from `prices-history` as before.
+- **Trades source:** Polymarket's public data API, `GET data-api.polymarket.com/trades?market=<condition_id>&takerOnly=true`, paged by `offset`. Each fill is listed once, from the taker's side (the wallet that crossed the spread is the one "buying" or "selling"). Fields kept: `timestamp` (UTC seconds), `side` (BUY/SELL), `outcome`, `price`, `size` (shares), dollars = `price × size`, `proxyWallet` shortened to `0x3f…a1`, `pseudonym`, `transactionHash`. Cached in `data/odds/<match_id>_trades.json` (gitignored) by `python -m demo.odds <match_id> --fetch-trades`.
+  - The API refuses offsets past 10,000, so it reaches back only the newest 10,000 trades per market: to about 20:55 UTC for this final (checked 2026-10-10 with `takerOnly=false`), which covers all of extra time. The fetch records the earliest timestamp it reached per market, and `demo.video` refuses a clip that starts before the latest of those, rather than draw a feed with a silent hole.
+  - Earlier in the match needs chain logs (Alchemy, key in `ALCHEMY_API_KEY`, never in the repo; free tier allows 10 blocks per `eth_getLogs`). Polymarket's 2026 exchange contracts aren't identified yet, so this is out of scope until a clip needs it.
+- **Sync (video → UTC):** the clip's video second of the goal (from the broadcast) is anchored to the first second of the goal's trade spike. Every other frame is that UTC ± its video offset, so the clip must be one continuous cut (no replays spliced in; a replay ends the clip). Recorded as `sync_method` in the manifest. Because the sync is taken from the market, the video can't measure how fast the market reacted, and the post never claims a lag. A second anchor (the broadcast clock at a restart, plus a known period start) is printed by `--check` as a cross-check when one exists.
+- **Which trades:** at frame t, only trades with `timestamp ≤ UTC(t)`. Timestamps are whole seconds, so trades sharing a second are spread evenly across that second in their API order, each appearing at or after its own timestamp, never before.
+- **What the card gets:** `Odds.view()` adds, alongside the price lines:
+  - `trades`: every trade in the last 60 s, as (age s, outcome, side, dollars, price), for a tick plot of each trade as a dot at its price, sized by dollars.
+  - `feed`: the newest 6 trades as text (`0x3f…a1 BUY Spain $2,400 @ 63¢`).
+  - `volume`: dollars per 1 s bucket over the last 60 s, per side.
+  The card's look (layout, colors, fonts, animation) comes from the user's Claude Design mockup, rebuilt in OpenCV; the bottom-right / top-right placement stays.
+- **Check:** `demo.odds --check <match_id>` on a trades cache prints trades per minute through the match and the busiest seconds, so the goal's spike and the clip window can be picked from it.
+
 ## Footage
 | Use | Footage | Can it be published? |
 |---|---|---|
@@ -74,6 +95,7 @@ The match's Polymarket win price beside the danger meter, so a viewer sees the b
 | Possible later | PFF-linked broadcast | Only if PFF's terms allow it (unknown until access, see 06) |
 
 - 2026-10-10: the user got private permission from the rights holders for one LinkedIn post of the 2022 broadcast demo (ARG–FRA, FRA–MAR), on the condition that nothing makes money. That covers only this post; everything else stays as in the table.
+- 2026-10-10: the demo moved to the 2026 World Cup final (Spain–Argentina). That broadcast is not covered by the permission above; nothing from it is posted until the rights holder's OK is recorded here.
 - Self-recorded footage looks different from broadcast (camera height, zoom, kit colors, pitch markings). Expect to fine-tune detection and pitch keypoints on a few hundred labeled frames from it (03).
 - Self-recorded matches have no provider tracking, so the public demo shows the overlay only. The accuracy numbers in the write-up come from 07, not from this footage.
 - Keep a record of which footage each rendered clip used, so nothing restricted gets published by accident.
