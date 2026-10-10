@@ -2,6 +2,7 @@
 
     python -m demo.video --video clip.mp4 --match-id smoke04 --out ball.mp4 [--frames 100-400]
         [--predictions data/predictions/<id>/<model_id>.parquet] [--truth-clip <clip_id> [--odds [--odds-pos top-right]]]
+        [--odds-match esp-arg-2026 [--odds-pos top-right]]
 
 The run's frame_id 0 is source frame round(video_start_s x fps) (run.json, vision.run's
 --start-s); the video is skipped to it frame-exact with grab(), never by seeking (08 "Video
@@ -204,8 +205,14 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument(
         "--odds-pos", choices=od.POSITIONS, default="bottom-right", help="where the card sits"
     )
+    ap.add_argument(
+        "--odds-match",
+        help="odds_markets.json entry with a hand sync (no PFF, 08): its card, trades and goal",
+    )
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
+    if args.odds and args.odds_match:
+        ap.error("--odds (PFF sync) or --odds-match (hand sync), not both")
     if args.odds and not args.truth_clip:
         ap.error("--odds needs --truth-clip (the clip's period and sync offset)")
 
@@ -237,12 +244,24 @@ def main(argv: list[str] | None = None) -> None:
             0, named=True
         )
         names = {"home": m["home_team"], "away": m["away_team"]}
-    odds, goals = None, []
+    odds, goals, at, goal_frame = None, [], None, None
     if args.odds:
         odds = od.Odds(od.load_manifest()[clip["match_id"]], od.load_history(clip["match_id"]))
         goals = od.goals_utc(args.gamestate_dir / clip["match_id"], odds)
         # PFF period time of the run's frame_id 0, the inverse of truth_events' mapping
         t0 = start / fps + sync_offset(clip)
+        at = lambda fid: (clip["period"], t0 + fid / fps)
+    if args.odds_match:
+        entry = od.load_manifest()[args.odds_match]
+        if "sync" not in entry:
+            raise SystemExit(f"{args.odds_match} has no sync in odds_markets.json (08 Sync)")
+        odds = od.Odds(entry, od.load_history(args.odds_match), od.load_trades(args.odds_match))
+        goals = od.synced_goals(entry)
+        u = lambda fid: od.video_utc(entry["sync"], (start + fid) / fps)
+        od.require_covered(odds, u(first) - od.TAPE_S, u(last))
+        at = lambda fid: (1, u(fid) - odds.starts[1])
+        goal_frame = round(entry["sync"]["goal_video_s"] * fps) - start
+        goal_line = f"GOAL {entry['short'][entry['sync']['goal_team']]}"
     n, arrows = 0, 0
     for frame_id in range(first, last + 1):
         ok, image = cap.read()
@@ -262,7 +281,12 @@ def main(argv: list[str] | None = None) -> None:
                 mh = min(mh, card[1] - 16 - METER_TOP)
             mt.draw(img, (w - 16 - mt.METER_W, top, mt.METER_W, mh), p)
         if odds is not None:
-            ov.odds_card(img, card, odds.view(clip["period"], t0 + frame_id / fps, goals))
+            v = odds.view(*at(frame_id), goals)
+            ov.odds_card(img, card, v)
+            if odds.trades:
+                ov.trade_tape(img, od.tape_box(card), v)
+        if goal_frame is not None and 0 <= frame_id - goal_frame < tally.TICKER_S * fps:
+            ov.ticker_strip(img, (0, h - TICKER_H, w, TICKER_H), [(goal_line, True)], False)
         if events is not None:
             lines = [
                 (f"{tally.event_text(e, names)} (PFF)", e["event_type"] == "goal")

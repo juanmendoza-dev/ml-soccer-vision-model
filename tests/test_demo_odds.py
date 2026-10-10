@@ -255,3 +255,13 @@ def test_check_prints_minutes_and_jumps(capsys):
     out = capsys.readouterr().out
     assert "15:00    60 trades  AAA 0.60-0.60" in out
     assert "jump 15:01:00" in out and "0.60 -> 0.75" in out
+
+
+SYNC = {"video": "esp-arg.mp4", "goal_video_s": 120.0, "anchor_utc": "2026-07-19T21:42:10Z", "goal_team": "home"}
+
+
+def test_video_time_maps_through_the_goal_anchor():
+    a = od.utc_s(SYNC["anchor_utc"])
+    assert od.video_utc(SYNC, 120.0) == a
+    assert od.video_utc(SYNC, 0.0) == a - 120.0
+    assert od.synced_goals({"sync": SYNC}) == [(a, "home", None)]

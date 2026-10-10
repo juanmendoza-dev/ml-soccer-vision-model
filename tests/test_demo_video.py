@@ -334,3 +334,9 @@ def test_main_draws_the_meter_from_predictions(tmp_path):
     y = 80 + min(H_PX - 160, 420) - 34 - 5  # just above the bar's bottom
     want = np.array(ov.meter_color(mt.level(0.3)))
     assert np.abs(img[y, x].astype(int) - want).max() < 40  # mp4v blurs colors a little
+
+
+def test_odds_and_odds_match_are_one_or_the_other(tmp_path):
+    with pytest.raises(SystemExit):
+        video.main(["--video", "x.mp4", "--match-id", "m", "--out", str(tmp_path / "o.mp4"),
+                    "--odds", "--truth-clip", "c", "--odds-match", "esp-arg-2026"])

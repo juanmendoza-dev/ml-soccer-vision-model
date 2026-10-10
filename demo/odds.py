@@ -111,6 +111,18 @@ def goals_utc(gamestate: Path, odds: "Odds") -> list[tuple[float, str, str | Non
     ]
 
 
+def video_utc(sync: dict, video_s: float) -> float:
+    """UTC of a source-video second, from the hand sync: the goal's video second is the
+    first trade of the goal's price jump (08 "Sync"). One continuous cut only."""
+    return utc_s(sync["anchor_utc"]) + video_s - sync["goal_video_s"]
+
+
+def synced_goals(entry: dict) -> list[tuple[float, str, str | None]]:
+    """The hand-labelled goal, in goals_utc's shape."""
+    s = entry["sync"]
+    return [(utc_s(s["anchor_utc"]), s["goal_team"], None)]
+
+
 def ease(f: float) -> float:
     """Ease-out cubic on 0-1."""
     f = min(max(f, 0.0), 1.0)
@@ -399,7 +411,9 @@ def main(argv: list[str] | None = None) -> None:
     trades_path = args.cache / TRADES.format(args.match_id)
     trades = json.loads(trades_path.read_text()) if trades_path.exists() else None
     odds = Odds(entry, load_history(args.match_id, args.cache), trades)
-    goals = [] if "exchange" in entry else goals_utc(args.gamestate / args.match_id, odds)
+    goals = synced_goals(entry) if "sync" in entry else (
+        [] if "exchange" in entry else goals_utc(args.gamestate / args.match_id, odds)
+    )
     if args.check:
         if "exchange" in entry:
             if trades is None:
