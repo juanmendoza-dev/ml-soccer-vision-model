@@ -1,12 +1,12 @@
 """08 ball marker on real video: ring, velocity arrow and trail on the footage itself.
 
     python -m demo.video --video clip.mp4 --match-id smoke04 --out ball.mp4 [--frames 100-400]
-        [--predictions data/predictions/<id>/<model_id>.parquet] [--truth-clip <clip_id>]
+        [--predictions data/predictions/<id>/<model_id>.parquet] [--truth-clip <clip_id> [--odds]]
 
 The run's frame_id 0 is source frame round(video_start_s x fps) (run.json, vision.run's
 --start-s); the video is skipped to it frame-exact with grab(), never by seeking (08 "Video
 frame alignment"). --predictions draws the danger meter, --truth-clip the clip's PFF shots
-and goals in the ticker (08).
+and goals in the ticker, --odds the match's Polymarket price card (08; demo.odds --fetch first).
 
 Reads a vision run's detections cache (data/vision_cache/<id>, 03) for the ball's box and
 its game state (data/gamestate/<id>, 02) for the ball's pitch position and vx, vy. The
@@ -23,6 +23,7 @@ import numpy as np
 import polars as pl
 
 from demo import meter as mt
+from demo import odds as od
 from demo import overlay as ov
 from demo import tally
 from demo.render import open_writer
@@ -190,11 +191,20 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--cache-dir", type=Path, default=Path("data/vision_cache"))
     ap.add_argument("--gamestate-dir", type=Path, default=Path("data/gamestate"))
     ap.add_argument("--frames", help="first-last inside the processed range (default: all of it)")
-    ap.add_argument("--predictions", type=Path, help="prediction.infer output: draws the danger meter")
-    ap.add_argument("--truth-clip", help="clip_id in --clip-manifest: PFF shots and goals in the ticker")
+    ap.add_argument(
+        "--predictions", type=Path, help="prediction.infer output: draws the danger meter"
+    )
+    ap.add_argument(
+        "--truth-clip", help="clip_id in --clip-manifest: PFF shots and goals in the ticker"
+    )
     ap.add_argument("--clip-manifest", type=Path, default=Path("data/splits/demo_clips.json"))
+    ap.add_argument(
+        "--odds", action="store_true", help="Polymarket price card (needs --truth-clip)"
+    )
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
+    if args.odds and not args.truth_clip:
+        ap.error("--odds needs --truth-clip (the clip's period and sync offset)")
 
     bv = BallVideo(args.cache_dir / args.match_id, args.gamestate_dir / args.match_id)
     first, last = bv.first, bv.last
@@ -211,15 +221,25 @@ def main(argv: list[str] | None = None) -> None:
     meter, when = None, {}
     if args.predictions:
         meter = mt.Meter(pl.read_parquet(args.predictions), "p_goal_h5")
-        times = pl.read_parquet(gs / "frames.parquet", columns=["frame_id", "period", "timestamp_s"])
+        times = pl.read_parquet(
+            gs / "frames.parquet", columns=["frame_id", "period", "timestamp_s"]
+        )
         when = {r[0]: (r[1], r[2]) for r in times.iter_rows()}
     events, names = None, {}
     if args.truth_clip:
         clips = {c["clip_id"]: c for c in load_manifest(args.clip_manifest)}
         clip = clips[args.truth_clip]
         events = truth_events(clip, args.gamestate_dir, start / fps, fps)
-        m = pl.read_parquet(args.gamestate_dir / clip["match_id"] / "match.parquet").row(0, named=True)
+        m = pl.read_parquet(args.gamestate_dir / clip["match_id"] / "match.parquet").row(
+            0, named=True
+        )
         names = {"home": m["home_team"], "away": m["away_team"]}
+    odds, goals = None, []
+    if args.odds:
+        odds = od.Odds(od.load_manifest()[clip["match_id"]], od.load_history(clip["match_id"]))
+        goals = od.goals_utc(args.gamestate_dir / clip["match_id"], odds)
+        # PFF period time of the run's frame_id 0, the inverse of truth_events' mapping
+        t0 = start / fps + sync_offset(clip)
     n, arrows = 0, 0
     for frame_id in range(first, last + 1):
         ok, image = cap.read()
@@ -227,9 +247,13 @@ def main(argv: list[str] | None = None) -> None:
             break
         img = bv.draw(image, frame_id)
         h, w = img.shape[:2]
+        card = od.card_box(w, h, TICKER_H) if odds is not None else None
         if meter is not None:
             p = meter.value(*when[frame_id]) if frame_id in when else None
-            mt.draw(img, (w - 16 - mt.METER_W, METER_TOP, mt.METER_W, min(h - 160, 420)), p)
+            mh = min(h - 160, 420) if card is None else min(h - 160, 420, card[1] - 16 - METER_TOP)
+            mt.draw(img, (w - 16 - mt.METER_W, METER_TOP, mt.METER_W, mh), p)
+        if odds is not None:
+            ov.odds_card(img, card, odds.view(clip["period"], t0 + frame_id / fps, goals))
         if events is not None:
             lines = [
                 (f"{tally.event_text(e, names)} (PFF)", e["event_type"] == "goal")
