@@ -45,7 +45,10 @@ JUMP_MIN_N = 5  # trades the median needs
 
 
 def utc_s(s: str) -> float:
-    return datetime.fromisoformat(s).timestamp()
+    t = datetime.fromisoformat(s)
+    if t.tzinfo is None:
+        raise SystemExit(f"{s!r} has no time zone: write UTC with a Z suffix, e.g. 2026-07-19T21:35:00Z")
+    return t.timestamp()
 
 
 def hhmmss(ts: float) -> str:
@@ -147,8 +150,9 @@ def spread(trades: list[dict]) -> list[float]:
 
 def feed_text(t: dict, short: dict[str, str]) -> str:
     w = t["wallet"]
-    price = round(100 * t["usdc"] / t["shares"])
-    return f"{w[:4]}…{w[-2:]} {t['side']} {short[t['outcome']]} ${t['usdc']:,.0f} @ {price}¢"
+    price = min(max(round(100 * t["usdc"] / t["shares"]), 1), 99)
+    dollars = f"${t['usdc']:,.0f}" if t["usdc"] >= 1 else "<$1"
+    return f"{w[:4]}…{w[-2:]} {t['side']} {short[t['outcome']]} {dollars} @ {price}¢"
 
 
 class Odds:

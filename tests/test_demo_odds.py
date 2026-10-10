@@ -216,6 +216,19 @@ def test_the_tape_shows_nothing_past_now_and_only_the_last_60_s():
     assert len(volume["BUY"]) == len(volume["SELL"]) == 60
 
 
+def test_a_sub_dollar_trade_reads_under_a_dollar_and_the_price_stays_in_1_to_99():
+    short = {"home": "AAA", "away": "BBB"}
+    assert od.feed_text(trade(KO, 1, usdc=0.3, shares=0.33), short) == "0xab…ab BUY AAA <$1 @ 91¢"
+    assert od.feed_text(trade(KO, 1, usdc=1.0, shares=1.0), short).endswith("$1 @ 99¢")
+    assert od.feed_text(trade(KO, 1, usdc=0.001, shares=1.0), short).endswith("<$1 @ 1¢")
+
+
+def test_a_naive_utc_string_is_refused():
+    with pytest.raises(SystemExit, match="Z"):
+        od.utc_s("2026-07-19T21:35:00")
+    od.utc_s("2026-07-19T21:35:00Z")
+
+
 def test_the_feed_is_the_newest_six():
     o = od.Odds(ENTRY, history([(-600, 0.5)]), trades_cache([trade(KO + i, i, usdc=float(i + 1)) for i in range(9)]))
     _, feed, _ = o.tape(KO + 100)
