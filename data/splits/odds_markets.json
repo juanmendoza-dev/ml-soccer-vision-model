@@ -36,6 +36,24 @@
    ],
    "sync_method": "period 1 at the scheduled kickoff (PFF date = polymarket gameStartTime); period 2 at period 1 start + its last PFF timestamp_s + 15 min half-time (PFF's video cuts the break)",
    "check": "2026-10-10, demo.odds --check: FRA 5' first move +132 s (0.64 -> 0.72), FRA 79' +147 s (0.91 -> 0.96). Moves come after both goals; a thin market, so they lag by 2 min or more"
+  },
+  {
+   "match_id": "esp-arg-2026",
+   "label": "World Cup final 2026",
+   "event_slug": "fifwc-esp-arg-2026-07-19-more-markets",
+   "condition_id": "0x4b045e092c3166aa29d4864c11dffe7e316daafdac5677f11aa5cd16065fd042",
+   "tokens": {
+    "home": "21489275813654264105403246157265887827595023709508765470113828829105196462288",
+    "away": "59470269118682771304947535994646971819417763580663925170396066961563339373816"
+   },
+   "short": {"home": "ESP", "away": "ARG"},
+   "colors": {"home": "#C60B1E", "away": "#75AADB"},
+   "periods": [
+    {"period": 1, "start_utc": "2026-07-19T19:00:00Z", "length_s": 10920.0}
+   ],
+   "end_label": "FT",
+   "exchange": "0xe111180000d2663c0091e4f400237545b87b996b",
+   "sync_method": "Team to Advance (counts extra time), not the 90-minute win/draw markets. No PFF: the chart is one span from the scheduled kickoff to 22:02 UTC, when Spain's price reached 1.00 (the final whistle, about ±1 min). The clip is synced by its goal (sync, 08)"
   }
  ]
 }

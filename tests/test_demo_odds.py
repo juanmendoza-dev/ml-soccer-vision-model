@@ -39,13 +39,52 @@ def odds(points=((-600, 0.5), (60, 0.5), (120, 0.7), (3800, 0.7), (3900, 0.4))):
 
 def test_the_committed_manifest_loads_and_its_period_starts_follow_the_rule():
     m = od.load_manifest(Path(__file__).parents[1] / "data/splits/odds_markets.json")
-    assert set(m) == {"10517", "10515"}
+    assert set(m) == {"10517", "10515", "esp-arg-2026"}
     for e in m.values():
-        p1, p2 = e["periods"]
-        assert od.utc_s(p2["start_utc"]) == pytest.approx(
-            od.utc_s(p1["start_utc"]) + p1["length_s"] + 900
-        )
         assert set(e["tokens"]) == set(e["colors"]) == set(e["short"]) == {"home", "away"}
+        if len(e["periods"]) == 2:  # the PFF-synced 2022 entries
+            p1, p2 = e["periods"]
+            assert od.utc_s(p2["start_utc"]) == pytest.approx(
+                od.utc_s(p1["start_utc"]) + p1["length_s"] + 900
+            )
+
+
+def test_the_2026_entry_is_team_to_advance_not_the_90_minute_markets():
+    e = od.load_manifest(Path(__file__).parents[1] / "data/splits/odds_markets.json")["esp-arg-2026"]
+    assert e["condition_id"] == "0x4b045e092c3166aa29d4864c11dffe7e316daafdac5677f11aa5cd16065fd042"
+    assert e["tokens"] == {
+        "home": "21489275813654264105403246157265887827595023709508765470113828829105196462288",
+        "away": "59470269118682771304947535994646971819417763580663925170396066961563339373816",
+    }
+    assert e["short"] == {"home": "ESP", "away": "ARG"}
+    assert e["exchange"] == "0xe111180000d2663c0091e4f400237545b87b996b"
+    assert len(e["periods"]) == 1 and e["end_label"] == "FT"
+
+
+def test_a_one_period_entry_labels_its_end_tick():
+    entry = dict(ENTRY, periods=ENTRY["periods"][:1], end_label="FT")
+    v = od.Odds(entry, history([(-600, 0.5)])).view(1, 60.0)
+    assert v["ticks"][-1] == (1.0, "FT")
+
+
+def test_fetch_trades_writes_the_cache(tmp_path, monkeypatch):
+    got = {"from_block": 1, "to_block": 2, "from_ts": 10.0, "to_ts": 20.0, "trades": []}
+    monkeypatch.setattr(od.chain, "rpc_url", lambda: "https://x/v2/k")
+    monkeypatch.setattr(od.chain, "fetch_trades", lambda *a, **k: dict(got))
+    od.main(["esp-arg-2026", "--fetch-trades", "--from", "2026-07-19T21:35:00Z",
+             "--to", "2026-07-19T21:48:00Z", "--cache", str(tmp_path)])
+    saved = od.load_trades("esp-arg-2026", tmp_path)
+    assert saved["match_id"] == "esp-arg-2026" and saved["trades"] == [] and "fetched_utc" in saved
+
+
+def test_fetch_trades_needs_a_window():
+    with pytest.raises(SystemExit, match="--from and --to"):
+        od.main(["esp-arg-2026", "--fetch-trades"])
+
+
+def test_load_trades_says_how_to_fetch(tmp_path):
+    with pytest.raises(SystemExit, match="--fetch-trades"):
+        od.load_trades("nope", tmp_path)
 
 
 def test_period_time_maps_to_its_period_start():

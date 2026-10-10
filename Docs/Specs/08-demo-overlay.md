@@ -76,7 +76,7 @@ The 2022 markets are too thin for what the demo should show: every real buy and 
   - Time: the log's `blockTimestamp` (Alchemy includes it on every log, checked 2026-10-10). Polygon blocks are about 2 s apart, so trades in one block share a time.
   - Wallets are shortened to `0x3f…a1`. No pseudonyms (those are Polymarket profile data, not on-chain).
   - `python -m demo.odds <match_id> --fetch-trades --from <UTC> --to <UTC>` caches `data/odds/<match_id>_trades.json` (gitignored) with the block range and fetch time; `demo.video` refuses a clip outside the cached range rather than draw a feed with a silent hole.
-- **The price line:** `prices-history` as for 2022 (one point a minute over the whole match), with the trades drawn over it in the clip. The two are separate series; the card never interpolates one from the other.
+- **The price line:** `prices-history` as for 2022 (one point a minute over the whole match), with the trades drawn over it in the clip. The two are separate series; the card never interpolates one from the other. For an entry with no PFF the axis is one span from kickoff to the final whistle, labelled 0' and FT (`end_label`), with no halftime shading.
 - **No PFF for this match.** The danger meter doesn't need it: `vision.run` → `vision.stage8` → `prediction.infer` reads only the vision game state, and kit side and direction come from `--home-cluster` / `--home-attacks-left`. What PFF did otherwise, and the substitute:
   - Truth ticker: the goal is labelled by hand on the clip (video second, team), shown in the ticker without "(PFF)".
   - Clock: see Sync below.

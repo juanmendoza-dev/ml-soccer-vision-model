@@ -3,6 +3,7 @@
     python -m demo.odds --fetch 10517            # prices-history -> data/odds/10517.json
     python -m demo.odds --check 10517            # each PFF goal's mapped UTC, price either side
     python -m demo.odds --preview 10517 --at 2:2158.6 --out odds.png [--image frame.png] [--pos top-right]
+    python -m demo.odds esp-arg-2026 --fetch-trades --from 2026-07-19T21:35:00Z --to 2026-07-19T21:48:00Z
 
 Markets, colors and period starts come from data/splits/odds_markets.json (08 "Market odds
 panel"). The points are the market price about once a minute, not trades. Display only:
@@ -19,10 +20,11 @@ import cv2
 import numpy as np
 import polars as pl
 
-from demo import overlay as ov
+from demo import chain, overlay as ov
 
 MANIFEST = Path("data/splits/odds_markets.json")
 CACHE = Path("data/odds")
+TRADES = "{}_trades.json"
 HISTORY_URL = (
     "https://clob.polymarket.com/prices-history?market={token}&startTs={a}&endTs={b}&fidelity=1"
 )
@@ -73,6 +75,15 @@ def load_history(match_id: str, cache: Path = CACHE) -> dict:
     path = cache / f"{match_id}.json"
     if not path.exists():
         raise SystemExit(f"no {path}: run python -m demo.odds --fetch {match_id}")
+    return json.loads(path.read_text())
+
+
+def load_trades(match_id: str, cache: Path = CACHE) -> dict:
+    path = cache / TRADES.format(match_id)
+    if not path.exists():
+        raise SystemExit(
+            f"no {path}: run python -m demo.odds {match_id} --fetch-trades --from <UTC> --to <UTC>"
+        )
     return json.loads(path.read_text())
 
 
@@ -188,7 +199,7 @@ class Odds:
             ticks.append(((ht[0] + ht[1]) / 2, "HT"))
             ticks.append((1.0, "90'"))
         else:
-            ticks.append((1.0, "45'"))
+            ticks.append((1.0, e.get("end_label", "45'")))
         return {
             "title": "POLYMARKET",
             "subtitle": f"{e['label']} - win price",
@@ -243,12 +254,17 @@ def main(argv: list[str] | None = None) -> None:
         "--check", action="store_true", help="each goal's mapped time and price either side"
     )
     do.add_argument("--preview", action="store_true", help="the card at --at as a still")
+    do.add_argument(
+        "--fetch-trades", action="store_true", help="the market's trades off Polygon into --cache"
+    )
     ap.add_argument("--at", help="period:timestamp_s for --preview, e.g. 2:2158.6")
     ap.add_argument(
         "--image", type=Path, help="background for --preview (default a dark 1920x1080)"
     )
     ap.add_argument("--out", type=Path, help="--preview output png")
     ap.add_argument("--pos", choices=POSITIONS, default="bottom-right", help="card position")
+    ap.add_argument("--from", dest="from_utc", help="--fetch-trades start, UTC ISO time")
+    ap.add_argument("--to", dest="to_utc", help="--fetch-trades end, UTC ISO time")
     ap.add_argument("--manifest", type=Path, default=MANIFEST)
     ap.add_argument("--cache", type=Path, default=CACHE)
     ap.add_argument("--gamestate", type=Path, default=Path("data/gamestate"))
@@ -261,6 +277,20 @@ def main(argv: list[str] | None = None) -> None:
         path = args.cache / f"{args.match_id}.json"
         path.write_text(json.dumps(hist))
         print(f"wrote {path} ({len(hist['home'])} home, {len(hist['away'])} away points)")
+        return
+    if args.fetch_trades:
+        if not (args.from_utc and args.to_utc):
+            raise SystemExit("--fetch-trades needs --from and --to (UTC, e.g. 2026-07-19T21:35:00Z)")
+        tokens = {int(tok): team for team, tok in entry["tokens"].items()}
+        got = chain.fetch_trades(
+            chain.Rpc(chain.rpc_url()), entry["exchange"], tokens,
+            utc_s(args.from_utc), utc_s(args.to_utc),
+        )
+        got.update(match_id=args.match_id, fetched_utc=datetime.now(UTC).isoformat())
+        args.cache.mkdir(parents=True, exist_ok=True)
+        path = args.cache / TRADES.format(args.match_id)
+        path.write_text(json.dumps(got))
+        print(f"wrote {path} ({len(got['trades'])} trades, blocks {got['from_block']}-{got['to_block']})")
         return
     odds = Odds(entry, load_history(args.match_id, args.cache))
     goals = goals_utc(args.gamestate / args.match_id, odds)
