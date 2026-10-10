@@ -101,6 +101,7 @@ The 2022 markets are too thin for what the demo should show: every real buy and 
 
 - 2026-10-10: the user got private permission from the rights holders for one LinkedIn post of the 2022 broadcast demo (ARG–FRA, FRA–MAR), on the condition that nothing makes money. That covers only this post; everything else stays as in the table.
 - 2026-10-10: the demo moved to the 2026 World Cup final (Spain–Argentina). That broadcast is not covered by the permission above; nothing from it is posted until the rights holder's OK is recorded here.
+- 2026-10-10: the user has the rights holders' permission for the 2026 final clip used in the LinkedIn demo. Covers that clip only.
 - Self-recorded footage looks different from broadcast (camera height, zoom, kit colors, pitch markings). Expect to fine-tune detection and pitch keypoints on a few hundred labeled frames from it (03).
 - Self-recorded matches have no provider tracking, so the public demo shows the overlay only. The accuracy numbers in the write-up come from 07, not from this footage.
 - Keep a record of which footage each rendered clip used, so nothing restricted gets published by accident.

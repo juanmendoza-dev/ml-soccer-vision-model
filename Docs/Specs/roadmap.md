@@ -219,7 +219,7 @@ Skipped for now: schema 0.7 for empty runs, shootout (period 5) handling in visi
 - [ ] Fine-tune detection/keypoints on self-recorded footage
 - [ ] Demo clip + write-up
 - [ ] LinkedIn demo, 2026 final Spain–Argentina with the trade feed (08 "Trade feed and the 2026 final", decided 2026-10-10: the 2022 markets had 1–3 trades a minute, this one about 20 a second after the winner)
-  - [ ] Footage permission for the 2026 broadcast, recorded in 08 "Footage" (blocks posting, not building)
+  - [x] Footage permission for the 2026 broadcast, recorded in 08 "Footage" **2026-10-10**
   - [ ] Card design from Claude Design (user), then rebuilt in `overlay.odds_card`
   - [ ] Manifest entry for "Team to Advance" (not the 90-minute win/draw markets); `demo.odds --fetch-trades` off Polygon logs + trades in `Odds.view()`; `--check` trades and price per minute; tests
   - [ ] Clip window around the ~21:42 UTC winner (Spain 0.60 → 0.93), download one continuous cut, hand-label the goal, check extra-time attacking direction, then `vision.run` → `vision.stage8` → `prediction.infer` → `demo.video --odds`, bottom-right and top-right
