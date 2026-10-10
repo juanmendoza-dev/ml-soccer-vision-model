@@ -88,7 +88,7 @@ The 2022 markets are too thin for what the demo should show: every real buy and 
   - `trades`: every trade in the last 60 s, as (age s, outcome, side, dollars, price), for a tick plot of each trade as a dot at its price, sized by dollars.
   - `feed`: the newest 6 trades as text (`0x3f…a1 BUY Spain $2,400 @ 63¢`).
   - `volume`: dollars per 1 s bucket over the last 60 s, per side.
-  The card's look (layout, colors, fonts, animation) comes from the user's Claude Design mockup, rebuilt in OpenCV; the bottom-right / top-right placement stays.
+  The card's look (layout, colors, fonts, animation) comes from the user's Claude Design mockup, rebuilt in OpenCV; the bottom-right / top-right placement stays. Until then an interim tape panel (`overlay.trade_tape`) sits left of the card: the 60 s tick plot (filled dot a buy, ring a sell, area by dollars) over the six-line feed.
 - **Check:** `demo.odds --check <match_id>` on a trades cache prints trades per minute and Spain's price range per minute, so the goal's jump and the clip window can be read off it.
 
 ## Footage

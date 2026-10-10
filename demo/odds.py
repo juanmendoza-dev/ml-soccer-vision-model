@@ -38,6 +38,7 @@ TAPE_S = 60.0  # the tick plot and volume look back this long
 FEED_N = 6
 BLOCK_S = 2.0  # Polygon's block time: a block's trades spread over at most this long
 CARD_W, CARD_H = 600, 300
+TAPE_W = 420
 MARGIN = 16
 JUMP = 0.08  # a home price this far above the last minute's median is a jump
 JUMP_MIN_N = 5  # trades the median needs
@@ -279,6 +280,12 @@ def card_box(
     return w - MARGIN - CARD_W, y, CARD_W, CARD_H
 
 
+def tape_box(card: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """The interim trade tape: left of the card, same top and height."""
+    x, y, _, h = card
+    return x - MARGIN - TAPE_W, y, TAPE_W, h
+
+
 def require_covered(odds: Odds, u0: float, u1: float) -> None:
     """A clip outside the cached trades is refused, never drawn with a silent hole (08)."""
     if not odds.covers(u0, u1):
@@ -406,7 +413,11 @@ def main(argv: list[str] | None = None) -> None:
     period, t = args.at.split(":")
     img = cv2.imread(str(args.image)) if args.image else np.full((1080, 1920, 3), 40, np.uint8)
     h, w = img.shape[:2]
-    ov.odds_card(img, card_box(w, h, 50, args.pos), odds.view(int(period), float(t), goals))
+    box = card_box(w, h, 50, args.pos)
+    v = odds.view(int(period), float(t), goals)
+    ov.odds_card(img, box, v)
+    if odds.trades:
+        ov.trade_tape(img, tape_box(box), v)
     cv2.imwrite(str(args.out), img)
     print(f"wrote {args.out}")
 

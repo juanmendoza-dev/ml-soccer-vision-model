@@ -463,3 +463,36 @@ def odds_card(img: np.ndarray, box: tuple[int, int, int, int], v: dict) -> None:
         img[y1 : y + h, x1 : x + w],
         [(s, (px_ - x1, py_ - y1), *rest) for s, (px_, py_), *rest in items],
     )
+
+
+TAPE_S = 60.0  # same as demo.odds.TAPE_S: the plot's x axis
+
+
+def trade_tape(img: np.ndarray, box: tuple[int, int, int, int], v: dict) -> None:
+    """08 trade feed, interim look: every trade of the last TAPE_S as a dot at its home-team
+    price (newest at the right, area by dollars, filled for a buy, a ring for a sell, in the
+    team's color), and the newest trades as text underneath."""
+    x, y, w, h = box
+    blend(
+        img,
+        lambda L, o: rounded_rect(L, x - o[0], y - o[1], x + w - o[0], y + h - o[1], 18, CARD_BG),
+        0.86,
+        (x, y, x + w + 1, y + h + 1),
+    )
+    items = [("TRADES", (x + 22, y + 26), 17, (255, 255, 255), "bold", "l"),
+             (f"{len(v['trades'])} in the last minute", (x + w - 22, y + 27), 14, MUTED, "regular", "r")]
+    px1, py1, px2, py2 = x + 22, y + 50, x + w - 22, y + 150
+    hp = [p if team == "home" else 1 - p for _, team, _, _, p in v["trades"]]
+    lo, hi = (min(hp) - 0.02, max(hp) + 0.02) if hp else (0.0, 1.0)
+    hi = max(hi, lo + 0.05)
+    cv2.line(img, (px1, py2), (px2, py2), GRID, 1, cv2.LINE_AA)
+    for (age, team, side, dollars, _), p in zip(v["trades"], hp):
+        cx = px2 - round(min(age, TAPE_S) / TAPE_S * (px2 - px1))
+        cy = py2 - round((p - lo) / (hi - lo) * (py2 - py1))
+        r = min(2 + round(np.sqrt(dollars) / 8), 14)
+        cv2.circle(img, (cx, cy), r, v["colors"][team], -1 if side == "BUY" else 2, cv2.LINE_AA)
+    for k, s in enumerate(v["feed"]):
+        color = UP if " BUY " in s else DOWN
+        items.append((s, (x + 22, y + 172 + k * 21), 14, color if k == 0 else MUTED, "regular", "l"))
+    x1, y1 = max(x, 0), max(y, 0)
+    nice_text(img[y1 : y + h, x1 : x + w], [(s, (a - x1, b - y1), *rest) for s, (a, b), *rest in items])

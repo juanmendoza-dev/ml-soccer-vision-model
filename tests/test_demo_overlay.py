@@ -337,3 +337,25 @@ def test_a_frame_before_the_goal_shows_no_goal(tmp_path):
     footer = slice(s.size[1] - render.FOOTER, s.size[1])
     assert (before[footer] == ov.PANEL_BG).all()  # empty ticker
     assert not np.array_equal(before[footer], at[footer])
+
+
+def test_the_trade_tape_draws_inside_its_box():
+    img = np.zeros((1080, 1920, 3), np.uint8)
+    box = (800, 700, 420, 300)
+    v = {
+        "trades": [(5.0, "home", "BUY", 2400.0, 0.62), (30.0, "away", "SELL", 50.0, 0.4), (59.9, "home", "SELL", 9e6, 0.99)],
+        "feed": ["0xab…ab BUY ESP $2,400 @ 62¢", "0xab…ab SELL ARG $50 @ 40¢"],
+        "colors": {"home": (30, 11, 198), "away": (219, 170, 117)},
+    }
+    ov.trade_tape(img, box, v)
+    x, y, w, h = box
+    outside = img.copy()
+    outside[y : y + h + 1, x : x + w + 1] = 0
+    assert outside.max() == 0
+    assert img[y : y + h, x : x + w].max() > 0
+
+
+def test_an_empty_tape_still_draws_its_card():
+    img = np.zeros((400, 600, 3), np.uint8)
+    ov.trade_tape(img, (10, 10, 420, 300), {"trades": [], "feed": [], "colors": {"home": (1, 1, 1), "away": (2, 2, 2)}})
+    assert img.max() > 0
