@@ -1,7 +1,7 @@
 """08 ball marker on real video: ring, velocity arrow and trail on the footage itself.
 
     python -m demo.video --video clip.mp4 --match-id smoke04 --out ball.mp4 [--frames 100-400]
-        [--predictions data/predictions/<id>/<model_id>.parquet] [--truth-clip <clip_id> [--odds]]
+        [--predictions data/predictions/<id>/<model_id>.parquet] [--truth-clip <clip_id> [--odds [--odds-pos top-right]]]
 
 The run's frame_id 0 is source frame round(video_start_s x fps) (run.json, vision.run's
 --start-s); the video is skipped to it frame-exact with grab(), never by seeking (08 "Video
@@ -201,6 +201,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument(
         "--odds", action="store_true", help="Polymarket price card (needs --truth-clip)"
     )
+    ap.add_argument(
+        "--odds-pos", choices=od.POSITIONS, default="bottom-right", help="where the card sits"
+    )
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
     if args.odds and not args.truth_clip:
@@ -247,11 +250,17 @@ def main(argv: list[str] | None = None) -> None:
             break
         img = bv.draw(image, frame_id)
         h, w = img.shape[:2]
-        card = od.card_box(w, h, TICKER_H) if odds is not None else None
+        card = od.card_box(w, h, TICKER_H, args.odds_pos) if odds is not None else None
         if meter is not None:
             p = meter.value(*when[frame_id]) if frame_id in when else None
-            mh = min(h - 160, 420) if card is None else min(h - 160, 420, card[1] - 16 - METER_TOP)
-            mt.draw(img, (w - 16 - mt.METER_W, METER_TOP, mt.METER_W, mh), p)
+            top, mh = METER_TOP, min(h - 160, 420)
+            if card is not None and args.odds_pos == "top-right":
+                # the meter moves down under the card
+                top = card[1] + card[3] + 16
+                mh = min(mh, h - TICKER_H - 16 - top)
+            elif card is not None:
+                mh = min(mh, card[1] - 16 - METER_TOP)
+            mt.draw(img, (w - 16 - mt.METER_W, top, mt.METER_W, mh), p)
         if odds is not None:
             ov.odds_card(img, card, odds.view(clip["period"], t0 + frame_id / fps, goals))
         if events is not None:

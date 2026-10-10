@@ -2,7 +2,7 @@
 
     python -m demo.odds --fetch 10517            # prices-history -> data/odds/10517.json
     python -m demo.odds --check 10517            # each PFF goal's mapped UTC, price either side
-    python -m demo.odds --preview 10517 --at 2:2158.6 --out odds.png [--image frame.png]
+    python -m demo.odds --preview 10517 --at 2:2158.6 --out odds.png [--image frame.png] [--pos top-right]
 
 Markets, colors and period starts come from data/splits/odds_markets.json (08 "Market odds
 panel"). The points are the market price about once a minute, not trades. Display only:
@@ -202,9 +202,16 @@ class Odds:
         }
 
 
-def card_box(w: int, h: int, bottom: int) -> tuple[int, int, int, int]:
-    """The card's (x, y, w, h): bottom right, `bottom` px above the frame's bottom edge."""
-    return w - MARGIN - CARD_W, h - bottom - MARGIN - CARD_H, CARD_W, CARD_H
+POSITIONS = ("bottom-right", "top-right")
+
+
+def card_box(
+    w: int, h: int, bottom: int, pos: str = "bottom-right"
+) -> tuple[int, int, int, int]:
+    """The card's (x, y, w, h) at the right edge: at the top, or `bottom` px above the
+    frame's bottom edge."""
+    y = MARGIN if pos == "top-right" else h - bottom - MARGIN - CARD_H
+    return w - MARGIN - CARD_W, y, CARD_W, CARD_H
 
 
 def check(odds: Odds, goals: list[tuple[float, str, str | None]]) -> None:
@@ -241,6 +248,7 @@ def main(argv: list[str] | None = None) -> None:
         "--image", type=Path, help="background for --preview (default a dark 1920x1080)"
     )
     ap.add_argument("--out", type=Path, help="--preview output png")
+    ap.add_argument("--pos", choices=POSITIONS, default="bottom-right", help="card position")
     ap.add_argument("--manifest", type=Path, default=MANIFEST)
     ap.add_argument("--cache", type=Path, default=CACHE)
     ap.add_argument("--gamestate", type=Path, default=Path("data/gamestate"))
@@ -264,7 +272,7 @@ def main(argv: list[str] | None = None) -> None:
     period, t = args.at.split(":")
     img = cv2.imread(str(args.image)) if args.image else np.full((1080, 1920, 3), 40, np.uint8)
     h, w = img.shape[:2]
-    ov.odds_card(img, card_box(w, h, 50), odds.view(int(period), float(t), goals))
+    ov.odds_card(img, card_box(w, h, 50, args.pos), odds.view(int(period), float(t), goals))
     cv2.imwrite(str(args.out), img)
     print(f"wrote {args.out}")
 

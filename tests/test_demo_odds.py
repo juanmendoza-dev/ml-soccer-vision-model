@@ -126,6 +126,14 @@ def test_the_card_draws_inside_its_box(tmp_path):
     assert img[y : y + h, x : x + w].max() > 0
 
 
+def test_card_sits_top_or_bottom_right():
+    bottom = od.card_box(1920, 1080, 50)
+    top = od.card_box(1920, 1080, 50, "top-right")
+    assert top[0] == bottom[0] and top[0] + top[2] == 1920 - od.MARGIN
+    assert top[1] == od.MARGIN
+    assert bottom[1] + bottom[3] == 1080 - 50 - od.MARGIN
+
+
 def test_load_history_says_how_to_fetch(tmp_path):
     with pytest.raises(SystemExit, match="--fetch"):
         od.load_history("nope", tmp_path)

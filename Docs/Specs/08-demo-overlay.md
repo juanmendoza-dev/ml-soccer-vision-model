@@ -63,7 +63,7 @@ The match's Polymarket win price beside the danger meter, so a viewer sees the b
 - **Which value:** at frame t, each team's latest point with time ≤ UTC(t). Never a later one. Before its first point it reads `--`.
 - **Chart:** a step line per team (each token's own series; they sum to about 1) from kickoff − 5 min to the end of the period frame t is in (the axis never shows a later period before it starts), drawn up to UTC(t) only. 50% midline, the halftime break shaded, ticks at 0', HT and the period's end, a gold tick at each goal at or before t.
 - **Price move:** when a team's latest point differs from the one before, its number counts to the new value over 0.5 s, a ring pulses at the line's head for 1.5 s, and a delta chip (`+12`) shows for 3 s. The animation starts at the point's own time, so nothing shows early.
-- **On video:** a card at the bottom right above the ticker, under the meter's column (`demo.video --odds`, with `--truth-clip` for the clip's period and sync offset). A `--preview` still renders the card at one moment for checking the design.
+- **On video:** a card at the bottom right above the ticker, under the meter's column (`demo.video --odds`, with `--truth-clip` for the clip's period and sync offset). `--odds-pos top-right` puts it at the top right instead and moves the meter under it, so both layouts can be rendered and compared for the demo. A `--preview` still renders the card at one moment for checking the design (`--pos` for the same choice).
 
 ## Footage
 | Use | Footage | Can it be published? |
