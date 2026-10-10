@@ -490,6 +490,8 @@ def trade_tape(img: np.ndarray, box: tuple[int, int, int, int], v: dict) -> None
         cx = px2 - round(min(age, TAPE_S) / TAPE_S * (px2 - px1))
         cy = py2 - round((p - lo) / (hi - lo) * (py2 - py1))
         r = min(2 + round(np.sqrt(dollars) / 8), 14)
+        if side != "BUY":
+            r = max(r, 4)  # a smaller ring would close up into a disk
         cv2.circle(img, (cx, cy), r, v["colors"][team], -1 if side == "BUY" else 2, cv2.LINE_AA)
     for k, s in enumerate(v["feed"]):
         color = UP if " BUY " in s else DOWN
