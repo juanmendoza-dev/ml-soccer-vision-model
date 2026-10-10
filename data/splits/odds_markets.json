@@ -1,0 +1,39 @@
+{
+ "version": 1,
+ "matches": [
+  {
+   "match_id": "10517",
+   "label": "World Cup final",
+   "event_slug": "world-cup-final-france-vs-argentina",
+   "condition_id": "0x1e7db4f6ca3919aa41887f9701605568da64287e1e1662aa7558a749ec61146c",
+   "tokens": {
+    "home": "6089433785251689770076375988640770693334877259777308137609453855410548953467",
+    "away": "105392100504032111304134821100444646936144151941404393276849684670593970547907"
+   },
+   "short": {"home": "ARG", "away": "FRA"},
+   "colors": {"home": "#75AADB", "away": "#4C6FFF"},
+   "periods": [
+    {"period": 1, "start_utc": "2022-12-18T15:00:00Z", "length_s": 3152.787},
+    {"period": 2, "start_utc": "2022-12-18T16:07:32.787Z", "length_s": 3216.550}
+   ],
+   "sync_method": "period 1 at the scheduled kickoff (PFF date = polymarket gameStartTime); period 2 at period 1 start + its last PFF timestamp_s + 15 min half-time (PFF's video cuts the break)"
+  },
+  {
+   "match_id": "10515",
+   "label": "World Cup semi-final",
+   "event_slug": "world-cup-matches",
+   "condition_id": "0x0da3bb900632c5dfa0dcda6df806fc2b84862bb1820a141f9a22e0fcf27c8d55",
+   "tokens": {
+    "home": "35135409348165296533425769152169889177123033197141413836854440313087551126988",
+    "away": "80842897032421863068904294259184211620480611515975055424063236856134499439265"
+   },
+   "short": {"home": "FRA", "away": "MAR"},
+   "colors": {"home": "#4C6FFF", "away": "#E0313F"},
+   "periods": [
+    {"period": 1, "start_utc": "2022-12-14T19:00:00Z", "length_s": 2896.196},
+    {"period": 2, "start_utc": "2022-12-14T20:03:16.196Z", "length_s": 3058.959}
+   ],
+   "sync_method": "period 1 at the scheduled kickoff (PFF date = polymarket gameStartTime); period 2 at period 1 start + its last PFF timestamp_s + 15 min half-time (PFF's video cuts the break)"
+  }
+ ]
+}
