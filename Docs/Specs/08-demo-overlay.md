@@ -52,6 +52,19 @@ Everything is drawn at frame t from frames `<= t` only, the same rule as predict
 - **Video frame alignment:** a vision run's `frame_id` 0 is source frame `round(video_start_s × fps)` (`run.json`, vision.run's `--start-s`). `demo.video` skips to it with `grab()`, frame-exact like vision.run, never by seeking.
 - **PFF truth ticker (clips from PFF matches):** the match's PFF shots and goals, mapped onto the run's frames through the clip's sync offset (`data/splits/demo_clips.json`, `vision.bench`'s format), in the ticker labelled "(PFF)". Each shows from its own frame for 4 s, like the event ticker, so the meter's lead time can be read off the video.
 
+## Market odds panel (2026-10-10, for the LinkedIn demo)
+The match's Polymarket win price beside the danger meter, so a viewer sees the betting market react to the same play the model reads. Display only: prediction never reads it, and it's a different signal from P(goal), so it isn't framed as one.
+
+- **Matches:** ARG–FRA (PFF 10517, the final) and FRA–MAR (PFF 10515, a semi). Of 2022's 58 Polymarket match markets, only these and ARG–CRO move during play. The group stage and round of 16 were AMM markets with no price history, and POR–MAR and FRA–ENG had order books that sat at 0.50 all match (checked 2026-10-10).
+- **Source:** the public CLOB `prices-history` endpoint (token id, `startTs`/`endTs`, `fidelity=1`; `interval=max` returns nothing for these old markets). Markets, tokens, colors and period starts are in `data/splits/odds_markets.json` (committed); `python -m demo.odds --fetch` caches the raw history in `data/odds/<match_id>.json` (gitignored).
+- **What it is and isn't:** about one point a minute (median gap 64–66 s), the market price at that moment. Not individual trades: Polymarket's trade API is empty for 2022 and per-trade data needs an indexed chain source, not used. The panel says "price", never "trades".
+- **Clock:** UTC at (period, `timestamp_s`) = the period's `start_utc` + `timestamp_s`. Period 1 starts at the scheduled kickoff (PFF `date`, the same as Polymarket's `gameStartTime`). PFF's video cuts halftime out (37–48 s between periods), so period 2 starts at period 1's start + its last `timestamp_s` + 15 min (the Laws' half-time interval). Expect about ±1 min error, the same as the sampling. The manifest records this per match as `sync_method`.
+- **Check:** `python -m demo.odds --check <match_id>` prints each PFF goal's mapped UTC with the last price before it and the first after. A goal's move should come after its mapped time, except a penalty, whose move comes at the award. Results go in the manifest's `check` field.
+- **Which value:** at frame t, each team's latest point with time ≤ UTC(t). Never a later one. Before its first point it reads `--`.
+- **Chart:** a step line per team (each token's own series; they sum to about 1) from kickoff − 5 min to the end of the period frame t is in (the axis never shows a later period before it starts), drawn up to UTC(t) only. 50% midline, the halftime break shaded, ticks at 0', HT and the period's end, a gold tick at each goal at or before t.
+- **Price move:** when a team's latest point differs from the one before, its number counts to the new value over 0.5 s, a ring pulses at the line's head for 1.5 s, and a delta chip (`+12`) shows for 3 s. The animation starts at the point's own time, so nothing shows early.
+- **On video:** a card at the bottom right above the ticker, under the meter's column (`demo.video --odds`, with `--truth-clip` for the clip's period and sync offset). A `--preview` still renders the card at one moment for checking the design.
+
 ## Footage
 | Use | Footage | Can it be published? |
 |---|---|---|
@@ -60,6 +73,7 @@ Everything is drawn at frame t from frames `<= t` only, the same rule as predict
 | Public demo / write-up | Footage recorded yourself: a local or amateur match, filmed from a high sideline spot, with players' consent | Yes |
 | Possible later | PFF-linked broadcast | Only if PFF's terms allow it (unknown until access, see 06) |
 
+- 2026-10-10: the user got private permission from the rights holders for one LinkedIn post of the 2022 broadcast demo (ARG–FRA, FRA–MAR), on the condition that nothing makes money. That covers only this post; everything else stays as in the table.
 - Self-recorded footage looks different from broadcast (camera height, zoom, kit colors, pitch markings). Expect to fine-tune detection and pitch keypoints on a few hundred labeled frames from it (03).
 - Self-recorded matches have no provider tracking, so the public demo shows the overlay only. The accuracy numbers in the write-up come from 07, not from this footage.
 - Keep a record of which footage each rendered clip used, so nothing restricted gets published by accident.
